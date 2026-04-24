@@ -8,7 +8,14 @@ local.properties
 backend/bin/
 backend/.cache/
 backend/*.exe
+backend/*.exe~
+backend/*.test
+backend/*.out
+backend/coverage.*
 
 # Android local files
 android/local.properties
 android/.kotlin/
+android/captures/
+*.apk
+*.aab
