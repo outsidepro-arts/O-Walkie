@@ -10,13 +10,12 @@ import android.view.accessibility.AccessibilityManager
 import android.os.Build
 import android.os.Bundle
 import android.view.MotionEvent
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
-import androidx.core.content.ContextCompat.registerReceiver
 import androidx.core.content.ContextCompat
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
 import com.owalkie.app.databinding.ActivityMainBinding
 import com.owalkie.app.model.ServerProfile
 import com.owalkie.app.model.ServerStore
@@ -27,36 +26,40 @@ class MainActivity : ComponentActivity() {
     private lateinit var serverStore: ServerStore
     private var transmitting = false
     private var accessibilityToggleMode = false
-    private var lastNetStatusText: String = ""
     private var selectedServerIndex = 0
     private val servers = mutableListOf<ServerProfile>()
+    private var wsConnected = false
+    private var wsConnecting = false
+    private var receiverRegistered = false
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != WalkieService.ACTION_STATUS) return
             val signal = intent.getIntExtra(WalkieService.EXTRA_SIGNAL, 0).coerceIn(0, 255)
-            val wsConnected = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTED, false)
+            wsConnected = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTED, false)
+            wsConnecting = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTING, false)
             val udpReady = intent.getBooleanExtra(WalkieService.EXTRA_UDP_READY, false)
+            val signalPercent = ((signal / 255.0) * 100.0).toInt().coerceIn(0, 100)
 
-            binding.signalBar.max = 255
-            binding.signalBar.progress = signal
-            binding.signalText.text = getString(R.string.signal_quality_format, signal)
-            binding.signalBar.contentDescription = getString(R.string.signal_quality_format, signal)
+            binding.signalBar.max = 100
+            binding.signalBar.progress = signalPercent
+            binding.signalText.text = getString(R.string.signal_quality_format_percent, signalPercent)
+            binding.signalBar.contentDescription = getString(R.string.signal_quality_format_percent, signalPercent)
             val netStatus = getString(
                 R.string.net_status_format,
-                if (wsConnected) getString(R.string.net_state_connected) else getString(R.string.net_state_reconnect),
+                if (wsConnected) getString(R.string.net_state_connected) else if (wsConnecting) getString(R.string.net_state_reconnect) else getString(R.string.net_state_disconnected),
                 if (udpReady) getString(R.string.net_state_ready) else getString(R.string.net_state_reinit),
             )
             binding.netText.text = netStatus
-            if (lastNetStatusText != netStatus) {
-                lastNetStatusText = netStatus
-                binding.netText.announceForAccessibility(netStatus)
-            }
+            updateConnectButtonLabel()
+            updatePttAvailability()
         }
     }
 
     private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            // Connection is user-driven from the Connect button after permissions are granted.
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,9 +68,9 @@ class MainActivity : ComponentActivity() {
         accessibilityManager = getSystemService(ACCESSIBILITY_SERVICE) as AccessibilityManager
         serverStore = ServerStore(this)
 
-        requestRuntimePermissions()
         initServerProfilesUi()
         refreshAccessibilityMode()
+        requestRuntimePermissions()
 
         binding.pttButton.setOnTouchListener { _, event ->
             if (accessibilityToggleMode) {
@@ -98,22 +101,31 @@ class MainActivity : ComponentActivity() {
                 startTransmitUi()
             }
         }
+
+        updateConnectButtonLabel()
+        updatePttAvailability()
     }
 
     override fun onStart() {
         super.onStart()
         refreshAccessibilityMode()
-        registerReceiver(
-            this,
-            statusReceiver,
-            IntentFilter(WalkieService.ACTION_STATUS),
-            RECEIVER_NOT_EXPORTED,
-        )
+        if (!receiverRegistered) {
+            ContextCompat.registerReceiver(
+                this,
+                statusReceiver,
+                IntentFilter(WalkieService.ACTION_STATUS),
+                RECEIVER_NOT_EXPORTED,
+            )
+            receiverRegistered = true
+        }
     }
 
     override fun onStop() {
         super.onStop()
-        unregisterReceiver(statusReceiver)
+        if (receiverRegistered) {
+            unregisterReceiver(statusReceiver)
+            receiverRegistered = false
+        }
     }
 
     private fun refreshAccessibilityMode() {
@@ -124,6 +136,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startTransmitUi() {
         if (transmitting) return
+        if (!wsConnected) return
         transmitting = true
         binding.statusText.text = getString(R.string.status_tx)
         sendServiceAction(WalkieService.ACTION_PTT_PRESS)
@@ -141,6 +154,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updatePttLabel() {
+        if (!binding.pttButton.isEnabled) {
+            binding.pttButton.text = getString(R.string.ptt_unavailable)
+            binding.pttButton.contentDescription = getString(R.string.ptt_unavailable)
+            return
+        }
         if (!accessibilityToggleMode) {
             binding.pttButton.text = getString(R.string.ptt_hold)
             binding.pttButton.contentDescription = getString(R.string.ptt_hold_accessibility_hint)
@@ -170,7 +188,11 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, WalkieService::class.java).apply {
             this.action = action
         }
-        startService(intent)
+        if (action == WalkieService.ACTION_START) {
+            ContextCompat.startForegroundService(this, intent)
+        } else {
+            startService(intent)
+        }
     }
 
     private fun requestRuntimePermissions() {
@@ -188,23 +210,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun hasAudioPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    }
+
     private fun initServerProfilesUi() {
         servers.clear()
         servers.addAll(serverStore.load())
         if (servers.isEmpty()) {
             servers += ServerProfile(
                 name = getString(R.string.default_server_name),
-                host = "10.0.2.2",
-                wsPort = 8080,
-                udpPort = 5000,
+                host = "192.168.100.2",
+                wsPort = 5500,
+                udpPort = 5505,
                 channel = "global",
+            )
+            serverStore.save(servers)
+        } else if (servers.size == 1 && servers.first().host == "10.0.2.2" && servers.first().wsPort == 8080 && servers.first().udpPort == 5000) {
+            servers[0] = servers.first().copy(
+                host = "192.168.100.2",
+                wsPort = 5500,
+                udpPort = 5505,
             )
             serverStore.save(servers)
         }
         refreshServerSpinner()
         bindServerButtons()
         loadServerToInputs(servers.first())
-        startWalkieService(servers.first())
     }
 
     private fun refreshServerSpinner() {
@@ -252,8 +284,24 @@ class MainActivity : ComponentActivity() {
         }
 
         binding.connectServerButton.setOnClickListener {
+            if (wsConnecting) {
+                sendServiceAction(WalkieService.ACTION_CANCEL_CONNECT)
+                wsConnecting = false
+                wsConnected = false
+                updateConnectButtonLabel()
+                updatePttAvailability()
+                return@setOnClickListener
+            }
             val profile = collectServerFromInputs() ?: return@setOnClickListener
+            if (!hasAudioPermission()) {
+                requestRuntimePermissions()
+                return@setOnClickListener
+            }
             startWalkieService(profile)
+            wsConnecting = true
+            wsConnected = false
+            updateConnectButtonLabel()
+            updatePttAvailability()
             binding.root.announceForAccessibility(getString(R.string.connected_server_announcement))
         }
     }
@@ -306,6 +354,24 @@ class MainActivity : ComponentActivity() {
             udpPort = udpPort,
             channel = channel,
         )
+    }
+
+    private fun updateConnectButtonLabel() {
+        when {
+            wsConnecting -> binding.connectServerButton.text = getString(R.string.connect_cancel)
+            wsConnected -> binding.connectServerButton.text = getString(R.string.connect_reconnect)
+            else -> binding.connectServerButton.text = getString(R.string.connect_server)
+        }
+    }
+
+    private fun updatePttAvailability() {
+        val enabled = wsConnected
+        binding.pttButton.isEnabled = enabled
+        binding.pttButton.alpha = if (enabled) 1.0f else 0.5f
+        if (!enabled && transmitting) {
+            stopTransmitUi()
+        }
+        updatePttLabel()
     }
 }
 

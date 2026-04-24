@@ -1,5 +1,8 @@
 package com.owalkie.app.audio
 
+import eu.buney.kopus.OpusApplication
+import eu.buney.kopus.OpusDecoder
+import eu.buney.kopus.OpusEncoder
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -11,7 +14,12 @@ interface OpusCodec {
 class OpusCodecFactory {
     fun create(sampleRate: Int, channels: Int): OpusCodec {
         return try {
-            ReflectiveKopusCodec(sampleRate, channels)
+            val codec = KopusCodec(sampleRate, channels)
+            // Validate codec early to avoid runtime crash on first PTT.
+            val probe = ShortArray(320)
+            val encoded = codec.encode(probe)
+            codec.decode(encoded, 320)
+            codec
         } catch (_: Throwable) {
             // Keep app usable on dev devices where JNI Opus binding is unavailable.
             PcmPassthroughCodec()
@@ -37,47 +45,46 @@ private class PcmPassthroughCodec : OpusCodec {
     }
 }
 
-private class ReflectiveKopusCodec(
+private class KopusCodec(
     private val sampleRate: Int,
     private val channels: Int,
 ) : OpusCodec {
-    private val encoder: Any
-    private val decoder: Any
-    private val encoderClass: Class<*>
-    private val decoderClass: Class<*>
-
-    init {
-        val appClass = Class.forName("eu.buney.kopus.OpusApplication")
-        val appVoip = java.lang.Enum.valueOf(appClass as Class<out Enum<*>>, "Voip")
-
-        encoderClass = Class.forName("eu.buney.kopus.OpusEncoder")
-        decoderClass = Class.forName("eu.buney.kopus.OpusDecoder")
-
-        encoder = encoderClass
-            .getConstructor(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, appClass)
-            .newInstance(sampleRate, channels, appVoip)
-        decoder = decoderClass
-            .getConstructor(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-            .newInstance(sampleRate, channels)
-    }
+    private val encoder = OpusEncoder(sampleRate, channels, OpusApplication.Voip)
+    private val decoder = OpusDecoder(sampleRate, channels)
 
     override fun encode(pcm: ShortArray): ByteArray {
-        val method = encoderClass.methods.firstOrNull {
-            it.name == "encode" &&
-                it.parameterTypes.size == 1 &&
-                it.parameterTypes[0] == ShortArray::class.java
-        } ?: throw IllegalStateException("Kopus encode(short[]) method not found")
-        return method.invoke(encoder, pcm) as ByteArray
+        val maxOpusPacket = 1275
+        val out = ByteArray(maxOpusPacket)
+        val encodedBytes = encoder.encode(
+            pcm,
+            0,
+            pcm.size,
+            out,
+            0,
+            out.size,
+        )
+        if (encodedBytes <= 0) {
+            return ByteArray(0)
+        }
+        return out.copyOf(encodedBytes)
     }
 
     override fun decode(opus: ByteArray, frameSize: Int): ShortArray {
-        val method = decoderClass.methods.firstOrNull {
-            it.name == "decode" &&
-                it.parameterTypes.size == 2 &&
-                it.parameterTypes[0] == ByteArray::class.java &&
-                it.parameterTypes[1] == Int::class.javaPrimitiveType
-        } ?: throw IllegalStateException("Kopus decode(byte[],int) method not found")
-        return method.invoke(decoder, opus, frameSize) as ShortArray
+        val out = ShortArray(frameSize * channels)
+        val decodedSamples = decoder.decode(
+            opus,
+            0,
+            opus.size,
+            out,
+            0,
+            frameSize,
+            false,
+        )
+        if (decodedSamples <= 0) {
+            return ShortArray(frameSize * channels)
+        }
+        val actual = (decodedSamples * channels).coerceAtMost(out.size)
+        return out.copyOf(actual)
     }
 }
 

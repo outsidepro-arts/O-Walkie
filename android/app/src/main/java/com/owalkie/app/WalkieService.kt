@@ -49,11 +49,13 @@ import kotlin.math.sin
 class WalkieService : Service() {
     companion object {
         const val ACTION_START = "com.owalkie.app.action.START"
+        const val ACTION_CANCEL_CONNECT = "com.owalkie.app.action.CANCEL_CONNECT"
         const val ACTION_PTT_PRESS = "com.owalkie.app.action.PTT_PRESS"
         const val ACTION_PTT_RELEASE = "com.owalkie.app.action.PTT_RELEASE"
         const val ACTION_STATUS = "com.owalkie.app.action.STATUS"
         const val EXTRA_SIGNAL = "signal"
         const val EXTRA_WS_CONNECTED = "wsConnected"
+        const val EXTRA_WS_CONNECTING = "wsConnecting"
         const val EXTRA_UDP_READY = "udpReady"
         const val EXTRA_SERVER_HOST = "serverHost"
         const val EXTRA_WS_PORT = "wsPort"
@@ -84,6 +86,7 @@ class WalkieService : Service() {
     private var signalMonitorJob: Job? = null
     private val wsConnected = AtomicBoolean(false)
     private val wsRetryAttempt = AtomicInteger(0)
+    private val desiredConnection = AtomicBoolean(false)
     private val configLock = Any()
 
     @Volatile
@@ -123,7 +126,11 @@ class WalkieService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startCore(intent)
+            ACTION_START -> {
+                desiredConnection.set(true)
+                startCore(intent)
+            }
+            ACTION_CANCEL_CONNECT -> cancelConnection()
             ACTION_PTT_PRESS -> onPttPress()
             ACTION_PTT_RELEASE -> onPttRelease()
         }
@@ -178,6 +185,7 @@ class WalkieService : Service() {
     }
 
     private fun connectWebSocket(force: Boolean = false) {
+        if (!desiredConnection.get()) return
         if (!force && webSocket != null) return
         if (force) {
             runCatching { webSocket?.cancel() }
@@ -200,13 +208,21 @@ class WalkieService : Service() {
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 wsConnected.set(false)
                 this@WalkieService.webSocket = null
-                scheduleWsReconnect()
+                if (desiredConnection.get()) {
+                    scheduleWsReconnect()
+                } else {
+                    broadcastStatus(currentSignalByte())
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 wsConnected.set(false)
                 this@WalkieService.webSocket = null
-                scheduleWsReconnect()
+                if (desiredConnection.get()) {
+                    scheduleWsReconnect()
+                } else {
+                    broadcastStatus(currentSignalByte())
+                }
             }
         })
     }
@@ -395,7 +411,7 @@ class WalkieService : Service() {
         signalMonitorJob = serviceScope.launch {
             while (isActive) {
                 ensureUdpSocket()
-                if (!wsConnected.get() && webSocket == null) {
+                if (desiredConnection.get() && !wsConnected.get() && webSocket == null) {
                     scheduleWsReconnect()
                 }
                 val signal = currentSignalByte()
@@ -410,6 +426,7 @@ class WalkieService : Service() {
             setPackage(packageName)
             putExtra(EXTRA_SIGNAL, signal.coerceIn(0, 255))
             putExtra(EXTRA_WS_CONNECTED, wsConnected.get())
+            putExtra(EXTRA_WS_CONNECTING, desiredConnection.get() && !wsConnected.get())
             putExtra(EXTRA_UDP_READY, udpSocket?.isClosed == false)
         }
         sendBroadcast(statusIntent)
@@ -421,7 +438,7 @@ class WalkieService : Service() {
             val attempt = wsRetryAttempt.incrementAndGet()
             val delayMs = (1000L * (1 shl (attempt - 1).coerceIn(0, 5))).coerceAtMost(30000L)
             delay(delayMs)
-            if (!wsConnected.get()) {
+            if (desiredConnection.get() && !wsConnected.get()) {
                 connectWebSocket(force = true)
             }
         }
@@ -470,6 +487,17 @@ class WalkieService : Service() {
             wsConnected.set(false)
             return true
         }
+    }
+
+    private fun cancelConnection() {
+        desiredConnection.set(false)
+        wsConnected.set(false)
+        wsReconnectJob?.cancel()
+        wsReconnectJob = null
+        runCatching { webSocket?.close(1000, "cancel requested") }
+        runCatching { webSocket?.cancel() }
+        webSocket = null
+        broadcastStatus(currentSignalByte())
     }
 
     @Suppress("DEPRECATION")
