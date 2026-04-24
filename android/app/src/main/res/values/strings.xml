@@ -15,6 +15,13 @@
     <string name="save_server">Save server</string>
     <string name="delete_server">Delete server</string>
     <string name="connect_server">Connect selected server</string>
+    <string name="repeater_mode">Repeater mode</string>
+    <string name="battery_optimization_request">Allow background mode</string>
+    <string name="battery_optimization_status_unknown">Battery optimization: unknown</string>
+    <string name="battery_optimization_enabled">Battery optimization: enabled (may kill app)</string>
+    <string name="battery_optimization_disabled">Battery optimization: disabled</string>
+    <string name="battery_optimization_open_settings">Open battery settings</string>
+    <string name="battery_optimization_granted">Background mode enabled</string>
     <string name="connect_cancel">Cancel</string>
     <string name="connect_reconnect">Reconnect</string>
     <string name="saved_server_announcement">Server saved</string>
@@ -26,7 +33,7 @@
     <string name="validation_port">Enter valid ports 1..65535</string>
     <string name="default_server_name">Default local relay</string>
     <string name="ptt_hold">Hold to Talk</string>
-    <string name="ptt_hold_accessibility_hint">Press and hold to transmit. In TalkBack mode this button toggles start and stop.</string>
+    <string name="ptt_hold_accessibility_hint">Press and hold to transmit.</string>
     <string name="ptt_start_talking">Start talking</string>
     <string name="ptt_stop_talking">Stop talking</string>
     <string name="ptt_unavailable">PTT unavailable: no connection</string>
@@ -45,4 +52,5 @@
     <string name="service_channel_name">Walkie Streaming</string>
     <string name="service_notification_title">O-Walkie running</string>
     <string name="service_notification_text">Audio relay service is active</string>
+    <string name="service_notification_action_battery">Battery settings</string>
 </resources>

@@ -6,9 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.view.accessibility.AccessibilityManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.view.MotionEvent
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -21,11 +23,13 @@ import com.owalkie.app.model.ServerProfile
 import com.owalkie.app.model.ServerStore
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val ACTION_OPEN_BATTERY_SETTINGS = "com.owalkie.app.action.OPEN_BATTERY_SETTINGS"
+    }
+
     private lateinit var binding: ActivityMainBinding
-    private lateinit var accessibilityManager: AccessibilityManager
     private lateinit var serverStore: ServerStore
     private var transmitting = false
-    private var accessibilityToggleMode = false
     private var selectedServerIndex = 0
     private val servers = mutableListOf<ServerProfile>()
     private var wsConnected = false
@@ -65,18 +69,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        accessibilityManager = getSystemService(ACCESSIBILITY_SERVICE) as AccessibilityManager
         serverStore = ServerStore(this)
 
         initServerProfilesUi()
-        refreshAccessibilityMode()
         requestRuntimePermissions()
+        updateBatteryOptimizationUi()
+        binding.repeaterModeCheckbox.setOnCheckedChangeListener { _, isChecked ->
+            sendRepeaterModeAction(isChecked)
+        }
+        binding.batteryOptimizationButton.setOnClickListener {
+            requestBatteryOptimizationExemption()
+        }
+        if (intent?.action == ACTION_OPEN_BATTERY_SETTINGS) {
+            openBatteryOptimizationSettings()
+        }
 
         binding.pttButton.setOnTouchListener { _, event ->
-            if (accessibilityToggleMode) {
-                // In TalkBack touch-exploration mode, tap-to-toggle is more reliable than hold-to-talk.
-                return@setOnTouchListener false
-            }
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     startTransmitUi()
@@ -93,22 +101,13 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        binding.pttButton.setOnClickListener {
-            if (!accessibilityToggleMode) return@setOnClickListener
-            if (transmitting) {
-                stopTransmitUi()
-            } else {
-                startTransmitUi()
-            }
-        }
-
         updateConnectButtonLabel()
         updatePttAvailability()
     }
 
     override fun onStart() {
         super.onStart()
-        refreshAccessibilityMode()
+        updateBatteryOptimizationUi()
         if (!receiverRegistered) {
             ContextCompat.registerReceiver(
                 this,
@@ -120,6 +119,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        updateBatteryOptimizationUi()
+    }
+
     override fun onStop() {
         super.onStop()
         if (receiverRegistered) {
@@ -128,10 +132,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun refreshAccessibilityMode() {
-        accessibilityToggleMode =
-            accessibilityManager.isEnabled && accessibilityManager.isTouchExplorationEnabled
-        updatePttLabel()
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == ACTION_OPEN_BATTERY_SETTINGS) {
+            openBatteryOptimizationSettings()
+        }
     }
 
     private fun startTransmitUi() {
@@ -159,18 +165,8 @@ class MainActivity : ComponentActivity() {
             binding.pttButton.contentDescription = getString(R.string.ptt_unavailable)
             return
         }
-        if (!accessibilityToggleMode) {
-            binding.pttButton.text = getString(R.string.ptt_hold)
-            binding.pttButton.contentDescription = getString(R.string.ptt_hold_accessibility_hint)
-            return
-        }
-        if (transmitting) {
-            binding.pttButton.text = getString(R.string.ptt_stop_talking)
-            binding.pttButton.contentDescription = getString(R.string.ptt_stop_talking)
-        } else {
-            binding.pttButton.text = getString(R.string.ptt_start_talking)
-            binding.pttButton.contentDescription = getString(R.string.ptt_start_talking)
-        }
+        binding.pttButton.text = getString(R.string.ptt_hold)
+        binding.pttButton.contentDescription = getString(R.string.ptt_hold_accessibility_hint)
     }
 
     private fun startWalkieService(profile: ServerProfile) {
@@ -180,6 +176,7 @@ class MainActivity : ComponentActivity() {
             putExtra(WalkieService.EXTRA_WS_PORT, profile.wsPort)
             putExtra(WalkieService.EXTRA_UDP_PORT, profile.udpPort)
             putExtra(WalkieService.EXTRA_CHANNEL, profile.channel)
+            putExtra(WalkieService.EXTRA_REPEATER_ENABLED, binding.repeaterModeCheckbox.isChecked)
         }
         ContextCompat.startForegroundService(this, intent)
     }
@@ -195,6 +192,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun sendRepeaterModeAction(enabled: Boolean) {
+        val intent = Intent(this, WalkieService::class.java).apply {
+            action = WalkieService.ACTION_SET_REPEATER
+            putExtra(WalkieService.EXTRA_REPEATER_ENABLED, enabled)
+        }
+        startService(intent)
+    }
+
     private fun requestRuntimePermissions() {
         val needed = buildList {
             add(Manifest.permission.RECORD_AUDIO)
@@ -208,6 +213,49 @@ class MainActivity : ComponentActivity() {
         if (needed.isNotEmpty()) {
             permissionLauncher.launch(needed.toTypedArray())
         }
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        if (isIgnoringBatteryOptimizations()) {
+            openBatteryOptimizationSettings()
+            return
+        }
+        val intent = Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:$packageName"),
+        )
+        runCatching { startActivity(intent) }
+            .onFailure { openBatteryOptimizationSettings() }
+    }
+
+    private fun openBatteryOptimizationSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        runCatching {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
+    }
+
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
+        return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun updateBatteryOptimizationUi() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            binding.batteryOptimizationText.text = getString(R.string.battery_optimization_disabled)
+            binding.batteryOptimizationButton.isEnabled = false
+            return
+        }
+        val ignored = isIgnoringBatteryOptimizations()
+        binding.batteryOptimizationText.text = getString(
+            if (ignored) R.string.battery_optimization_disabled else R.string.battery_optimization_enabled,
+        )
+        binding.batteryOptimizationButton.text = getString(
+            if (ignored) R.string.battery_optimization_open_settings else R.string.battery_optimization_request,
+        )
+        binding.batteryOptimizationButton.isEnabled = true
     }
 
     private fun hasAudioPermission(): Boolean {

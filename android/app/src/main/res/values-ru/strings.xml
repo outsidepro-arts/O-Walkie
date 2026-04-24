@@ -15,6 +15,13 @@
     <string name="save_server">Сохранить сервер</string>
     <string name="delete_server">Удалить сервер</string>
     <string name="connect_server">Подключиться к выбранному серверу</string>
+    <string name="repeater_mode">Режим репитера</string>
+    <string name="battery_optimization_request">Разрешить работу в фоне</string>
+    <string name="battery_optimization_status_unknown">Оптимизация батареи: неизвестно</string>
+    <string name="battery_optimization_enabled">Оптимизация батареи: включена (приложение может быть выгружено)</string>
+    <string name="battery_optimization_disabled">Оптимизация батареи: отключена</string>
+    <string name="battery_optimization_open_settings">Открыть настройки батареи</string>
+    <string name="battery_optimization_granted">Фоновый режим разрешен</string>
     <string name="connect_cancel">Отмена</string>
     <string name="connect_reconnect">Переподключить</string>
     <string name="saved_server_announcement">Сервер сохранен</string>
@@ -26,7 +33,7 @@
     <string name="validation_port">Введите корректные порты 1..65535</string>
     <string name="default_server_name">Локальный сервер по умолчанию</string>
     <string name="ptt_hold">Удерживайте для разговора</string>
-    <string name="ptt_hold_accessibility_hint">Нажмите и удерживайте для передачи. В режиме TalkBack кнопка переключает старт и стоп.</string>
+    <string name="ptt_hold_accessibility_hint">Нажмите и удерживайте для передачи.</string>
     <string name="ptt_start_talking">Начать передачу</string>
     <string name="ptt_stop_talking">Остановить передачу</string>
     <string name="ptt_unavailable">PTT недоступна: нет соединения</string>
@@ -45,4 +52,5 @@
     <string name="service_channel_name">Поток Walkie</string>
     <string name="service_notification_title">O-Walkie запущен</string>
     <string name="service_notification_text">Сервис аудио-реле активен</string>
+    <string name="service_notification_action_battery">Батарея</string>
 </resources>

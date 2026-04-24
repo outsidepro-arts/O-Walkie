@@ -3,6 +3,7 @@ package com.owalkie.app
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -55,6 +56,7 @@ class WalkieService : Service() {
         const val ACTION_CANCEL_CONNECT = "com.owalkie.app.action.CANCEL_CONNECT"
         const val ACTION_PTT_PRESS = "com.owalkie.app.action.PTT_PRESS"
         const val ACTION_PTT_RELEASE = "com.owalkie.app.action.PTT_RELEASE"
+        const val ACTION_SET_REPEATER = "com.owalkie.app.action.SET_REPEATER"
         const val ACTION_STATUS = "com.owalkie.app.action.STATUS"
         const val EXTRA_SIGNAL = "signal"
         const val EXTRA_WS_CONNECTED = "wsConnected"
@@ -64,6 +66,7 @@ class WalkieService : Service() {
         const val EXTRA_WS_PORT = "wsPort"
         const val EXTRA_UDP_PORT = "udpPort"
         const val EXTRA_CHANNEL = "channel"
+        const val EXTRA_REPEATER_ENABLED = "repeaterEnabled"
 
         private const val NOTIFICATION_CHANNEL_ID = "owalkie_stream"
         private const val NOTIFICATION_ID = 101
@@ -75,8 +78,8 @@ class WalkieService : Service() {
 
         private const val SAMPLE_RATE = 8000
         private const val CHANNELS = 1
-        private const val FRAME_MS = 20
-        private const val FRAME_SAMPLES = SAMPLE_RATE / 50
+        private const val DEFAULT_PACKET_MS = 20
+        private const val MAX_PACKET_SAMPLES = SAMPLE_RATE * 60 / 1000
         private const val BEEP_MS = 300
     }
 
@@ -118,6 +121,12 @@ class WalkieService : Service() {
     @Volatile
     private var targetUdpAddress: InetAddress? = resolveHost(DEFAULT_WS_HOST)
 
+    @Volatile
+    private var repeaterEnabled: Boolean = false
+
+    @Volatile
+    private var packetMs: Int = DEFAULT_PACKET_MS
+
     private lateinit var codec: OpusCodec
 
     override fun onCreate() {
@@ -136,6 +145,7 @@ class WalkieService : Service() {
             ACTION_CANCEL_CONNECT -> cancelConnection()
             ACTION_PTT_PRESS -> onPttPress()
             ACTION_PTT_RELEASE -> onPttRelease()
+            ACTION_SET_REPEATER -> setRepeaterMode(intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, false))
         }
         return START_STICKY
     }
@@ -153,6 +163,26 @@ class WalkieService : Service() {
             udpSocket = null
         }
         okHttpClient.dispatcher.executorService.shutdown()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (!desiredConnection.get()) return
+        val restartIntent = Intent(applicationContext, WalkieService::class.java).apply {
+            action = ACTION_START
+            putExtra(EXTRA_SERVER_HOST, serverHost)
+            putExtra(EXTRA_WS_PORT, wsPort)
+            putExtra(EXTRA_UDP_PORT, udpPort)
+            putExtra(EXTRA_CHANNEL, channel)
+            putExtra(EXTRA_REPEATER_ENABLED, repeaterEnabled)
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                applicationContext.startForegroundService(restartIntent)
+            } else {
+                applicationContext.startService(restartIntent)
+            }
+        }
     }
 
     private fun startCore(intent: Intent?) {
@@ -183,8 +213,33 @@ class WalkieService : Service() {
             .setContentText(getString(R.string.service_notification_text))
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
+            .setContentIntent(mainActivityPendingIntent())
+            .addAction(
+                0,
+                getString(R.string.service_notification_action_battery),
+                batterySettingsPendingIntent(),
+            )
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
         startForeground(NOTIFICATION_ID, notification)
+    }
+
+    private fun mainActivityPendingIntent(): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        return PendingIntent.getActivity(this, 2001, intent, flags)
+    }
+
+    private fun batterySettingsPendingIntent(): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_OPEN_BATTERY_SETTINGS
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        return PendingIntent.getActivity(this, 2002, intent, flags)
     }
 
     private fun connectWebSocket(force: Boolean = false) {
@@ -199,7 +254,9 @@ class WalkieService : Service() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 wsConnected.set(true)
                 wsRetryAttempt.set(0)
+                packetMs = DEFAULT_PACKET_MS
                 webSocket.send("""{"type":"join","channel":"$channel"}""")
+                sendRepeaterModeCommand(webSocket)
                 sendUdpHello()
                 broadcastStatus(currentSignalByte())
             }
@@ -234,7 +291,10 @@ class WalkieService : Service() {
         runCatching {
             val obj = JSONObject(text)
             when (obj.optString("type")) {
-                "welcome" -> sessionId.set(obj.optLong("sessionId", 0L))
+                "welcome" -> {
+                    sessionId.set(obj.optLong("sessionId", 0L))
+                    packetMs = normalizePacketMs(obj.optInt("packetMs", DEFAULT_PACKET_MS))
+                }
                 "pong" -> Unit
             }
         }
@@ -272,7 +332,7 @@ class WalkieService : Service() {
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                minBuffer.coerceAtLeast(FRAME_SAMPLES * 4),
+                minBuffer.coerceAtLeast(MAX_PACKET_SAMPLES * 4),
                 AudioTrack.MODE_STREAM,
             )
             track.play()
@@ -294,8 +354,13 @@ class WalkieService : Service() {
                         continue
                     }
                     if (packet.length <= 9) continue
+                    if (transmitting.get()) {
+                        // During local TX we intentionally drop inbound audio
+                        // to avoid hearing server stream in parallel with speaking.
+                        continue
+                    }
                     val opus = packet.data.copyOfRange(9, packet.length)
-                    val pcm = codec.decode(opus, FRAME_SAMPLES)
+                    val pcm = codec.decode(opus, currentFrameSamples())
                     track.write(pcm, 0, pcm.size)
                 }
             } finally {
@@ -319,6 +384,7 @@ class WalkieService : Service() {
     }
 
     private suspend fun runCaptureLoop() = withContext(Dispatchers.IO) {
+        val frameSamples = currentFrameSamples()
         val minBuffer = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
@@ -329,11 +395,11 @@ class WalkieService : Service() {
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
-            minBuffer.coerceAtLeast(FRAME_SAMPLES * 4),
+            minBuffer.coerceAtLeast(frameSamples * 4),
         )
         disableRecordPreprocessing(recorder.audioSessionId)
 
-        val frame = ShortArray(FRAME_SAMPLES)
+        val frame = ShortArray(frameSamples)
         try {
             recorder.startRecording()
             while (transmitting.get() && isActive) {
@@ -353,13 +419,14 @@ class WalkieService : Service() {
     private suspend fun streamRogerBeep() {
         val beepPcm = generateSineBeep(SAMPLE_RATE, 950.0, BEEP_MS)
         var offset = 0
+        val frameSamples = currentFrameSamples()
         while (offset < beepPcm.size) {
-            val end = (offset + FRAME_SAMPLES).coerceAtMost(beepPcm.size)
+            val end = (offset + frameSamples).coerceAtMost(beepPcm.size)
             val frame = beepPcm.copyOfRange(offset, end)
             val opus = codec.encode(frame)
             sendUdpFrame(opus, currentSignalByte())
             offset = end
-            delay(FRAME_MS.toLong())
+            delay(currentPacketMs().toLong())
         }
     }
 
@@ -477,7 +544,27 @@ class WalkieService : Service() {
         webSocket?.send("""{"type":"udp_hello","udpPort":$localPort}""")
     }
 
+    private fun setRepeaterMode(enabled: Boolean) {
+        repeaterEnabled = enabled
+        webSocket?.let { sendRepeaterModeCommand(it) }
+    }
+
+    private fun sendRepeaterModeCommand(ws: WebSocket) {
+        ws.send("""{"type":"repeater_mode","enabled":$repeaterEnabled}""")
+    }
+
     private fun wsUrl(): String = "ws://$serverHost:$wsPort/ws"
+
+    private fun normalizePacketMs(value: Int): Int {
+        return when (value) {
+            10, 20, 40, 60 -> value
+            else -> DEFAULT_PACKET_MS
+        }
+    }
+
+    private fun currentPacketMs(): Int = normalizePacketMs(packetMs)
+
+    private fun currentFrameSamples(): Int = (SAMPLE_RATE * currentPacketMs()) / 1000
 
     private fun resolveHost(host: String): InetAddress? {
         return try {
@@ -493,6 +580,7 @@ class WalkieService : Service() {
         val newWsPort = intent.getIntExtra(EXTRA_WS_PORT, -1)
         val newUdpPort = intent.getIntExtra(EXTRA_UDP_PORT, -1)
         val newChannel = intent.getStringExtra(EXTRA_CHANNEL)?.trim().orEmpty()
+        val newRepeaterEnabled = intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, repeaterEnabled)
 
         if (newHost.isBlank() || newWsPort !in 1..65535 || newUdpPort !in 1..65535 || newChannel.isBlank()) {
             return false
@@ -502,13 +590,15 @@ class WalkieService : Service() {
             val changed = serverHost != newHost ||
                 wsPort != newWsPort ||
                 udpPort != newUdpPort ||
-                channel != newChannel
+                channel != newChannel ||
+                repeaterEnabled != newRepeaterEnabled
             if (!changed) return false
 
             serverHost = newHost
             wsPort = newWsPort
             udpPort = newUdpPort
             channel = newChannel
+            repeaterEnabled = newRepeaterEnabled
             targetUdpAddress = resolveHost(newHost)
             sessionId.set(0)
             seq.set(0)

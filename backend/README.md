@@ -12,8 +12,9 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 
 - `server.ws_addr` WebSocket control-plane address
 - `server.udp_addr` UDP data-plane address
-- `server.loopback` send mixed stream back to source speaker
+- `server.packet_ms` Opus frame duration in milliseconds (`10`, `20`, `40`, `60`; default `20`)
 - `modules.noise.*` white-noise + squelch behavior
+- `modules.click.click_db` click level at transmission start/end
 - `modules.compressor.*` compressor settings
 - `modules.distortion.*` distortion settings
 
@@ -30,6 +31,7 @@ Client -> server:
 - `{"type":"join","channel":"global"}`
 - `{"type":"switch_channel","channel":"teamA"}`
 - `{"type":"udp_hello","udpPort":7001}`
+- `{"type":"repeater_mode","enabled":true}`
 - `{"type":"heartbeat"}`
 
 ## UDP Packet Format

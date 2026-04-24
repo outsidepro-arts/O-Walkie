@@ -25,11 +25,15 @@ import (
 const (
 	sampleRate      = 8000
 	audioChannels   = 1
-	frameDur        = 20 * time.Millisecond
-	frameSamples    = sampleRate / 50
 	maxUDPDatagram  = 1500
 	opusMaxFrameLen = 512
 	configFilePath  = "config.json"
+	defaultPacketMs = 20
+)
+
+var (
+	packetDur     = time.Duration(defaultPacketMs) * time.Millisecond
+	packetSamples = sampleRate * defaultPacketMs / 1000
 )
 
 type appConfig struct {
@@ -40,11 +44,12 @@ type appConfig struct {
 type serverConfig struct {
 	WSAddr   string `json:"ws_addr"`
 	UDPAddr  string `json:"udp_addr"`
-	Loopback bool   `json:"loopback"`
+	PacketMs int    `json:"packet_ms"`
 }
 
 type modulesConfig struct {
 	Noise      noiseConfig      `json:"noise"`
+	Click      clickConfig      `json:"click"`
 	Compressor compressorConfig `json:"compressor"`
 	Distortion distortionConfig `json:"distortion"`
 }
@@ -69,15 +74,20 @@ type compressorConfig struct {
 	MakeupDB    float64 `json:"makeup_db"`
 }
 
+type clickConfig struct {
+	ClickDB float64 `json:"click_db"`
+}
+
 type distortionConfig struct {
 	Drive float64 `json:"drive"`
 	Mix   float64 `json:"mix"`
 }
 
 type wsMessage struct {
-	Type    string `json:"type"`
-	Channel string `json:"channel,omitempty"`
-	UDPPort int    `json:"udpPort,omitempty"`
+	Type            string `json:"type"`
+	Channel         string `json:"channel,omitempty"`
+	UDPPort         int    `json:"udpPort,omitempty"`
+	RepeaterEnabled *bool  `json:"enabled,omitempty"`
 }
 
 type wsServerMessage struct {
@@ -85,15 +95,17 @@ type wsServerMessage struct {
 	SessionID uint32 `json:"sessionId,omitempty"`
 	Channel   string `json:"channel,omitempty"`
 	Info      string `json:"info,omitempty"`
+	PacketMs  int    `json:"packetMs,omitempty"`
 }
 
 type client struct {
 	sessionID uint32
 	conn      *websocket.Conn
 
-	mu      sync.RWMutex
-	channel string
-	udpAddr *net.UDPAddr
+	mu       sync.RWMutex
+	channel  string
+	udpAddr  *net.UDPAddr
+	repeater bool
 }
 
 func (c *client) setChannel(ch string) {
@@ -118,6 +130,18 @@ func (c *client) getUDPAddr() *net.UDPAddr {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.udpAddr
+}
+
+func (c *client) setRepeaterMode(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.repeater = enabled
+}
+
+func (c *client) isRepeaterMode() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.repeater
 }
 
 type audioPacket struct {
@@ -151,9 +175,8 @@ type relayHub struct {
 	channelMu sync.RWMutex
 	channels  map[string]*channelMixer
 
-	udpConn  *net.UDPConn
-	loopback bool
-	cfg      appConfig
+	udpConn *net.UDPConn
+	cfg     appConfig
 }
 
 func newRelayHub(udpConn *net.UDPConn, cfg appConfig) *relayHub {
@@ -161,7 +184,6 @@ func newRelayHub(udpConn *net.UDPConn, cfg appConfig) *relayHub {
 		clients:  make(map[uint32]*client),
 		channels: make(map[string]*channelMixer),
 		udpConn:  udpConn,
-		loopback: cfg.Server.Loopback,
 		cfg:      cfg,
 	}
 }
@@ -250,7 +272,10 @@ func (h *relayHub) broadcastMixed(channel string, excludeSession uint32, mixedOp
 		if c.getChannel() != channel {
 			continue
 		}
-		if !h.loopback && excludeSession != 0 && c.sessionID == excludeSession {
+		if excludeSession != 0 && c.sessionID == excludeSession {
+			continue
+		}
+		if c.isRepeaterMode() {
 			continue
 		}
 		addr := c.getUDPAddr()
@@ -260,6 +285,20 @@ func (h *relayHub) broadcastMixed(channel string, excludeSession uint32, mixedOp
 		if _, err := h.udpConn.WriteToUDP(payload, addr); err != nil {
 			log.Printf("udp broadcast failed to %s: %v", addr, err)
 		}
+	}
+}
+
+func (h *relayHub) sendToClient(sessionID uint32, payload []byte) {
+	c := h.getClient(sessionID)
+	if c == nil {
+		return
+	}
+	addr := c.getUDPAddr()
+	if addr == nil {
+		return
+	}
+	if _, err := h.udpConn.WriteToUDP(payload, addr); err != nil {
+		log.Printf("udp send failed to %d (%s): %v", sessionID, addr, err)
 	}
 }
 
@@ -280,6 +319,78 @@ type channelMixer struct {
 	lastSignal   float64
 	filter       *bandPass
 	modules      []audioModule
+	modulesCfg   modulesConfig
+
+	repeaterMu    sync.Mutex
+	repeaterState map[uint32]*repeaterSession
+}
+
+type repeaterSession struct {
+	processor  *audioProcessor
+	bufferPCM  []int16
+	lastPacket time.Time
+	collecting bool
+	lastSignal float64
+}
+
+type audioProcessor struct {
+	modules      []audioModule
+	filter       *bandPass
+	noiseLevelDB float64
+	lastSignal   float64
+}
+
+func newAudioProcessor(mcfg modulesConfig) *audioProcessor {
+	return &audioProcessor{
+		modules: []audioModule{
+			newWhiteNoiseSquelchModule(packetDur, mcfg.Noise),
+			newClickModule(mcfg.Click),
+			newCompressorModule(sampleRate, mcfg.Compressor),
+			newDistortionModule(mcfg.Distortion),
+		},
+		filter:       newBandPass(sampleRate, 300.0, 3000.0),
+		noiseLevelDB: mcfg.Noise.MinNoiseDB,
+		lastSignal:   255.0,
+	}
+}
+
+func (p *audioProcessor) process(input []int16, signalByte float64, active bool) ([]int16, bool) {
+	mixed := make([]float64, packetSamples)
+	if active {
+		p.lastSignal = signalByte
+		limit := len(input)
+		if limit > packetSamples {
+			limit = packetSamples
+		}
+		for i := 0; i < limit; i++ {
+			mixed[i] = float64(input[i])
+		}
+	}
+	ctx := &audioProcessContext{
+		Mixed:          mixed,
+		AvgSignalByte:  p.lastSignal,
+		ActiveSpeakers: boolToInt(active),
+		NoiseLevelDB:   p.noiseLevelDB,
+		EmitFrame:      active,
+	}
+	for _, mod := range p.modules {
+		mod.Process(ctx)
+		if ctx.DropFrame {
+			p.noiseLevelDB = ctx.NoiseLevelDB
+			return nil, false
+		}
+	}
+	p.noiseLevelDB = ctx.NoiseLevelDB
+	if !ctx.EmitFrame {
+		return nil, false
+	}
+
+	out := make([]int16, packetSamples)
+	for i := 0; i < packetSamples; i++ {
+		out[i] = hardClipFloat(ctx.Mixed[i], 15000.0)
+	}
+	p.filter.process(out)
+	return out, true
 }
 
 func newChannelMixer(name string, hub *relayHub, mcfg modulesConfig) *channelMixer {
@@ -297,11 +408,14 @@ func newChannelMixer(name string, hub *relayHub, mcfg modulesConfig) *channelMix
 		noiseLevelDB: -30.0,
 		lastSignal:   255.0,
 		filter:       newBandPass(sampleRate, 300.0, 3000.0),
+		modulesCfg:   mcfg,
 		modules: []audioModule{
-			newWhiteNoiseSquelchModule(frameDur, mcfg.Noise),
+			newWhiteNoiseSquelchModule(packetDur, mcfg.Noise),
+			newClickModule(mcfg.Click),
 			newCompressorModule(sampleRate, mcfg.Compressor),
 			newDistortionModule(mcfg.Distortion),
 		},
+		repeaterState: make(map[uint32]*repeaterSession),
 	}
 }
 
@@ -316,6 +430,13 @@ func (m *channelMixer) removeParticipant(sessionID uint32) {
 	defer m.participantsMu.Unlock()
 	delete(m.participants, sessionID)
 	delete(m.decoders, sessionID)
+	m.clearRepeaterState(sessionID)
+}
+
+func (m *channelMixer) clearRepeaterState(sessionID uint32) {
+	m.repeaterMu.Lock()
+	defer m.repeaterMu.Unlock()
+	delete(m.repeaterState, sessionID)
 }
 
 func (m *channelMixer) push(pkt *audioPacket) {
@@ -335,7 +456,7 @@ func (m *channelMixer) push(pkt *audioPacket) {
 }
 
 func (m *channelMixer) run() {
-	ticker := time.NewTicker(frameDur)
+	ticker := time.NewTicker(packetDur)
 	defer ticker.Stop()
 
 	latestBySpeaker := make(map[uint32]*audioPacket)
@@ -352,9 +473,10 @@ func (m *channelMixer) run() {
 }
 
 func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
-	mixed := make([]float64, frameSamples)
+	mixed := make([]float64, packetSamples)
 	activeSpeakers := make([]uint32, 0, len(frames))
 	var signalSum float64
+	now := time.Now()
 
 	for sessionID, pkt := range frames {
 		dec := m.decoders[sessionID]
@@ -368,7 +490,7 @@ func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
 			m.decoders[sessionID] = dec
 		}
 
-		pcm := make([]int16, frameSamples)
+		pcm := make([]int16, packetSamples)
 		n, err := dec.Decode(pkt.opus, pcm)
 		if err != nil {
 			log.Printf("opus decode failed for %d: %v", sessionID, err)
@@ -378,17 +500,28 @@ func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
 			continue
 		}
 
-		activeSpeakers = append(activeSpeakers, sessionID)
-		signalSum += float64(pkt.signalStrength)
-
+		pcmFrame := make([]int16, packetSamples)
 		maxN := n
-		if maxN > frameSamples {
-			maxN = frameSamples
+		if maxN > packetSamples {
+			maxN = packetSamples
 		}
 		for i := 0; i < maxN; i++ {
-			mixed[i] += float64(pcm[i])
+			pcmFrame[i] = pcm[i]
+		}
+
+		client := m.hub.getClient(sessionID)
+		if client != nil && client.isRepeaterMode() {
+			m.processRepeaterCapture(sessionID, pcmFrame, float64(pkt.signalStrength), now)
+			continue
+		}
+		activeSpeakers = append(activeSpeakers, sessionID)
+		signalSum += float64(pkt.signalStrength)
+		for i := 0; i < packetSamples; i++ {
+			mixed[i] += float64(pcmFrame[i])
 		}
 	}
+
+	m.processRepeaterFinalization(now)
 
 	if len(activeSpeakers) == 0 {
 		signalSum = m.lastSignal
@@ -415,8 +548,8 @@ func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
 		return
 	}
 
-	outPCM := make([]int16, frameSamples)
-	for i := 0; i < frameSamples; i++ {
+	outPCM := make([]int16, packetSamples)
+	for i := 0; i < packetSamples; i++ {
 		// Saturated character: hard clip after sum.
 		outPCM[i] = hardClipFloat(mixed[i], 15000.0)
 	}
@@ -437,6 +570,94 @@ func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
 		exclude = activeSpeakers[0]
 	}
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
+}
+
+func (m *channelMixer) processRepeaterCapture(sessionID uint32, pcm []int16, signalByte float64, now time.Time) {
+	m.repeaterMu.Lock()
+	defer m.repeaterMu.Unlock()
+	st := m.repeaterState[sessionID]
+	if st == nil {
+		st = &repeaterSession{
+			processor:  newAudioProcessor(m.modulesCfg),
+			lastSignal: 255.0,
+		}
+		m.repeaterState[sessionID] = st
+	}
+	out, emit := st.processor.process(pcm, signalByte, true)
+	if emit {
+		st.bufferPCM = append(st.bufferPCM, out...)
+	}
+	st.collecting = true
+	st.lastPacket = now
+	st.lastSignal = signalByte
+}
+
+func (m *channelMixer) processRepeaterFinalization(now time.Time) {
+	m.repeaterMu.Lock()
+	defer m.repeaterMu.Unlock()
+	for sessionID, st := range m.repeaterState {
+		client := m.hub.getClient(sessionID)
+		if client == nil || !client.isRepeaterMode() {
+			delete(m.repeaterState, sessionID)
+			continue
+		}
+		if !st.collecting {
+			continue
+		}
+		if now.Sub(st.lastPacket) < (2 * packetDur) {
+			continue
+		}
+
+		for i := 0; i < 16; i++ {
+			out, emit := st.processor.process(nil, st.lastSignal, false)
+			if !emit {
+				break
+			}
+			st.bufferPCM = append(st.bufferPCM, out...)
+		}
+
+		bufferCopy := append([]int16(nil), st.bufferPCM...)
+		st.bufferPCM = st.bufferPCM[:0]
+		st.collecting = false
+		go m.playbackRepeaterAfterDelay(sessionID, bufferCopy, 500*time.Millisecond)
+	}
+}
+
+func (m *channelMixer) playbackRepeaterAfterDelay(sessionID uint32, pcm []int16, delayDur time.Duration) {
+	if len(pcm) == 0 {
+		return
+	}
+	time.Sleep(delayDur)
+
+	enc, err := opus.NewEncoder(sampleRate, audioChannels, opus.AppVoIP)
+	if err != nil {
+		log.Printf("repeater encoder create failed: %v", err)
+		return
+	}
+
+	var seq uint32
+	for offset := 0; offset < len(pcm); offset += packetSamples {
+		frame := make([]int16, packetSamples)
+		end := offset + packetSamples
+		if end > len(pcm) {
+			end = len(pcm)
+		}
+		copy(frame, pcm[offset:end])
+
+		opusBuf := make([]byte, opusMaxFrameLen)
+		n, err := enc.Encode(frame, opusBuf)
+		if err != nil || n <= 0 {
+			continue
+		}
+		seq++
+		header := make([]byte, 9)
+		binary.BigEndian.PutUint32(header[0:4], 0)
+		binary.BigEndian.PutUint32(header[4:8], seq)
+		header[8] = 255
+		payload := append(header, opusBuf[:n]...)
+		m.hub.sendToClient(sessionID, payload)
+		time.Sleep(packetDur)
+	}
 }
 
 func hardClip(v int32, threshold int32) int16 {
@@ -466,6 +687,75 @@ type whiteNoiseSquelchModule struct {
 	squelchLatched     bool
 	lastActive         bool
 	cfg                noiseConfig
+}
+
+type clickModule struct {
+	clickAmplitude float64
+	freqHz         float64
+	burstSamples   int
+	lastActive     bool
+	pendingEnd     bool
+}
+
+func newClickModule(cfg clickConfig) *clickModule {
+	amp := 32767.0 * dbToLinear(cfg.ClickDB)
+	if amp < 0 {
+		amp = 0
+	}
+	if amp > 32767.0 {
+		amp = 32767.0
+	}
+	return &clickModule{
+		clickAmplitude: amp,
+		freqHz:         200.0,
+		burstSamples:   sampleRate / 80, // ~12.5 ms burst at 8 kHz.
+	}
+}
+
+func (m *clickModule) Name() string {
+	return "tx_click"
+}
+
+func (m *clickModule) Process(ctx *audioProcessContext) {
+	active := ctx.ActiveSpeakers > 0
+	if active && !m.lastActive {
+		m.injectClick(ctx, 1.0)
+		ctx.EmitFrame = true
+		m.pendingEnd = false
+	} else if !active && m.lastActive {
+		// Speaker just released PTT: wait until squelch/noise tail closes,
+		// then emit exactly one terminal click.
+		m.pendingEnd = true
+	}
+
+	if !active && m.pendingEnd && !ctx.EmitFrame {
+		m.injectClick(ctx, -1.0)
+		ctx.EmitFrame = true
+		m.pendingEnd = false
+		m.lastActive = false
+		return
+	}
+	m.lastActive = active
+}
+
+func (m *clickModule) injectClick(ctx *audioProcessContext, sign float64) {
+	if len(ctx.Mixed) == 0 || m.clickAmplitude <= 0 || m.burstSamples <= 0 {
+		return
+	}
+	limit := m.burstSamples
+	if limit > len(ctx.Mixed) {
+		limit = len(ctx.Mixed)
+	}
+	phaseOffset := 0.0
+	if sign < 0 {
+		phaseOffset = math.Pi
+	}
+	for i := 0; i < limit; i++ {
+		t := float64(i) / float64(sampleRate)
+		env := math.Exp(-4.0 * float64(i) / float64(limit))
+		wave := math.Sin(2.0*math.Pi*m.freqHz*t + phaseOffset)
+		ctx.Mixed[i] += wave * m.clickAmplitude * env
+	}
 }
 
 func newWhiteNoiseSquelchModule(frameDuration time.Duration, cfg noiseConfig) *whiteNoiseSquelchModule {
@@ -565,6 +855,35 @@ func maxInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func normalizePacketMs(ms int) int {
+	if ms <= 0 {
+		return defaultPacketMs
+	}
+	return ms
+}
+
+func isSupportedPacketMs(ms int) bool {
+	switch ms {
+	case 10, 20, 40, 60:
+		return true
+	default:
+		return false
+	}
+}
+
+func applyPacketTiming(packetMs int) {
+	norm := normalizePacketMs(packetMs)
+	packetDur = time.Duration(norm) * time.Millisecond
+	packetSamples = sampleRate * norm / 1000
 }
 
 type whiteNoise struct{}
@@ -776,7 +1095,7 @@ func defaultConfig() appConfig {
 		Server: serverConfig{
 			WSAddr:   ":5500",
 			UDPAddr:  ":5505",
-			Loopback: true,
+			PacketMs: defaultPacketMs,
 		},
 		Modules: modulesConfig{
 			Noise: noiseConfig{
@@ -789,6 +1108,9 @@ func defaultConfig() appConfig {
 				TailNoiseDB:        0.0,
 				TailMinMs:          15,
 				TailMaxMs:          60,
+			},
+			Click: clickConfig{
+				ClickDB: -8.0,
 			},
 			Compressor: compressorConfig{
 				ThresholdDB: -18.0,
@@ -814,6 +1136,7 @@ func loadConfig(path string) (appConfig, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return appConfig{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
+	cfg.Server.PacketMs = normalizePacketMs(cfg.Server.PacketMs)
 	if err := validateConfig(cfg); err != nil {
 		return appConfig{}, err
 	}
@@ -824,11 +1147,17 @@ func validateConfig(cfg appConfig) error {
 	if strings.TrimSpace(cfg.Server.WSAddr) == "" || strings.TrimSpace(cfg.Server.UDPAddr) == "" {
 		return errors.New("server.ws_addr and server.udp_addr must be set")
 	}
+	if !isSupportedPacketMs(cfg.Server.PacketMs) {
+		return errors.New("server.packet_ms must be one of: 10, 20, 40, 60")
+	}
 	if cfg.Modules.Compressor.Ratio <= 0 {
 		return errors.New("modules.compressor.ratio must be > 0")
 	}
 	if cfg.Modules.Noise.NoiseGain <= 0 {
 		return errors.New("modules.noise.noise_gain must be > 0")
+	}
+	if math.IsNaN(cfg.Modules.Click.ClickDB) || math.IsInf(cfg.Modules.Click.ClickDB, 0) {
+		return errors.New("modules.click.click_db must be a finite number")
 	}
 	if cfg.Modules.Distortion.Mix < 0 || cfg.Modules.Distortion.Mix > 1 {
 		return errors.New("modules.distortion.mix must be in [0..1]")
@@ -868,6 +1197,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		Type:      "welcome",
 		SessionID: c.sessionID,
 		Channel:   "global",
+		PacketMs:  normalizePacketMs(s.hub.cfg.Server.PacketMs),
 	})
 
 	for {
@@ -899,6 +1229,13 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		case "ping", "heartbeat":
 			_ = conn.WriteJSON(wsServerMessage{Type: "pong"})
+		case "repeater_mode":
+			enabled := msg.RepeaterEnabled != nil && *msg.RepeaterEnabled
+			c.setRepeaterMode(enabled)
+			if !enabled {
+				s.hub.getOrCreateChannel(c.getChannel()).clearRepeaterState(c.sessionID)
+			}
+			_ = conn.WriteJSON(wsServerMessage{Type: "repeater_mode", Info: strconv.FormatBool(enabled)})
 		default:
 			_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "unknown message type"})
 		}
@@ -914,6 +1251,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("config error: %v", err)
 	}
+	applyPacketTiming(cfg.Server.PacketMs)
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -936,7 +1274,7 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	log.Printf("relay started ws=%s udp=%s loopback=%v", cfg.Server.WSAddr, cfg.Server.UDPAddr, cfg.Server.Loopback)
+	log.Printf("relay started ws=%s udp=%s packet_ms=%d", cfg.Server.WSAddr, cfg.Server.UDPAddr, normalizePacketMs(cfg.Server.PacketMs))
 	if err := http.ListenAndServe(cfg.Server.WSAddr, mux); err != nil {
 		log.Fatalf("ws server error: %v", err)
 	}
