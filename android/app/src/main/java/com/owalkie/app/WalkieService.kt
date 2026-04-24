@@ -12,6 +12,9 @@ import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.media.ToneGenerator
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
@@ -70,7 +73,7 @@ class WalkieService : Service() {
         private const val DEFAULT_UDP_PORT = 5000
         private const val DEFAULT_CHANNEL = "global"
 
-        private const val SAMPLE_RATE = 16000
+        private const val SAMPLE_RATE = 8000
         private const val CHANNELS = 1
         private const val FRAME_MS = 20
         private const val FRAME_SAMPLES = SAMPLE_RATE / 50
@@ -312,10 +315,7 @@ class WalkieService : Service() {
 
     private fun onPttRelease() {
         if (!transmitting.getAndSet(false)) return
-        serviceScope.launch(Dispatchers.Default) {
-            playLocalRogerBeep()
-            streamRogerBeep()
-        }
+        // Roger beep disabled for current testing phase.
     }
 
     private suspend fun runCaptureLoop() = withContext(Dispatchers.IO) {
@@ -325,12 +325,13 @@ class WalkieService : Service() {
             AudioFormat.ENCODING_PCM_16BIT,
         )
         val recorder = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            MediaRecorder.AudioSource.MIC,
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
             minBuffer.coerceAtLeast(FRAME_SAMPLES * 4),
         )
+        disableRecordPreprocessing(recorder.audioSessionId)
 
         val frame = ShortArray(FRAME_SAMPLES)
         try {
@@ -404,6 +405,33 @@ class WalkieService : Service() {
             .onFailure {
                 recreateUdpSocket()
             }
+    }
+
+    private fun disableRecordPreprocessing(audioSessionId: Int) {
+        runCatching {
+            if (NoiseSuppressor.isAvailable()) {
+                NoiseSuppressor.create(audioSessionId)?.let { ns ->
+                    ns.enabled = false
+                    ns.release()
+                }
+            }
+        }
+        runCatching {
+            if (AcousticEchoCanceler.isAvailable()) {
+                AcousticEchoCanceler.create(audioSessionId)?.let { aec ->
+                    aec.enabled = false
+                    aec.release()
+                }
+            }
+        }
+        runCatching {
+            if (AutomaticGainControl.isAvailable()) {
+                AutomaticGainControl.create(audioSessionId)?.let { agc ->
+                    agc.enabled = false
+                    agc.release()
+                }
+            }
+        }
     }
 
     private fun ensureSignalMonitorLoop() {

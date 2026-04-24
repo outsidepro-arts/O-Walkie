@@ -16,9 +16,9 @@ class OpusCodecFactory {
         return try {
             val codec = KopusCodec(sampleRate, channels)
             // Validate codec early to avoid runtime crash on first PTT.
-            val probe = ShortArray(320)
+            val probe = ShortArray((sampleRate / 50).coerceAtLeast(1))
             val encoded = codec.encode(probe)
-            codec.decode(encoded, 320)
+            codec.decode(encoded, probe.size)
             codec
         } catch (_: Throwable) {
             // Keep app usable on dev devices where JNI Opus binding is unavailable.

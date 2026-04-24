@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	sampleRate      = 16000
+	sampleRate      = 8000
 	audioChannels   = 1
 	frameDur        = 20 * time.Millisecond
 	frameSamples    = sampleRate / 50
@@ -82,6 +82,22 @@ type audioPacket struct {
 	signalStrength uint8
 	opus           []byte
 	srcAddr        *net.UDPAddr
+}
+
+// audioProcessContext is the pluggable processing contract for channel audio modules.
+// New DSP modules can be injected by implementing audioModule and appending it to channelMixer.modules.
+type audioProcessContext struct {
+	Mixed          []float64
+	AvgSignalByte  float64
+	ActiveSpeakers int
+	NoiseLevelDB   float64
+	EmitFrame      bool
+	DropFrame      bool
+}
+
+type audioModule interface {
+	Name() string
+	Process(ctx *audioProcessContext)
 }
 
 type relayHub struct {
@@ -213,9 +229,11 @@ type channelMixer struct {
 	decoders map[uint32]*opus.Decoder
 	encoder  *opus.Encoder
 
-	seq     uint32
-	pinkGen *pinkNoise
-	filter  *bandPass
+	seq          uint32
+	noiseLevelDB float64
+	lastSignal   float64
+	filter       *bandPass
+	modules      []audioModule
 }
 
 func newChannelMixer(name string, hub *relayHub) *channelMixer {
@@ -230,8 +248,12 @@ func newChannelMixer(name string, hub *relayHub) *channelMixer {
 		participants: make(map[uint32]struct{}),
 		decoders:     make(map[uint32]*opus.Decoder),
 		encoder:      enc,
-		pinkGen:      newPinkNoise(),
+		noiseLevelDB: -30.0,
+		lastSignal:   255.0,
 		filter:       newBandPass(sampleRate, 300.0, 3000.0),
+		modules: []audioModule{
+			newWhiteNoiseSquelchModule(frameDur),
+		},
 	}
 }
 
@@ -275,9 +297,6 @@ func (m *channelMixer) run() {
 		case pkt := <-m.input:
 			latestBySpeaker[pkt.sessionID] = pkt
 		case <-ticker.C:
-			if len(latestBySpeaker) == 0 {
-				continue
-			}
 			m.mixAndBroadcast(latestBySpeaker)
 			clear(latestBySpeaker)
 		}
@@ -285,10 +304,9 @@ func (m *channelMixer) run() {
 }
 
 func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
-	mixed := make([]int32, frameSamples)
+	mixed := make([]float64, frameSamples)
 	activeSpeakers := make([]uint32, 0, len(frames))
-	var inverseSignalSum float64
-	var inverseSignalCount float64
+	var signalSum float64
 
 	for sessionID, pkt := range frames {
 		dec := m.decoders[sessionID]
@@ -313,36 +331,46 @@ func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
 		}
 
 		activeSpeakers = append(activeSpeakers, sessionID)
-		inverseSignalSum += float64(255-pkt.signalStrength) / 255.0
-		inverseSignalCount++
+		signalSum += float64(pkt.signalStrength)
 
 		maxN := n
 		if maxN > frameSamples {
 			maxN = frameSamples
 		}
 		for i := 0; i < maxN; i++ {
-			mixed[i] += int32(pcm[i])
+			mixed[i] += float64(pcm[i])
 		}
 	}
 
 	if len(activeSpeakers) == 0 {
-		return
+		signalSum = m.lastSignal
+	} else {
+		m.lastSignal = signalSum / float64(len(activeSpeakers))
 	}
 
-	noiseGain := 0.0
-	if inverseSignalCount > 0 {
-		noiseGain = inverseSignalSum / inverseSignalCount
+	ctx := &audioProcessContext{
+		Mixed:          mixed,
+		AvgSignalByte:  signalSum / float64(maxInt(len(activeSpeakers), 1)),
+		ActiveSpeakers: len(activeSpeakers),
+		NoiseLevelDB:   m.noiseLevelDB,
+		EmitFrame:      len(activeSpeakers) > 0,
 	}
-	// Add atmospheric pink noise: higher when signal is weak.
-	for i := 0; i < frameSamples; i++ {
-		noise := m.pinkGen.next() * 1200.0 * noiseGain
-		mixed[i] += int32(noise)
+	for _, mod := range m.modules {
+		mod.Process(ctx)
+		if ctx.DropFrame {
+			m.noiseLevelDB = ctx.NoiseLevelDB
+			return
+		}
+	}
+	m.noiseLevelDB = ctx.NoiseLevelDB
+	if !ctx.EmitFrame {
+		return
 	}
 
 	outPCM := make([]int16, frameSamples)
 	for i := 0; i < frameSamples; i++ {
 		// Saturated character: hard clip after sum.
-		outPCM[i] = hardClip(mixed[i], 15000)
+		outPCM[i] = hardClipFloat(mixed[i], 15000.0)
 	}
 	m.filter.process(outPCM)
 
@@ -360,7 +388,7 @@ func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
 	if len(activeSpeakers) == 1 {
 		exclude = activeSpeakers[0]
 	}
-	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8((1.0-noiseGain)*255.0))
+	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
 }
 
 func hardClip(v int32, threshold int32) int16 {
@@ -373,39 +401,130 @@ func hardClip(v int32, threshold int32) int16 {
 	return int16(v)
 }
 
-type pinkNoise struct {
-	rows    [16]float64
-	running float64
-	counter uint32
-}
-
-func newPinkNoise() *pinkNoise {
-	p := &pinkNoise{}
-	for i := range p.rows {
-		p.rows[i] = rand.Float64()*2 - 1
-		p.running += p.rows[i]
+func hardClipFloat(v float64, threshold float64) int16 {
+	if v > threshold {
+		return int16(threshold)
 	}
-	return p
+	if v < -threshold {
+		return int16(-threshold)
+	}
+	return int16(v)
 }
 
-func (p *pinkNoise) next() float64 {
-	p.counter++
-	n := p.counter
-	i := 0
-	for (n & 1) == 0 {
-		n >>= 1
-		i++
-		if i >= len(p.rows) {
-			break
+type whiteNoiseSquelchModule struct {
+	white              *whiteNoise
+	frameDuration      time.Duration
+	squelchBurstRemain time.Duration
+	squelchLatched     bool
+	lastActive         bool
+}
+
+func newWhiteNoiseSquelchModule(frameDuration time.Duration) *whiteNoiseSquelchModule {
+	return &whiteNoiseSquelchModule{
+		white:         newWhiteNoise(),
+		frameDuration: frameDuration,
+	}
+}
+
+func (m *whiteNoiseSquelchModule) Name() string {
+	return "white_noise_squelch"
+}
+
+func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
+	if ctx.ActiveSpeakers <= 0 {
+		// End-of-transmission tail burst: jump to 0 dB and emit white hiss briefly.
+		if m.lastActive && m.squelchBurstRemain <= 0 {
+			m.squelchBurstRemain = randomDurationMs(15, 60)
 		}
+		m.lastActive = false
+		if m.squelchBurstRemain <= 0 {
+			m.squelchLatched = false
+			ctx.EmitFrame = false
+			return
+		}
+		noiseAmplitude := 1200.0 * dbToLinear(0.0)
+		for i := range ctx.Mixed {
+			ctx.Mixed[i] += m.white.next() * noiseAmplitude
+		}
+		ctx.EmitFrame = true
+		m.squelchBurstRemain -= m.frameDuration
+		if m.squelchBurstRemain <= 0 {
+			m.squelchBurstRemain = 0
+		}
+		return
 	}
-	if i < len(p.rows) {
-		p.running -= p.rows[i]
-		p.rows[i] = rand.Float64()*2 - 1
-		p.running += p.rows[i]
+	m.lastActive = true
+
+	noiseDB := mapSignalByteToNoiseDB(ctx.AvgSignalByte)
+	ctx.NoiseLevelDB = noiseDB
+	noiseAmplitude := 1200.0 * dbToLinear(noiseDB)
+
+	// Squelch behavior: when the line is too weak, emit a short burst of hiss then gate output.
+	if noiseDB >= -3.0 {
+		if m.squelchLatched {
+			ctx.DropFrame = true
+			return
+		}
+		if m.squelchBurstRemain <= 0 {
+			m.squelchBurstRemain = randomDurationMs(50, 150)
+		}
+		for i := range ctx.Mixed {
+			ctx.Mixed[i] += m.white.next() * noiseAmplitude
+		}
+		m.squelchBurstRemain -= m.frameDuration
+		if m.squelchBurstRemain <= 0 {
+			m.squelchLatched = true
+			ctx.DropFrame = true
+		}
+		return
 	}
-	white := rand.Float64()*2 - 1
-	return ((p.running / float64(len(p.rows))) + 0.2*white) / 1.2
+
+	m.squelchLatched = false
+	m.squelchBurstRemain = 0
+	for i := range ctx.Mixed {
+		ctx.Mixed[i] += m.white.next() * noiseAmplitude
+	}
+}
+
+func mapSignalByteToNoiseDB(signalByte float64) float64 {
+	pct := (signalByte / 255.0) * 100.0
+	if pct <= 10.0 {
+		return -3.0
+	}
+	if pct >= 100.0 {
+		return -20.0
+	}
+	// Linear interpolation in dB domain:
+	// 10% -> -3 dB, 100% -> -20 dB.
+	return -3.0 - ((pct-10.0)/90.0)*17.0
+}
+
+func dbToLinear(db float64) float64 {
+	return math.Pow(10.0, db/20.0)
+}
+
+func randomDurationMs(minMs int, maxMs int) time.Duration {
+	if maxMs <= minMs {
+		return time.Duration(minMs) * time.Millisecond
+	}
+	return time.Duration(minMs+rand.Intn(maxMs-minMs+1)) * time.Millisecond
+}
+
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+type whiteNoise struct{}
+
+func newWhiteNoise() *whiteNoise {
+	return &whiteNoise{}
+}
+
+func (w *whiteNoise) next() float64 {
+	return rand.Float64()*2 - 1
 }
 
 type onePoleHP struct {
