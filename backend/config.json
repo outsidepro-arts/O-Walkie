@@ -1,0 +1,31 @@
+{
+  "server": {
+    "ws_addr": ":5500",
+    "udp_addr": ":5505",
+    "loopback": true
+  },
+  "modules": {
+    "noise": {
+      "min_noise_db": -20.0,
+      "max_noise_db": -3.0,
+      "noise_gain": 1200.0,
+      "squelch_threshold_db": -3.0,
+      "squelch_min_ms": 50,
+      "squelch_max_ms": 150,
+      "tail_noise_db": 0.0,
+      "tail_min_ms": 15,
+      "tail_max_ms": 60
+    },
+    "compressor": {
+      "threshold_db": -30.0,
+      "ratio": 100.2,
+      "attack_ms": 1.0,
+      "release_ms": 20.0,
+      "makeup_db": 4.0
+    },
+    "distortion": {
+      "drive": 1.35,
+      "mix": 0.50
+    }
+  }
+}

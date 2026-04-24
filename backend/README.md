@@ -3,14 +3,19 @@
 ## Start
 
 ```powershell
-go run ./cmd/relay -ws :8080 -udp :5000
+go run ./cmd/relay
 ```
 
-Flags:
+Server startup flags are disabled. Configure all runtime values in `config.json`.
 
-- `-ws` WebSocket control-plane address
-- `-udp` UDP data-plane address
-- `-loopback` send mixed audio back to source speaker too
+### Config (`backend/config.json`)
+
+- `server.ws_addr` WebSocket control-plane address
+- `server.udp_addr` UDP data-plane address
+- `server.loopback` send mixed stream back to source speaker
+- `modules.noise.*` white-noise + squelch behavior
+- `modules.compressor.*` compressor settings
+- `modules.distortion.*` distortion settings
 
 ## Control Plane (WebSocket `/ws`)
 

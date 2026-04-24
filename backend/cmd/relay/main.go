@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"math"
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,7 +29,50 @@ const (
 	frameSamples    = sampleRate / 50
 	maxUDPDatagram  = 1500
 	opusMaxFrameLen = 512
+	configFilePath  = "config.json"
 )
+
+type appConfig struct {
+	Server  serverConfig  `json:"server"`
+	Modules modulesConfig `json:"modules"`
+}
+
+type serverConfig struct {
+	WSAddr   string `json:"ws_addr"`
+	UDPAddr  string `json:"udp_addr"`
+	Loopback bool   `json:"loopback"`
+}
+
+type modulesConfig struct {
+	Noise      noiseConfig      `json:"noise"`
+	Compressor compressorConfig `json:"compressor"`
+	Distortion distortionConfig `json:"distortion"`
+}
+
+type noiseConfig struct {
+	MinNoiseDB         float64 `json:"min_noise_db"`
+	MaxNoiseDB         float64 `json:"max_noise_db"`
+	NoiseGain          float64 `json:"noise_gain"`
+	SquelchThresholdDB float64 `json:"squelch_threshold_db"`
+	SquelchMinMs       int     `json:"squelch_min_ms"`
+	SquelchMaxMs       int     `json:"squelch_max_ms"`
+	TailNoiseDB        float64 `json:"tail_noise_db"`
+	TailMinMs          int     `json:"tail_min_ms"`
+	TailMaxMs          int     `json:"tail_max_ms"`
+}
+
+type compressorConfig struct {
+	ThresholdDB float64 `json:"threshold_db"`
+	Ratio       float64 `json:"ratio"`
+	AttackMs    float64 `json:"attack_ms"`
+	ReleaseMs   float64 `json:"release_ms"`
+	MakeupDB    float64 `json:"makeup_db"`
+}
+
+type distortionConfig struct {
+	Drive float64 `json:"drive"`
+	Mix   float64 `json:"mix"`
+}
 
 type wsMessage struct {
 	Type    string `json:"type"`
@@ -109,14 +153,16 @@ type relayHub struct {
 
 	udpConn  *net.UDPConn
 	loopback bool
+	cfg      appConfig
 }
 
-func newRelayHub(udpConn *net.UDPConn, loopback bool) *relayHub {
+func newRelayHub(udpConn *net.UDPConn, cfg appConfig) *relayHub {
 	return &relayHub{
 		clients:  make(map[uint32]*client),
 		channels: make(map[string]*channelMixer),
 		udpConn:  udpConn,
-		loopback: loopback,
+		loopback: cfg.Server.Loopback,
+		cfg:      cfg,
 	}
 }
 
@@ -172,7 +218,7 @@ func (h *relayHub) getOrCreateChannel(name string) *channelMixer {
 	if existing, found := h.channels[name]; found {
 		return existing
 	}
-	m := newChannelMixer(name, h)
+	m := newChannelMixer(name, h, h.cfg.Modules)
 	h.channels[name] = m
 	go m.run()
 	return m
@@ -236,7 +282,7 @@ type channelMixer struct {
 	modules      []audioModule
 }
 
-func newChannelMixer(name string, hub *relayHub) *channelMixer {
+func newChannelMixer(name string, hub *relayHub, mcfg modulesConfig) *channelMixer {
 	enc, err := opus.NewEncoder(sampleRate, audioChannels, opus.AppVoIP)
 	if err != nil {
 		panic(fmt.Sprintf("create encoder for channel %s: %v", name, err))
@@ -252,7 +298,9 @@ func newChannelMixer(name string, hub *relayHub) *channelMixer {
 		lastSignal:   255.0,
 		filter:       newBandPass(sampleRate, 300.0, 3000.0),
 		modules: []audioModule{
-			newWhiteNoiseSquelchModule(frameDur),
+			newWhiteNoiseSquelchModule(frameDur, mcfg.Noise),
+			newCompressorModule(sampleRate, mcfg.Compressor),
+			newDistortionModule(mcfg.Distortion),
 		},
 	}
 }
@@ -417,12 +465,14 @@ type whiteNoiseSquelchModule struct {
 	squelchBurstRemain time.Duration
 	squelchLatched     bool
 	lastActive         bool
+	cfg                noiseConfig
 }
 
-func newWhiteNoiseSquelchModule(frameDuration time.Duration) *whiteNoiseSquelchModule {
+func newWhiteNoiseSquelchModule(frameDuration time.Duration, cfg noiseConfig) *whiteNoiseSquelchModule {
 	return &whiteNoiseSquelchModule{
 		white:         newWhiteNoise(),
 		frameDuration: frameDuration,
+		cfg:           cfg,
 	}
 }
 
@@ -434,7 +484,7 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 	if ctx.ActiveSpeakers <= 0 {
 		// End-of-transmission tail burst: jump to 0 dB and emit white hiss briefly.
 		if m.lastActive && m.squelchBurstRemain <= 0 {
-			m.squelchBurstRemain = randomDurationMs(15, 60)
+			m.squelchBurstRemain = randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs)
 		}
 		m.lastActive = false
 		if m.squelchBurstRemain <= 0 {
@@ -442,7 +492,7 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 			ctx.EmitFrame = false
 			return
 		}
-		noiseAmplitude := 1200.0 * dbToLinear(0.0)
+		noiseAmplitude := m.cfg.NoiseGain * dbToLinear(m.cfg.TailNoiseDB)
 		for i := range ctx.Mixed {
 			ctx.Mixed[i] += m.white.next() * noiseAmplitude
 		}
@@ -455,18 +505,18 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 	}
 	m.lastActive = true
 
-	noiseDB := mapSignalByteToNoiseDB(ctx.AvgSignalByte)
+	noiseDB := mapSignalByteToNoiseDB(ctx.AvgSignalByte, m.cfg)
 	ctx.NoiseLevelDB = noiseDB
-	noiseAmplitude := 1200.0 * dbToLinear(noiseDB)
+	noiseAmplitude := m.cfg.NoiseGain * dbToLinear(noiseDB)
 
 	// Squelch behavior: when the line is too weak, emit a short burst of hiss then gate output.
-	if noiseDB >= -3.0 {
+	if noiseDB >= m.cfg.SquelchThresholdDB {
 		if m.squelchLatched {
 			ctx.DropFrame = true
 			return
 		}
 		if m.squelchBurstRemain <= 0 {
-			m.squelchBurstRemain = randomDurationMs(50, 150)
+			m.squelchBurstRemain = randomDurationMs(m.cfg.SquelchMinMs, m.cfg.SquelchMaxMs)
 		}
 		for i := range ctx.Mixed {
 			ctx.Mixed[i] += m.white.next() * noiseAmplitude
@@ -486,17 +536,17 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 	}
 }
 
-func mapSignalByteToNoiseDB(signalByte float64) float64 {
+func mapSignalByteToNoiseDB(signalByte float64, cfg noiseConfig) float64 {
 	pct := (signalByte / 255.0) * 100.0
 	if pct <= 10.0 {
-		return -3.0
+		return cfg.MaxNoiseDB
 	}
 	if pct >= 100.0 {
-		return -20.0
+		return cfg.MinNoiseDB
 	}
 	// Linear interpolation in dB domain:
-	// 10% -> -3 dB, 100% -> -20 dB.
-	return -3.0 - ((pct-10.0)/90.0)*17.0
+	// 10% -> max noise dB, 100% -> min noise dB.
+	return cfg.MaxNoiseDB - ((pct-10.0)/90.0)*(cfg.MaxNoiseDB-cfg.MinNoiseDB)
 }
 
 func dbToLinear(db float64) float64 {
@@ -525,6 +575,90 @@ func newWhiteNoise() *whiteNoise {
 
 func (w *whiteNoise) next() float64 {
 	return rand.Float64()*2 - 1
+}
+
+type compressorModule struct {
+	thresholdDB  float64
+	ratio        float64
+	attackCoeff  float64
+	releaseCoeff float64
+	makeupGain   float64
+	envelopeDB   float64
+}
+
+func newCompressorModule(sr int, cfg compressorConfig) *compressorModule {
+	attackSec := cfg.AttackMs / 1000.0
+	releaseSec := cfg.ReleaseMs / 1000.0
+	if attackSec <= 0 {
+		attackSec = 0.005
+	}
+	if releaseSec <= 0 {
+		releaseSec = 0.08
+	}
+	return &compressorModule{
+		thresholdDB:  cfg.ThresholdDB,
+		ratio:        cfg.Ratio,
+		attackCoeff:  math.Exp(-1.0 / (float64(sr) * attackSec)),
+		releaseCoeff: math.Exp(-1.0 / (float64(sr) * releaseSec)),
+		makeupGain:   dbToLinear(cfg.MakeupDB),
+		envelopeDB:   -90.0,
+	}
+}
+
+func (m *compressorModule) Name() string {
+	return "compressor"
+}
+
+func (m *compressorModule) Process(ctx *audioProcessContext) {
+	for i := range ctx.Mixed {
+		x := ctx.Mixed[i]
+		amp := math.Abs(x)
+		inDB := -90.0
+		if amp > 1e-9 {
+			inDB = 20.0 * math.Log10(amp/32768.0)
+		}
+
+		// Attack when level rises, release when level falls.
+		if inDB > m.envelopeDB {
+			m.envelopeDB = m.attackCoeff*m.envelopeDB + (1.0-m.attackCoeff)*inDB
+		} else {
+			m.envelopeDB = m.releaseCoeff*m.envelopeDB + (1.0-m.releaseCoeff)*inDB
+		}
+
+		gainDB := 0.0
+		if m.envelopeDB > m.thresholdDB {
+			over := m.envelopeDB - m.thresholdDB
+			compressedOver := over / m.ratio
+			gainDB = compressedOver - over // negative attenuation
+		}
+		gain := dbToLinear(gainDB) * m.makeupGain
+		ctx.Mixed[i] = x * gain
+	}
+}
+
+type distortionModule struct {
+	drive float64
+	mix   float64
+}
+
+func newDistortionModule(cfg distortionConfig) *distortionModule {
+	return &distortionModule{
+		drive: cfg.Drive,
+		mix:   cfg.Mix,
+	}
+}
+
+func (m *distortionModule) Name() string {
+	return "distortion"
+}
+
+func (m *distortionModule) Process(ctx *audioProcessContext) {
+	for i := range ctx.Mixed {
+		dry := ctx.Mixed[i] / 32768.0
+		wet := math.Tanh(dry * m.drive)
+		out := dry*(1.0-m.mix) + wet*m.mix
+		ctx.Mixed[i] = out * 32768.0
+	}
 }
 
 type onePoleHP struct {
@@ -637,6 +771,77 @@ type server struct {
 	seq atomic.Uint32
 }
 
+func defaultConfig() appConfig {
+	return appConfig{
+		Server: serverConfig{
+			WSAddr:   ":5500",
+			UDPAddr:  ":5505",
+			Loopback: true,
+		},
+		Modules: modulesConfig{
+			Noise: noiseConfig{
+				MinNoiseDB:         -20.0,
+				MaxNoiseDB:         -3.0,
+				NoiseGain:          1200.0,
+				SquelchThresholdDB: -3.0,
+				SquelchMinMs:       50,
+				SquelchMaxMs:       150,
+				TailNoiseDB:        0.0,
+				TailMinMs:          15,
+				TailMaxMs:          60,
+			},
+			Compressor: compressorConfig{
+				ThresholdDB: -18.0,
+				Ratio:       3.2,
+				AttackMs:    5.0,
+				ReleaseMs:   80.0,
+				MakeupDB:    4.0,
+			},
+			Distortion: distortionConfig{
+				Drive: 1.35,
+				Mix:   0.28,
+			},
+		},
+	}
+}
+
+func loadConfig(path string) (appConfig, error) {
+	cfg := defaultConfig()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return appConfig{}, fmt.Errorf("read config %s: %w", path, err)
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return appConfig{}, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := validateConfig(cfg); err != nil {
+		return appConfig{}, err
+	}
+	return cfg, nil
+}
+
+func validateConfig(cfg appConfig) error {
+	if strings.TrimSpace(cfg.Server.WSAddr) == "" || strings.TrimSpace(cfg.Server.UDPAddr) == "" {
+		return errors.New("server.ws_addr and server.udp_addr must be set")
+	}
+	if cfg.Modules.Compressor.Ratio <= 0 {
+		return errors.New("modules.compressor.ratio must be > 0")
+	}
+	if cfg.Modules.Noise.NoiseGain <= 0 {
+		return errors.New("modules.noise.noise_gain must be > 0")
+	}
+	if cfg.Modules.Distortion.Mix < 0 || cfg.Modules.Distortion.Mix > 1 {
+		return errors.New("modules.distortion.mix must be in [0..1]")
+	}
+	if cfg.Modules.Noise.SquelchMinMs <= 0 || cfg.Modules.Noise.SquelchMaxMs < cfg.Modules.Noise.SquelchMinMs {
+		return errors.New("modules.noise squelch range is invalid")
+	}
+	if cfg.Modules.Noise.TailMinMs <= 0 || cfg.Modules.Noise.TailMaxMs < cfg.Modules.Noise.TailMinMs {
+		return errors.New("modules.noise tail range is invalid")
+	}
+	return nil
+}
+
 func (s *server) nextSessionID() uint32 {
 	base := uint32(time.Now().Unix() & 0xFFFF)
 	return (base << 16) | (s.seq.Add(1) & 0xFFFF)
@@ -701,23 +906,24 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	var wsAddr string
-	var udpAddr string
-	var loopback bool
-	flag.StringVar(&wsAddr, "ws", ":8080", "WebSocket listen address")
-	flag.StringVar(&udpAddr, "udp", ":5000", "UDP listen address")
-	flag.BoolVar(&loopback, "loopback", false, "if true, mixed stream is also sent to source speaker")
-	flag.Parse()
+	if len(os.Args) > 1 {
+		log.Fatalf("startup flags are disabled: configure server via %s only", configFilePath)
+	}
+
+	cfg, err := loadConfig(configFilePath)
+	if err != nil {
+		log.Fatalf("config error: %v", err)
+	}
 
 	rand.Seed(time.Now().UnixNano())
 
-	udpConn, err := net.ListenUDP("udp", mustResolveUDP(udpAddr))
+	udpConn, err := net.ListenUDP("udp", mustResolveUDP(cfg.Server.UDPAddr))
 	if err != nil {
 		log.Fatalf("udp listen failed: %v", err)
 	}
 	defer udpConn.Close()
 
-	hub := newRelayHub(udpConn, loopback)
+	hub := newRelayHub(udpConn, cfg)
 	s := &server{hub: hub}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -730,8 +936,8 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	log.Printf("relay started ws=%s udp=%s loopback=%v", wsAddr, udpAddr, loopback)
-	if err := http.ListenAndServe(wsAddr, mux); err != nil {
+	log.Printf("relay started ws=%s udp=%s loopback=%v", cfg.Server.WSAddr, cfg.Server.UDPAddr, cfg.Server.Loopback)
+	if err := http.ListenAndServe(cfg.Server.WSAddr, mux); err != nil {
 		log.Fatalf("ws server error: %v", err)
 	}
 }
