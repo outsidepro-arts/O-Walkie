@@ -1,0 +1,14 @@
+.idea/
+.gradle/
+local.properties
+**/build/
+**/.DS_Store
+
+# Go
+backend/bin/
+backend/.cache/
+backend/*.exe
+
+# Android local files
+android/local.properties
+android/.kotlin/

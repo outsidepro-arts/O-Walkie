@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">O-Walkie</string>
+    <string name="server_profiles">Сохраненные серверы</string>
+    <string name="server_name_hint">Название сервера (пример: Team Alpha)</string>
+    <string name="server_host_hint">Хост/IP сервера</string>
+    <string name="ws_port_hint">Порт WebSocket</string>
+    <string name="udp_port_hint">Порт UDP</string>
+    <string name="channel_hint">Название канала</string>
+    <string name="save_server">Сохранить сервер</string>
+    <string name="delete_server">Удалить сервер</string>
+    <string name="connect_server">Подключиться к выбранному серверу</string>
+    <string name="saved_server_announcement">Сервер сохранен</string>
+    <string name="deleted_server_announcement">Сервер удален</string>
+    <string name="connected_server_announcement">Подключение к выбранному серверу</string>
+    <string name="validation_server_name">Введите название сервера</string>
+    <string name="validation_server_host">Введите хост сервера</string>
+    <string name="validation_channel">Введите канал</string>
+    <string name="validation_port">Введите корректные порты 1..65535</string>
+    <string name="default_server_name">Локальный сервер по умолчанию</string>
+    <string name="ptt_hold">Удерживайте для разговора</string>
+    <string name="ptt_hold_accessibility_hint">Нажмите и удерживайте для передачи. В режиме TalkBack кнопка переключает старт и стоп.</string>
+    <string name="ptt_start_talking">Начать передачу</string>
+    <string name="ptt_stop_talking">Остановить передачу</string>
+    <string name="status_idle">Статус: ожидание</string>
+    <string name="status_tx">Статус: передача</string>
+    <string name="signal_quality_default">Сигнал: --</string>
+    <string name="signal_quality_format">Сигнал: %1$d/255</string>
+    <string name="net_status_default">WS: -- | UDP: --</string>
+    <string name="net_status_format">WS: %1$s | UDP: %2$s</string>
+    <string name="net_state_connected">Подключен</string>
+    <string name="net_state_reconnect">Переподключение</string>
+    <string name="net_state_ready">Готов</string>
+    <string name="net_state_reinit">Переинициализация</string>
+    <string name="service_channel_name">Поток Walkie</string>
+    <string name="service_notification_title">O-Walkie запущен</string>
+    <string name="service_notification_text">Сервис аудио-реле активен</string>
+</resources>

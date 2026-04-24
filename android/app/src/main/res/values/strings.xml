@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">O-Walkie</string>
+    <string name="server_profiles">Saved servers</string>
+    <string name="server_name_hint">Server name (example: Team Alpha)</string>
+    <string name="server_host_hint">Server host/IP</string>
+    <string name="ws_port_hint">WebSocket port</string>
+    <string name="udp_port_hint">UDP port</string>
+    <string name="channel_hint">Channel name</string>
+    <string name="save_server">Save server</string>
+    <string name="delete_server">Delete server</string>
+    <string name="connect_server">Connect selected server</string>
+    <string name="saved_server_announcement">Server saved</string>
+    <string name="deleted_server_announcement">Server deleted</string>
+    <string name="connected_server_announcement">Connecting to selected server</string>
+    <string name="validation_server_name">Enter server name</string>
+    <string name="validation_server_host">Enter server host</string>
+    <string name="validation_channel">Enter channel</string>
+    <string name="validation_port">Enter valid ports 1..65535</string>
+    <string name="default_server_name">Default local relay</string>
+    <string name="ptt_hold">Hold to Talk</string>
+    <string name="ptt_hold_accessibility_hint">Press and hold to transmit. In TalkBack mode this button toggles start and stop.</string>
+    <string name="ptt_start_talking">Start talking</string>
+    <string name="ptt_stop_talking">Stop talking</string>
+    <string name="status_idle">Status: Idle</string>
+    <string name="status_tx">Status: Transmitting</string>
+    <string name="signal_quality_default">Signal: --</string>
+    <string name="signal_quality_format">Signal: %1$d/255</string>
+    <string name="net_status_default">WS: -- | UDP: --</string>
+    <string name="net_status_format">WS: %1$s | UDP: %2$s</string>
+    <string name="net_state_connected">Connected</string>
+    <string name="net_state_reconnect">Reconnecting</string>
+    <string name="net_state_ready">Ready</string>
+    <string name="net_state_reinit">Reinit</string>
+    <string name="service_channel_name">Walkie Streaming</string>
+    <string name="service_notification_title">O-Walkie running</string>
+    <string name="service_notification_text">Audio relay service is active</string>
+</resources>
