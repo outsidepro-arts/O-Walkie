@@ -5,10 +5,61 @@
     android:orientation="vertical"
     android:padding="16dp">
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/app_name"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/moreButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:text="@string/menu_more" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/connectionStateChip"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="#1AFFFFFF"
+            android:padding="8dp"
+            android:text="@string/connection_state_disconnected"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/signalStateChip"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:background="#1AFFFFFF"
+            android:gravity="end"
+            android:padding="8dp"
+            android:text="@string/signal_quality_default"
+            android:textStyle="bold" />
+    </LinearLayout>
+
     <TextView
         android:id="@+id/serverListLabel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
         android:labelFor="@id/serverSpinner"
         android:text="@string/server_profiles"
         android:textStyle="bold" />
@@ -19,186 +70,201 @@
         android:layout_height="wrap_content"
         android:layout_marginBottom="8dp" />
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:labelFor="@id/serverNameInput"
-        android:text="@string/server_name_label" />
-
-    <EditText
-        android:id="@+id/serverNameInput"
+    <Button
+        android:id="@+id/toggleConnectionDetailsButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="@string/server_name_hint"
-        android:importantForAccessibility="yes"
-        android:inputType="textCapWords"
-        android:maxLines="1" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:labelFor="@id/serverHostInput"
-        android:text="@string/server_host_label" />
-
-    <EditText
-        android:id="@+id/serverHostInput"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="@string/server_host_hint"
-        android:importantForAccessibility="yes"
-        android:inputType="textUri"
-        android:maxLines="1" />
+        android:text="@string/collapse_connection_details" />
 
     <LinearLayout
+        android:id="@+id/collapsedActionsContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:labelFor="@id/wsPortInput"
-                android:text="@string/ws_port_label" />
-
-            <EditText
-                android:id="@+id/wsPortInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/ws_port_hint"
-                android:importantForAccessibility="yes"
-                android:inputType="number"
-                android:maxLines="1" />
-        </LinearLayout>
-
-        <Space
-            android:layout_width="8dp"
-            android:layout_height="1dp" />
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:labelFor="@id/udpPortInput"
-                android:text="@string/udp_port_label" />
-
-            <EditText
-                android:id="@+id/udpPortInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/udp_port_hint"
-                android:importantForAccessibility="yes"
-                android:inputType="number"
-                android:maxLines="1" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:labelFor="@id/channelInput"
-        android:text="@string/channel_label" />
-
-    <EditText
-        android:id="@+id/channelInput"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
-        android:hint="@string/channel_hint"
-        android:importantForAccessibility="yes"
-        android:inputType="textNoSuggestions"
-        android:maxLines="1" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
-        android:orientation="horizontal">
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal"
+        android:visibility="gone">
 
         <Button
-            android:id="@+id/saveServerButton"
+            android:id="@+id/previousServerButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="@string/save_server" />
+            android:text="@string/previous_server" />
 
         <Button
-            android:id="@+id/deleteServerButton"
+            android:id="@+id/compactConnectButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
             android:layout_weight="1"
-            android:text="@string/delete_server" />
+            android:text="@string/connect_server" />
+
+        <Button
+            android:id="@+id/nextServerButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="@string/next_server" />
     </LinearLayout>
 
-    <Button
-        android:id="@+id/connectServerButton"
+    <LinearLayout
+        android:id="@+id/connectionDetailsContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="10dp"
-        android:text="@string/connect_server" />
+        android:layout_marginTop="8dp"
+        android:orientation="vertical">
 
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/status_idle"
-        android:textSize="16sp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@id/serverNameInput"
+            android:text="@string/server_name_label" />
 
-    <TextView
-        android:id="@+id/netText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/net_status_default" />
+        <EditText
+            android:id="@+id/serverNameInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/server_name_hint"
+            android:importantForAccessibility="yes"
+            android:inputType="textCapWords"
+            android:maxLines="1" />
 
-    <TextView
-        android:id="@+id/signalText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/signal_quality_default" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@id/serverHostInput"
+            android:text="@string/server_host_label" />
 
-    <ProgressBar
-        android:id="@+id/signalBar"
-        style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:importantForAccessibility="no"
-        android:max="100"
-        android:progress="0" />
+        <EditText
+            android:id="@+id/serverHostInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/server_host_hint"
+            android:importantForAccessibility="yes"
+            android:inputType="textUri"
+            android:maxLines="1" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:labelFor="@id/wsPortInput"
+                    android:text="@string/ws_port_label" />
+
+                <EditText
+                    android:id="@+id/wsPortInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/ws_port_hint"
+                    android:importantForAccessibility="yes"
+                    android:inputType="number"
+                    android:maxLines="1" />
+            </LinearLayout>
+
+            <Space
+                android:layout_width="8dp"
+                android:layout_height="1dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:labelFor="@id/udpPortInput"
+                    android:text="@string/udp_port_label" />
+
+                <EditText
+                    android:id="@+id/udpPortInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/udp_port_hint"
+                    android:importantForAccessibility="yes"
+                    android:inputType="number"
+                    android:maxLines="1" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@id/channelInput"
+            android:text="@string/channel_label" />
+
+        <EditText
+            android:id="@+id/channelInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:hint="@string/channel_hint"
+            android:importantForAccessibility="yes"
+            android:inputType="textNoSuggestions"
+            android:maxLines="1" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/saveServerButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/save_server" />
+
+            <Button
+                android:id="@+id/deleteServerButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="@string/delete_server" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/connectServerButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/connect_server" />
+    </LinearLayout>
 
     <View
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />
 
-    <LinearLayout
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/callButton"
-            android:layout_width="0dp"
-            android:layout_height="72dp"
-            android:layout_marginEnd="8dp"
-            android:layout_weight="1"
-            android:text="@string/call_signal" />
+        android:layout_height="220dp">
 
         <Button
             android:id="@+id/pttButton"
-            android:layout_width="0dp"
-            android:layout_height="72dp"
-            android:layout_weight="2"
+            android:layout_width="190dp"
+            android:layout_height="190dp"
+            android:layout_gravity="center"
             android:text="@string/ptt_hold" />
-    </LinearLayout>
+
+        <Button
+            android:id="@+id/callButton"
+            android:layout_width="96dp"
+            android:layout_height="72dp"
+            android:layout_gravity="bottom|end"
+            android:text="@string/call_signal" />
+    </FrameLayout>
 </LinearLayout>

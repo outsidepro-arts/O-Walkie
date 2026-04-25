@@ -119,6 +119,7 @@ class WalkieService : Service() {
     private val sessionId = AtomicLong(0L)
     private val seq = AtomicInteger(0)
     private val encodeLock = Any()
+    private val rxResumeAtNs = AtomicLong(0L)
 
     @Volatile
     private var serverHost: String = DEFAULT_WS_HOST
@@ -388,7 +389,7 @@ class WalkieService : Service() {
                         continue
                     }
                     if (packet.length <= 9) continue
-                    if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
+                    if (transmitting.get() || rogerStreaming.get() || callStreaming.get() || isRxHoldoffActive()) {
                         // During local TX we intentionally drop inbound audio
                         // to avoid hearing server stream in parallel with speaking.
                         continue
@@ -424,6 +425,7 @@ class WalkieService : Service() {
 
     private fun onPttRelease() {
         if (!transmitting.getAndSet(false)) return
+        scheduleRxResumeHoldoff()
         if (rogerStreaming.getAndSet(true)) return
         localRogerPlaybackJob?.cancel()
         rogerJob = serviceScope.launch(Dispatchers.Default) {
@@ -436,6 +438,7 @@ class WalkieService : Service() {
                 }
                 streamRogerBeep(rogerPcm)
             } finally {
+                scheduleRxResumeHoldoff()
                 rogerStreaming.set(false)
             }
         }
@@ -455,6 +458,7 @@ class WalkieService : Service() {
                 }
                 streamGeneratedSignal(callPcm)
             } finally {
+                scheduleRxResumeHoldoff()
                 callStreaming.set(false)
             }
         }
@@ -808,6 +812,13 @@ class WalkieService : Service() {
     }
 
     private fun currentPacketMs(): Int = normalizePacketMs(packetMs)
+
+    private fun scheduleRxResumeHoldoff(multiplier: Int = 2) {
+        val holdMs = (currentPacketMs() * multiplier).coerceAtLeast(currentPacketMs())
+        rxResumeAtNs.set(System.nanoTime() + (holdMs * 1_000_000L))
+    }
+
+    private fun isRxHoldoffActive(): Boolean = System.nanoTime() < rxResumeAtNs.get()
 
     private fun currentFrameSamples(): Int = (SAMPLE_RATE * currentPacketMs()) / 1000
 

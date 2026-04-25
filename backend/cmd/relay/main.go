@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"math/rand"
@@ -196,16 +197,25 @@ func (h *relayHub) addClient(c *client) {
 
 func (h *relayHub) removeClient(sessionID uint32) {
 	h.clientsMu.Lock()
-	c, ok := h.clients[sessionID]
+	_, ok := h.clients[sessionID]
 	if ok {
 		delete(h.clients, sessionID)
 	}
 	h.clientsMu.Unlock()
-	if ok {
-		ch := c.getChannel()
-		if ch != "" {
-			h.getOrCreateChannel(ch).removeParticipant(sessionID)
-		}
+	if !ok {
+		return
+	}
+
+	// Defensive cleanup: remove disconnected client from all existing channels.
+	// This avoids stale subscriptions even if channel bookkeeping got out of sync.
+	h.channelMu.RLock()
+	channels := make([]*channelMixer, 0, len(h.channels))
+	for _, ch := range h.channels {
+		channels = append(channels, ch)
+	}
+	h.channelMu.RUnlock()
+	for _, ch := range channels {
+		ch.removeParticipant(sessionID)
 	}
 }
 
@@ -311,8 +321,9 @@ type channelMixer struct {
 	participantsMu sync.RWMutex
 	participants   map[uint32]struct{}
 
-	decoders map[uint32]*opus.Decoder
-	encoder  *opus.Encoder
+	decodersMu sync.Mutex
+	decoders   map[uint32]*opus.Decoder
+	encoder    *opus.Encoder
 
 	seq          uint32
 	noiseLevelDB float64
@@ -323,6 +334,9 @@ type channelMixer struct {
 
 	repeaterMu    sync.Mutex
 	repeaterState map[uint32]*repeaterSession
+
+	lastSingleSpeaker   uint32
+	lastSingleSpeakerAt time.Time
 }
 
 type repeaterSession struct {
@@ -427,9 +441,13 @@ func (m *channelMixer) addParticipant(sessionID uint32) {
 
 func (m *channelMixer) removeParticipant(sessionID uint32) {
 	m.participantsMu.Lock()
-	defer m.participantsMu.Unlock()
 	delete(m.participants, sessionID)
+	m.participantsMu.Unlock()
+
+	m.decodersMu.Lock()
 	delete(m.decoders, sessionID)
+	m.decodersMu.Unlock()
+
 	m.clearRepeaterState(sessionID)
 }
 
@@ -479,15 +497,22 @@ func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
 	now := time.Now()
 
 	for sessionID, pkt := range frames {
-		dec := m.decoders[sessionID]
+		var (
+			dec       *opus.Decoder
+			createErr error
+		)
+		m.decodersMu.Lock()
+		dec = m.decoders[sessionID]
 		if dec == nil {
-			var err error
-			dec, err = opus.NewDecoder(sampleRate, audioChannels)
-			if err != nil {
-				log.Printf("decoder create failed for %d: %v", sessionID, err)
-				continue
+			dec, createErr = opus.NewDecoder(sampleRate, audioChannels)
+			if createErr == nil {
+				m.decoders[sessionID] = dec
 			}
-			m.decoders[sessionID] = dec
+		}
+		m.decodersMu.Unlock()
+		if createErr != nil {
+			log.Printf("decoder create failed for %d: %v", sessionID, createErr)
+			continue
 		}
 
 		pcm := make([]int16, packetSamples)
@@ -527,6 +552,12 @@ func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
 		signalSum = m.lastSignal
 	} else {
 		m.lastSignal = signalSum / float64(len(activeSpeakers))
+	}
+	if len(activeSpeakers) == 1 {
+		m.lastSingleSpeaker = activeSpeakers[0]
+		m.lastSingleSpeakerAt = now
+	} else if len(activeSpeakers) > 1 {
+		m.lastSingleSpeaker = 0
 	}
 
 	ctx := &audioProcessContext{
@@ -568,6 +599,13 @@ func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
 	exclude := uint32(0)
 	if len(activeSpeakers) == 1 {
 		exclude = activeSpeakers[0]
+	} else if len(activeSpeakers) == 0 && m.lastSingleSpeaker != 0 {
+		// During post-TX tail frames, avoid feeding a sender its own ending burst.
+		packetMs := int(packetDur / time.Millisecond)
+		tailGrace := time.Duration(maxInt(m.modulesCfg.Noise.TailMaxMs, packetMs*2)) * time.Millisecond
+		if now.Sub(m.lastSingleSpeakerAt) <= tailGrace {
+			exclude = m.lastSingleSpeaker
+		}
 	}
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
 }
@@ -1203,7 +1241,11 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	for {
 		var msg wsMessage
 		if err := conn.ReadJSON(&msg); err != nil {
-			log.Printf("ws read ended for %d: %v", c.sessionID, err)
+			if isExpectedDisconnectError(err) {
+				log.Printf("ws disconnected for %d: %v", c.sessionID, err)
+			} else {
+				log.Printf("ws read failed for %d: %v", c.sessionID, err)
+			}
 			return
 		}
 		switch strings.ToLower(msg.Type) {
@@ -1240,6 +1282,26 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 			_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "unknown message type"})
 		}
 	}
+}
+
+func isExpectedDisconnectError(err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	if websocket.IsCloseError(
+		err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway,
+		websocket.CloseNoStatusReceived,
+		websocket.CloseAbnormalClosure,
+	) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unexpected eof")
 }
 
 func main() {

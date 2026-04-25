@@ -15,6 +15,7 @@ import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
+import android.widget.PopupMenu
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import androidx.activity.ComponentActivity
@@ -42,6 +43,8 @@ class MainActivity : ComponentActivity() {
     private var wsConnecting = false
     private var receiverRegistered = false
     private var repeaterModeEnabled = false
+    private var connectionDetailsExpanded = true
+    private var lastSignalPercent = 0
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -53,6 +56,7 @@ class MainActivity : ComponentActivity() {
             wsConnecting = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTING, false)
             val udpReady = intent.getBooleanExtra(WalkieService.EXTRA_UDP_READY, false)
             val signalPercent = ((signal / 255.0) * 100.0).toInt().coerceIn(0, 100)
+            lastSignalPercent = signalPercent
 
             if (!prevConnected && wsConnected) {
                 uiSignalPlayer.playConnected()
@@ -60,16 +64,7 @@ class MainActivity : ComponentActivity() {
                 uiSignalPlayer.playConnectionError()
             }
 
-            binding.signalBar.max = 100
-            binding.signalBar.progress = signalPercent
-            binding.signalText.text = getString(R.string.signal_quality_format_percent, signalPercent)
-            binding.signalBar.contentDescription = getString(R.string.signal_quality_format_percent, signalPercent)
-            val netStatus = getString(
-                R.string.net_status_format,
-                if (wsConnected) getString(R.string.net_state_connected) else if (wsConnecting) getString(R.string.net_state_reconnect) else getString(R.string.net_state_disconnected),
-                if (udpReady) getString(R.string.net_state_ready) else getString(R.string.net_state_reinit),
-            )
-            binding.netText.text = netStatus
+            updateStatusChips(udpReady)
             updateConnectButtonLabel()
             updatePttAvailability()
         }
@@ -117,8 +112,30 @@ class MainActivity : ComponentActivity() {
             sendServiceAction(WalkieService.ACTION_CALL_SIGNAL)
         }
 
+        binding.toggleConnectionDetailsButton.setOnClickListener {
+            connectionDetailsExpanded = !connectionDetailsExpanded
+            updateConnectionDetailsUi()
+        }
+
+        binding.previousServerButton.setOnClickListener {
+            moveSelectedServer(-1)
+        }
+
+        binding.nextServerButton.setOnClickListener {
+            moveSelectedServer(1)
+        }
+
+        binding.compactConnectButton.setOnClickListener {
+            handleConnectAction()
+        }
+        binding.moreButton.setOnClickListener {
+            showMoreMenu()
+        }
+
+        updateConnectionDetailsUi()
         updateConnectButtonLabel()
         updatePttAvailability()
+        updateStatusChips()
     }
 
     override fun onStart() {
@@ -204,10 +221,13 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
+        return handleMenuAction(item.itemId) || super.onOptionsItemSelected(item)
+    }
+
+    private fun handleMenuAction(itemId: Int): Boolean {
+        return when (itemId) {
             R.id.action_repeater_mode -> {
-                repeaterModeEnabled = !item.isChecked
-                item.isChecked = repeaterModeEnabled
+                repeaterModeEnabled = !repeaterModeEnabled
                 sendRepeaterModeAction(repeaterModeEnabled)
                 true
             }
@@ -227,28 +247,48 @@ class MainActivity : ComponentActivity() {
                 true
             }
 
-            else -> super.onOptionsItemSelected(item)
+            else -> false
         }
+    }
+
+    private fun showMoreMenu() {
+        val popup = PopupMenu(this, binding.moreButton)
+        popup.menuInflater.inflate(R.menu.main_overflow_menu, popup.menu)
+        popup.menu.findItem(R.id.action_repeater_mode)?.isChecked = repeaterModeEnabled
+        popup.menu.findItem(R.id.action_background_mode)?.title = getString(
+            R.string.menu_background_mode_format,
+            getString(
+                if (isBackgroundModeActive()) {
+                    R.string.menu_background_status_active
+                } else {
+                    R.string.menu_background_status_inactive
+                },
+            ),
+        )
+        popup.setOnMenuItemClickListener { menuItem ->
+            handleMenuAction(menuItem.itemId)
+        }
+        popup.show()
     }
 
     private fun startTransmitUi() {
         if (transmitting) return
         if (!wsConnected) return
         transmitting = true
-        binding.statusText.text = getString(R.string.status_tx)
         uiSignalPlayer.playPttPress()
         sendServiceAction(WalkieService.ACTION_PTT_PRESS)
         binding.callButton.isEnabled = false
         updatePttLabel()
+        updateStatusChips()
     }
 
     private fun stopTransmitUi() {
         if (!transmitting) return
         transmitting = false
-        binding.statusText.text = getString(R.string.status_idle)
         sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
         binding.callButton.isEnabled = wsConnected
         updatePttLabel()
+        updateStatusChips()
     }
 
     private fun updatePttLabel() {
@@ -377,6 +417,7 @@ class MainActivity : ComponentActivity() {
         refreshServerSpinner()
         bindServerButtons()
         loadServerToInputs(servers.first())
+        updateServerNavigationButtons()
     }
 
     private fun refreshServerSpinner() {
@@ -388,6 +429,7 @@ class MainActivity : ComponentActivity() {
             override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
                 selectedServerIndex = position
                 loadServerToInputs(servers[position])
+                updateServerNavigationButtons()
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -424,26 +466,32 @@ class MainActivity : ComponentActivity() {
         }
 
         binding.connectServerButton.setOnClickListener {
-            if (wsConnecting) {
-                sendServiceAction(WalkieService.ACTION_CANCEL_CONNECT)
-                wsConnecting = false
-                wsConnected = false
-                updateConnectButtonLabel()
-                updatePttAvailability()
-                return@setOnClickListener
-            }
-            val profile = collectServerFromInputs() ?: return@setOnClickListener
-            if (!hasAudioPermission()) {
-                requestRuntimePermissions()
-                return@setOnClickListener
-            }
-            startWalkieService(profile)
-            wsConnecting = true
+            handleConnectAction()
+        }
+    }
+
+    private fun handleConnectAction() {
+        if (wsConnecting || wsConnected) {
+            sendServiceAction(WalkieService.ACTION_CANCEL_CONNECT)
+            wsConnecting = false
             wsConnected = false
             updateConnectButtonLabel()
             updatePttAvailability()
-            binding.root.announceForAccessibility(getString(R.string.connected_server_announcement))
+            updateStatusChips()
+            return
         }
+        val profile = collectServerFromInputs() ?: return
+        if (!hasAudioPermission()) {
+            requestRuntimePermissions()
+            return
+        }
+        startWalkieService(profile)
+        wsConnecting = true
+        wsConnected = false
+        updateConnectButtonLabel()
+        updatePttAvailability()
+        updateStatusChips()
+        binding.root.announceForAccessibility(getString(R.string.connected_server_announcement))
     }
 
     private fun loadServerToInputs(profile: ServerProfile) {
@@ -497,11 +545,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateConnectButtonLabel() {
-        when {
-            wsConnecting -> binding.connectServerButton.text = getString(R.string.connect_cancel)
-            wsConnected -> binding.connectServerButton.text = getString(R.string.connect_reconnect)
-            else -> binding.connectServerButton.text = getString(R.string.connect_server)
+        val labelRes = when {
+            wsConnecting -> R.string.connect_cancel
+            wsConnected -> R.string.connect_disconnect
+            else -> R.string.connect_server
         }
+        val label = getString(labelRes)
+        binding.connectServerButton.text = label
+        binding.compactConnectButton.text = label
     }
 
     private fun updatePttAvailability() {
@@ -514,6 +565,45 @@ class MainActivity : ComponentActivity() {
             stopTransmitUi()
         }
         updatePttLabel()
+        updateServerNavigationButtons()
+    }
+
+    private fun updateStatusChips(udpReady: Boolean = false) {
+        val connectionState = when {
+            transmitting -> getString(R.string.connection_state_transmitting)
+            wsConnecting -> getString(R.string.connection_state_connecting)
+            wsConnected && udpReady -> getString(R.string.connection_state_connected)
+            wsConnected -> getString(R.string.connection_state_partial)
+            else -> getString(R.string.connection_state_disconnected)
+        }
+        binding.connectionStateChip.text = connectionState
+        binding.signalStateChip.text = getString(R.string.signal_quality_format_percent, lastSignalPercent)
+    }
+
+    private fun updateConnectionDetailsUi() {
+        binding.connectionDetailsContainer.visibility = if (connectionDetailsExpanded) android.view.View.VISIBLE else android.view.View.GONE
+        binding.collapsedActionsContainer.visibility = if (connectionDetailsExpanded) android.view.View.GONE else android.view.View.VISIBLE
+        binding.toggleConnectionDetailsButton.text = getString(
+            if (connectionDetailsExpanded) R.string.collapse_connection_details else R.string.expand_connection_details,
+        )
+        updateServerNavigationButtons()
+    }
+
+    private fun updateServerNavigationButtons() {
+        val canNavigate = !connectionDetailsExpanded && servers.isNotEmpty()
+        val hasPrevious = canNavigate && selectedServerIndex > 0
+        val hasNext = canNavigate && selectedServerIndex < servers.lastIndex
+        binding.previousServerButton.isEnabled = hasPrevious
+        binding.nextServerButton.isEnabled = hasNext
+        binding.previousServerButton.alpha = if (hasPrevious) 1.0f else 0.5f
+        binding.nextServerButton.alpha = if (hasNext) 1.0f else 0.5f
+    }
+
+    private fun moveSelectedServer(offset: Int) {
+        val targetIndex = (selectedServerIndex + offset).coerceIn(0, servers.lastIndex)
+        if (targetIndex == selectedServerIndex) return
+        selectedServerIndex = targetIndex
+        binding.serverSpinner.setSelection(targetIndex)
     }
 }
 

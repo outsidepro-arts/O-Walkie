@@ -31,6 +31,7 @@ public sealed class AudioEngineService
     private Task? _senderLoopTask;
     private int _queuedPcmFrames;
     private int _packetIntervalMs = 20;
+    private long _rxResumeAtTicks;
 
     public bool IsTransmitting { get; private set; }
     public event EventHandler<int>? OutputLevelChanged;
@@ -68,6 +69,7 @@ public sealed class AudioEngineService
         IsTransmitting = false;
         StopCapture();
         ClearTxQueue();
+        ScheduleRxResumeHoldoff();
         return Task.CompletedTask;
     }
 
@@ -275,7 +277,7 @@ public sealed class AudioEngineService
 
     private void OnOpusFrameReceived(object? sender, byte[] opus)
     {
-        if (_playbackBuffer == null || opus.Length == 0 || IsTransmitting)
+        if (_playbackBuffer == null || opus.Length == 0 || IsTransmitting || IsRxHoldoffActive())
         {
             return;
         }
@@ -302,6 +304,18 @@ public sealed class AudioEngineService
         Buffer.BlockCopy(pcmBuffer, 0, outBytes, 0, outBytes.Length);
         _playbackBuffer.AddSamples(outBytes, 0, outBytes.Length);
         OutputLevelChanged?.Invoke(this, EstimateSignalPercent(pcmBuffer, decodedSamples));
+    }
+
+    private void ScheduleRxResumeHoldoff(int multiplier = 2)
+    {
+        var holdMs = Math.Max(_packetIntervalMs, _packetIntervalMs * multiplier);
+        var holdTicks = (long)(Stopwatch.Frequency * (holdMs / 1000.0));
+        Interlocked.Exchange(ref _rxResumeAtTicks, Stopwatch.GetTimestamp() + holdTicks);
+    }
+
+    private bool IsRxHoldoffActive()
+    {
+        return Stopwatch.GetTimestamp() < Interlocked.Read(ref _rxResumeAtTicks);
     }
 
     private static int EstimateSignalPercent(short[] pcm, int count)

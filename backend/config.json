@@ -2,26 +2,26 @@
   "server": {
     "ws_addr": ":5500",
     "udp_addr": ":5505",
-    "packet_ms": 40
+    "packet_ms": 60
   },
   "modules": {
     "noise": {
-      "min_noise_db": -20.0,
+      "min_noise_db": -25.0,
       "max_noise_db": -3.0,
       "noise_gain": 1200.0,
       "squelch_threshold_db": -3.0,
-      "squelch_min_ms": 5,
-      "squelch_max_ms": 10,
+      "squelch_min_ms": 3,
+      "squelch_max_ms": 5,
       "tail_noise_db": 10.0,
-      "tail_min_ms": 15,
-      "tail_max_ms": 60
+      "tail_min_ms": 5,
+      "tail_max_ms": 10
     },
     "click": {
       "click_db": 0.0
     },
     "compressor": {
-      "threshold_db": -20.0,
-      "ratio": 70.0,
+      "threshold_db": -25.0,
+      "ratio": 10.0,
       "attack_ms": 1.0,
       "release_ms": 20.0,
       "makeup_db": 4.0
