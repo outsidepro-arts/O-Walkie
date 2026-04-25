@@ -15,6 +15,9 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 - `server.packet_ms` Opus frame duration in milliseconds (`10`, `20`, `40`, `60`; default `20`)
 - `modules.noise.*` white-noise + squelch behavior
 - `modules.click.click_db` click level at transmission start/end
+- `modules.click.glitch_interval_max_ms` random in-TX click interval ceiling (`0` disables)
+- `modules.click.glitch_freq_min_hz` / `modules.click.glitch_freq_max_hz` random in-TX click frequency range
+- `modules.click.glitch_level_min_db` / `modules.click.glitch_level_max_db` random in-TX click loudness range
 - `modules.compressor.*` compressor settings
 - `modules.distortion.*` distortion settings
 

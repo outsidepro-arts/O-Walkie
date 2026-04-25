@@ -76,7 +76,12 @@ type compressorConfig struct {
 }
 
 type clickConfig struct {
-	ClickDB float64 `json:"click_db"`
+	ClickDB             float64 `json:"click_db"`
+	GlitchIntervalMaxMs int     `json:"glitch_interval_max_ms"`
+	GlitchFreqMinHz     float64 `json:"glitch_freq_min_hz"`
+	GlitchFreqMaxHz     float64 `json:"glitch_freq_max_hz"`
+	GlitchLevelMinDB    float64 `json:"glitch_level_min_db"`
+	GlitchLevelMaxDB    float64 `json:"glitch_level_max_db"`
 }
 
 type distortionConfig struct {
@@ -358,7 +363,7 @@ func newAudioProcessor(mcfg modulesConfig) *audioProcessor {
 	return &audioProcessor{
 		modules: []audioModule{
 			newWhiteNoiseSquelchModule(packetDur, mcfg.Noise),
-			newClickModule(mcfg.Click),
+			newClickModule(packetDur, mcfg.Click),
 			newCompressorModule(sampleRate, mcfg.Compressor),
 			newDistortionModule(mcfg.Distortion),
 		},
@@ -425,7 +430,7 @@ func newChannelMixer(name string, hub *relayHub, mcfg modulesConfig) *channelMix
 		modulesCfg:   mcfg,
 		modules: []audioModule{
 			newWhiteNoiseSquelchModule(packetDur, mcfg.Noise),
-			newClickModule(mcfg.Click),
+			newClickModule(packetDur, mcfg.Click),
 			newCompressorModule(sampleRate, mcfg.Compressor),
 			newDistortionModule(mcfg.Distortion),
 		},
@@ -731,11 +736,18 @@ type clickModule struct {
 	clickAmplitude float64
 	freqHz         float64
 	burstSamples   int
+	frameDuration  time.Duration
+	glitchMaxMs    int
+	glitchRemain   time.Duration
+	glitchFreqMin  float64
+	glitchFreqMax  float64
+	glitchAmpMin   float64
+	glitchAmpMax   float64
 	lastActive     bool
 	pendingEnd     bool
 }
 
-func newClickModule(cfg clickConfig) *clickModule {
+func newClickModule(frameDuration time.Duration, cfg clickConfig) *clickModule {
 	amp := 32767.0 * dbToLinear(cfg.ClickDB)
 	if amp < 0 {
 		amp = 0
@@ -747,6 +759,12 @@ func newClickModule(cfg clickConfig) *clickModule {
 		clickAmplitude: amp,
 		freqHz:         200.0,
 		burstSamples:   sampleRate / 80, // ~12.5 ms burst at 8 kHz.
+		frameDuration:  frameDuration,
+		glitchMaxMs:    maxInt(cfg.GlitchIntervalMaxMs, 0),
+		glitchFreqMin:  cfg.GlitchFreqMinHz,
+		glitchFreqMax:  cfg.GlitchFreqMaxHz,
+		glitchAmpMin:   32767.0 * dbToLinear(cfg.GlitchLevelMinDB),
+		glitchAmpMax:   32767.0 * dbToLinear(cfg.GlitchLevelMaxDB),
 	}
 }
 
@@ -760,10 +778,15 @@ func (m *clickModule) Process(ctx *audioProcessContext) {
 		m.injectClick(ctx, 1.0)
 		ctx.EmitFrame = true
 		m.pendingEnd = false
+		m.scheduleNextGlitch()
 	} else if !active && m.lastActive {
 		// Speaker just released PTT: wait until squelch/noise tail closes,
 		// then emit exactly one terminal click.
 		m.pendingEnd = true
+		m.glitchRemain = 0
+	}
+	if active {
+		m.processRandomGlitchClicks(ctx)
 	}
 
 	if !active && m.pendingEnd && !ctx.EmitFrame {
@@ -776,8 +799,34 @@ func (m *clickModule) Process(ctx *audioProcessContext) {
 	m.lastActive = active
 }
 
+func (m *clickModule) processRandomGlitchClicks(ctx *audioProcessContext) {
+	if m.glitchMaxMs <= 0 || len(ctx.Mixed) == 0 || m.glitchAmpMax <= 0 {
+		return
+	}
+	if m.glitchRemain <= 0 {
+		freq := randomFloat64(m.glitchFreqMin, m.glitchFreqMax)
+		amp := randomFloat64(m.glitchAmpMin, m.glitchAmpMax)
+		m.injectClickWithParams(ctx, 1.0, freq, amp)
+		m.scheduleNextGlitch()
+		return
+	}
+	m.glitchRemain -= m.frameDuration
+}
+
+func (m *clickModule) scheduleNextGlitch() {
+	if m.glitchMaxMs <= 0 {
+		m.glitchRemain = 0
+		return
+	}
+	m.glitchRemain = randomDurationMs(1, m.glitchMaxMs)
+}
+
 func (m *clickModule) injectClick(ctx *audioProcessContext, sign float64) {
-	if len(ctx.Mixed) == 0 || m.clickAmplitude <= 0 || m.burstSamples <= 0 {
+	m.injectClickWithParams(ctx, sign, m.freqHz, m.clickAmplitude)
+}
+
+func (m *clickModule) injectClickWithParams(ctx *audioProcessContext, sign float64, freqHz float64, amplitude float64) {
+	if len(ctx.Mixed) == 0 || amplitude <= 0 || m.burstSamples <= 0 || freqHz <= 0 {
 		return
 	}
 	limit := m.burstSamples
@@ -791,8 +840,8 @@ func (m *clickModule) injectClick(ctx *audioProcessContext, sign float64) {
 	for i := 0; i < limit; i++ {
 		t := float64(i) / float64(sampleRate)
 		env := math.Exp(-4.0 * float64(i) / float64(limit))
-		wave := math.Sin(2.0*math.Pi*m.freqHz*t + phaseOffset)
-		ctx.Mixed[i] += wave * m.clickAmplitude * env
+		wave := math.Sin(2.0*math.Pi*freqHz*t + phaseOffset)
+		ctx.Mixed[i] += wave * amplitude * env
 	}
 }
 
@@ -886,6 +935,13 @@ func randomDurationMs(minMs int, maxMs int) time.Duration {
 		return time.Duration(minMs) * time.Millisecond
 	}
 	return time.Duration(minMs+rand.Intn(maxMs-minMs+1)) * time.Millisecond
+}
+
+func randomFloat64(min float64, max float64) float64 {
+	if max <= min {
+		return min
+	}
+	return min + rand.Float64()*(max-min)
 }
 
 func maxInt(a int, b int) int {
@@ -1148,7 +1204,12 @@ func defaultConfig() appConfig {
 				TailMaxMs:          60,
 			},
 			Click: clickConfig{
-				ClickDB: -8.0,
+				ClickDB:             -8.0,
+				GlitchIntervalMaxMs: 0,
+				GlitchFreqMinHz:     120.0,
+				GlitchFreqMaxHz:     360.0,
+				GlitchLevelMinDB:    -14.0,
+				GlitchLevelMaxDB:    -6.0,
 			},
 			Compressor: compressorConfig{
 				ThresholdDB: -18.0,
@@ -1196,6 +1257,23 @@ func validateConfig(cfg appConfig) error {
 	}
 	if math.IsNaN(cfg.Modules.Click.ClickDB) || math.IsInf(cfg.Modules.Click.ClickDB, 0) {
 		return errors.New("modules.click.click_db must be a finite number")
+	}
+	if cfg.Modules.Click.GlitchIntervalMaxMs < 0 {
+		return errors.New("modules.click.glitch_interval_max_ms must be >= 0")
+	}
+	if math.IsNaN(cfg.Modules.Click.GlitchFreqMinHz) || math.IsInf(cfg.Modules.Click.GlitchFreqMinHz, 0) ||
+		math.IsNaN(cfg.Modules.Click.GlitchFreqMaxHz) || math.IsInf(cfg.Modules.Click.GlitchFreqMaxHz, 0) {
+		return errors.New("modules.click glitch_freq range must be finite")
+	}
+	if cfg.Modules.Click.GlitchFreqMinHz <= 0 || cfg.Modules.Click.GlitchFreqMaxHz < cfg.Modules.Click.GlitchFreqMinHz {
+		return errors.New("modules.click glitch_freq range is invalid")
+	}
+	if math.IsNaN(cfg.Modules.Click.GlitchLevelMinDB) || math.IsInf(cfg.Modules.Click.GlitchLevelMinDB, 0) ||
+		math.IsNaN(cfg.Modules.Click.GlitchLevelMaxDB) || math.IsInf(cfg.Modules.Click.GlitchLevelMaxDB, 0) {
+		return errors.New("modules.click glitch_level range must be finite")
+	}
+	if cfg.Modules.Click.GlitchLevelMaxDB < cfg.Modules.Click.GlitchLevelMinDB {
+		return errors.New("modules.click glitch_level range is invalid")
 	}
 	if cfg.Modules.Distortion.Mix < 0 || cfg.Modules.Distortion.Mix > 1 {
 		return errors.New("modules.distortion.mix must be in [0..1]")
