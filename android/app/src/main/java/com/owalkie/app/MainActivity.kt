@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var serverStore: ServerStore
+    private lateinit var uiSignalPlayer: UiSignalPlayer
     private var transmitting = false
     private var selectedServerIndex = 0
     private val servers = mutableListOf<ServerProfile>()
@@ -43,10 +44,18 @@ class MainActivity : ComponentActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != WalkieService.ACTION_STATUS) return
             val signal = intent.getIntExtra(WalkieService.EXTRA_SIGNAL, 0).coerceIn(0, 255)
+            val prevConnected = wsConnected
+            val prevConnecting = wsConnecting
             wsConnected = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTED, false)
             wsConnecting = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTING, false)
             val udpReady = intent.getBooleanExtra(WalkieService.EXTRA_UDP_READY, false)
             val signalPercent = ((signal / 255.0) * 100.0).toInt().coerceIn(0, 100)
+
+            if (!prevConnected && wsConnected) {
+                uiSignalPlayer.playConnected()
+            } else if (prevConnecting && !wsConnecting && !wsConnected) {
+                uiSignalPlayer.playConnectionError()
+            }
 
             binding.signalBar.max = 100
             binding.signalBar.progress = signalPercent
@@ -73,6 +82,7 @@ class MainActivity : ComponentActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         serverStore = ServerStore(this)
+        uiSignalPlayer = UiSignalPlayer(this)
 
         initServerProfilesUi()
         requestRuntimePermissions()
@@ -131,6 +141,13 @@ class MainActivity : ComponentActivity() {
         if (receiverRegistered) {
             unregisterReceiver(statusReceiver)
             receiverRegistered = false
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::uiSignalPlayer.isInitialized) {
+            uiSignalPlayer.release()
         }
     }
 
@@ -195,8 +212,8 @@ class MainActivity : ComponentActivity() {
         if (!wsConnected) return
         transmitting = true
         binding.statusText.text = getString(R.string.status_tx)
+        uiSignalPlayer.playPttPress()
         sendServiceAction(WalkieService.ACTION_PTT_PRESS)
-        binding.statusText.announceForAccessibility(binding.statusText.text)
         binding.callButton.isEnabled = false
         updatePttLabel()
     }
@@ -206,7 +223,6 @@ class MainActivity : ComponentActivity() {
         transmitting = false
         binding.statusText.text = getString(R.string.status_idle)
         sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
-        binding.statusText.announceForAccessibility(binding.statusText.text)
         binding.callButton.isEnabled = wsConnected
         updatePttLabel()
     }

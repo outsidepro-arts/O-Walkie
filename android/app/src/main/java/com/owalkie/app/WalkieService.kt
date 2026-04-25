@@ -80,6 +80,7 @@ class WalkieService : Service() {
         private const val DEFAULT_CHANNEL = "global"
 
         private const val SAMPLE_RATE = 8000
+        private const val LOCAL_PLAYBACK_SAMPLE_RATE = 44100
         private const val CHANNELS = 1
         private const val DEFAULT_PACKET_MS = 20
         private const val MAX_PACKET_SAMPLES = SAMPLE_RATE * 60 / 1000
@@ -142,6 +143,7 @@ class WalkieService : Service() {
     private lateinit var audioManager: AudioManager
     private lateinit var rogerPatternStore: RogerPatternStore
     private lateinit var callingPatternStore: CallingPatternStore
+    private var localPttReleasePcm: ShortArray = shortArrayOf()
     @Volatile
     private var voiceProfileActive: Boolean = false
 
@@ -151,6 +153,8 @@ class WalkieService : Service() {
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         rogerPatternStore = RogerPatternStore(this)
         callingPatternStore = CallingPatternStore(this)
+        val pttReleaseWav = loadWavPcmFromRaw(R.raw.selfttdown_002)
+        localPttReleasePcm = resampleLinear(pttReleaseWav.samples, pttReleaseWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -420,8 +424,10 @@ class WalkieService : Service() {
         rogerJob = serviceScope.launch(Dispatchers.Default) {
             try {
                 val rogerPcm = generateRogerFromSelectedPattern(SAMPLE_RATE)
+                val localRogerPcm = generateRogerFromSelectedPattern(LOCAL_PLAYBACK_SAMPLE_RATE)
+                val localPlaybackPcm = prependSignal(localPttReleasePcm, localRogerPcm)
                 localRogerPlaybackJob = serviceScope.launch(Dispatchers.IO) {
-                    playLocalRogerPcm(rogerPcm)
+                    playLocalRogerPcm(localPlaybackPcm, LOCAL_PLAYBACK_SAMPLE_RATE)
                 }
                 streamRogerBeep(rogerPcm)
             } finally {
@@ -438,8 +444,9 @@ class WalkieService : Service() {
         callSignalJob = serviceScope.launch(Dispatchers.Default) {
             try {
                 val callPcm = generateCallFromSelectedPattern(SAMPLE_RATE)
+                val localCallPcm = generateCallFromSelectedPattern(LOCAL_PLAYBACK_SAMPLE_RATE)
                 localCallPlaybackJob = serviceScope.launch(Dispatchers.IO) {
-                    playLocalSignalPcm(callPcm, CALL_LOCAL_GAIN_DB)
+                    playLocalSignalPcm(localCallPcm, LOCAL_PLAYBACK_SAMPLE_RATE, CALL_LOCAL_GAIN_DB)
                 }
                 streamGeneratedSignal(callPcm)
             } finally {
@@ -513,16 +520,16 @@ class WalkieService : Service() {
         }
     }
 
-    private suspend fun playLocalRogerPcm(pcm: ShortArray) = withContext(Dispatchers.IO) {
-        playLocalSignalPcm(pcm, 0.0)
+    private suspend fun playLocalRogerPcm(pcm: ShortArray, sampleRate: Int) = withContext(Dispatchers.IO) {
+        playLocalSignalPcm(pcm, sampleRate, 0.0)
     }
 
-    private suspend fun playLocalSignalPcm(pcm: ShortArray, gainDb: Double) = withContext(Dispatchers.IO) {
+    private suspend fun playLocalSignalPcm(pcm: ShortArray, sampleRate: Int, gainDb: Double) = withContext(Dispatchers.IO) {
         if (pcm.isEmpty()) return@withContext
         val playPcm = applyGainDb(pcm, gainDb)
         val track = AudioTrack(
             AudioManager.STREAM_MUSIC,
-            SAMPLE_RATE,
+            sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
             (playPcm.size * 2).coerceAtLeast(2),
@@ -542,7 +549,7 @@ class WalkieService : Service() {
                 delay(5L)
             }
         } finally {
-            track.stop()
+            runCatching { track.stop() }
             track.release()
         }
     }
@@ -557,6 +564,76 @@ class WalkieService : Service() {
         }
         return out
     }
+
+    private fun prependSignal(prefix: ShortArray, main: ShortArray): ShortArray {
+        if (prefix.isEmpty()) return main
+        if (main.isEmpty()) return prefix
+        val out = ShortArray(prefix.size + main.size)
+        System.arraycopy(prefix, 0, out, 0, prefix.size)
+        System.arraycopy(main, 0, out, prefix.size, main.size)
+        return out
+    }
+
+    private fun resampleLinear(input: ShortArray, srcRate: Int, dstRate: Int): ShortArray {
+        if (input.isEmpty()) return input
+        if (srcRate == dstRate) return input
+        val outSize = ((input.size.toDouble() * dstRate) / srcRate).toInt().coerceAtLeast(1)
+        val out = ShortArray(outSize)
+        val step = srcRate.toDouble() / dstRate
+        for (i in 0 until outSize) {
+            val pos = i * step
+            val idx = pos.toInt().coerceIn(0, input.lastIndex)
+            val frac = pos - idx
+            val next = (idx + 1).coerceAtMost(input.lastIndex)
+            val v = (input[idx] * (1.0 - frac) + input[next] * frac).toInt()
+            out[i] = v.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+        }
+        return out
+    }
+
+    private fun loadWavPcmFromRaw(resourceId: Int): WavPcm {
+        return runCatching {
+            resources.openRawResource(resourceId).use { input ->
+                val bytes = input.readBytes()
+                if (bytes.size < 44) return WavPcm(shortArrayOf(), SAMPLE_RATE)
+                if (String(bytes, 0, 4) != "RIFF" || String(bytes, 8, 4) != "WAVE") {
+                    return WavPcm(shortArrayOf(), SAMPLE_RATE)
+                }
+                var offset = 12
+                var srcRate = SAMPLE_RATE
+                var dataStart = -1
+                var dataSize = 0
+                while (offset + 8 <= bytes.size) {
+                    val chunkId = String(bytes, offset, 4)
+                    val chunkSize = ByteBuffer.wrap(bytes, offset + 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                    val payloadStart = offset + 8
+                    if (chunkId == "fmt " && chunkSize >= 16 && payloadStart + 16 <= bytes.size) {
+                        srcRate = ByteBuffer.wrap(bytes, payloadStart + 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                    }
+                    if (chunkId == "data") {
+                        dataStart = payloadStart
+                        dataSize = chunkSize
+                        break
+                    }
+                    offset = payloadStart + chunkSize + (chunkSize and 1)
+                }
+                if (dataStart < 0 || dataSize <= 0 || dataStart + dataSize > bytes.size) {
+                    return WavPcm(shortArrayOf(), SAMPLE_RATE)
+                }
+                val sampleCount = dataSize / 2
+                val out = ShortArray(sampleCount)
+                var p = dataStart
+                for (i in 0 until sampleCount) {
+                    out[i] = ByteBuffer.wrap(bytes, p, 2).order(ByteOrder.LITTLE_ENDIAN).short
+                    p += 2
+                }
+                val safeRate = srcRate.takeIf { it in 4000..192000 } ?: SAMPLE_RATE
+                WavPcm(out, safeRate)
+            }
+        }.getOrDefault(WavPcm(shortArrayOf(), SAMPLE_RATE))
+    }
+
+    private data class WavPcm(val samples: ShortArray, val sampleRate: Int)
 
     private fun generateRogerFromSelectedPattern(sampleRate: Int): ShortArray {
         val selected = rogerPatternStore.getSelectedPattern()
