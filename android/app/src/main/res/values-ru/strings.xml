@@ -24,6 +24,15 @@
     <string name="menu_exit">Выход</string>
     <string name="settings_screen_title">Настройки приложения</string>
     <string name="settings_screen_placeholder">Это макет окна настроек. В следующих этапах добавим сюда параметры приложения.</string>
+    <string name="microphone_label">Микрофон</string>
+    <string name="microphone_option_mic">Микрофон телефона (MIC)</string>
+    <string name="microphone_option_default">Системный по умолчанию</string>
+    <string name="microphone_option_camcorder">Камера (Camcorder)</string>
+    <string name="microphone_option_voice_recognition">Распознавание речи</string>
+    <string name="microphone_option_voice_communication">Голосовая связь</string>
+    <string name="microphone_option_unprocessed">Без обработки (Unprocessed)</string>
+    <string name="microphone_option_voice_performance">Сценический режим (Voice performance)</string>
+    <string name="microphone_option_bluetooth_headset">Микрофон Bluetooth-гарнитуры</string>
     <string name="roger_signal_label">Сигнал Роджер</string>
     <string name="roger_custom_button">Свой</string>
     <string name="calling_signal_label">Сигнал Вызова</string>

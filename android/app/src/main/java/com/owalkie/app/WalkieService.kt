@@ -11,6 +11,7 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
+import android.media.AudioDeviceInfo
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
@@ -24,6 +25,7 @@ import androidx.core.app.NotificationCompat
 import com.owalkie.app.audio.OpusCodec
 import com.owalkie.app.audio.OpusCodecFactory
 import com.owalkie.app.model.CallingPatternStore
+import com.owalkie.app.model.MicrophoneConfigStore
 import com.owalkie.app.model.RogerPatternStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -143,6 +145,7 @@ class WalkieService : Service() {
     private lateinit var audioManager: AudioManager
     private lateinit var rogerPatternStore: RogerPatternStore
     private lateinit var callingPatternStore: CallingPatternStore
+    private lateinit var microphoneConfigStore: MicrophoneConfigStore
     private var localPttReleasePcm: ShortArray = shortArrayOf()
     @Volatile
     private var voiceProfileActive: Boolean = false
@@ -153,6 +156,7 @@ class WalkieService : Service() {
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         rogerPatternStore = RogerPatternStore(this)
         callingPatternStore = CallingPatternStore(this)
+        microphoneConfigStore = MicrophoneConfigStore(this)
         val pttReleaseWav = loadWavPcmFromRaw(R.raw.selfttdown_002)
         localPttReleasePcm = resampleLinear(pttReleaseWav.samples, pttReleaseWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
     }
@@ -410,7 +414,8 @@ class WalkieService : Service() {
         localCallPlaybackJob?.cancel()
         localCallPlaybackJob = null
         if (transmitting.getAndSet(true)) return
-        ensureVoiceAudioProfile()
+        val micOption = microphoneConfigStore.getSelectedOption()
+        ensureVoiceAudioProfile(micOption.preferBluetooth)
         if (txJob?.isActive == true) return
         txJob = serviceScope.launch(Dispatchers.Default) {
             runCaptureLoop()
@@ -462,13 +467,16 @@ class WalkieService : Service() {
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
-        val recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            minBuffer.coerceAtLeast(frameSamples * 4),
-        )
+        val preferredOption = microphoneConfigStore.getSelectedOption()
+        val recorder = createRecorder(
+            source = preferredOption.audioSource,
+            frameSamples = frameSamples,
+            minBuffer = minBuffer,
+        ) ?: createRecorder(
+            source = MediaRecorder.AudioSource.MIC,
+            frameSamples = frameSamples,
+            minBuffer = minBuffer,
+        ) ?: return@withContext
         disableRecordPreprocessing(recorder.audioSessionId)
 
         val readBuffer = ShortArray(frameSamples)
@@ -868,15 +876,26 @@ class WalkieService : Service() {
         stopSelf()
     }
 
-    private fun ensureVoiceAudioProfile() {
-        if (voiceProfileActive) return
+    private fun createRecorder(source: Int, frameSamples: Int, minBuffer: Int): AudioRecord? {
+        return runCatching {
+            AudioRecord(
+                source,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                minBuffer.coerceAtLeast(frameSamples * 4),
+            )
+        }.getOrNull()?.takeIf { it.state == AudioRecord.STATE_INITIALIZED }
+    }
+
+    private fun ensureVoiceAudioProfile(preferBluetoothMic: Boolean = false) {
         runCatching {
-            // Test mode: use camera-like multimedia profile for recording.
-            audioManager.mode = AudioManager.MODE_NORMAL
+            audioManager.mode = if (preferBluetoothMic) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
             audioManager.isSpeakerphoneOn = false
-            if (audioManager.isBluetoothScoOn) {
-                audioManager.stopBluetoothSco()
-                audioManager.isBluetoothScoOn = false
+            if (preferBluetoothMic) {
+                enableBluetoothInputRoute()
+            } else {
+                disableBluetoothInputRoute()
             }
             voiceProfileActive = true
         }
@@ -884,13 +903,44 @@ class WalkieService : Service() {
 
     private fun restoreMediaAudioProfile() {
         runCatching {
+            disableBluetoothInputRoute()
+            audioManager.mode = AudioManager.MODE_NORMAL
+            audioManager.isSpeakerphoneOn = false
+            voiceProfileActive = false
+        }
+    }
+
+    private fun enableBluetoothInputRoute() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                val btDevice = audioManager.availableCommunicationDevices.firstOrNull {
+                    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
+                }
+                if (btDevice != null) {
+                    audioManager.setCommunicationDevice(btDevice)
+                } else {
+                    audioManager.clearCommunicationDevice()
+                }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            runCatching {
+                audioManager.startBluetoothSco()
+                audioManager.isBluetoothScoOn = true
+            }
+        }
+    }
+
+    private fun disableBluetoothInputRoute() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching { audioManager.clearCommunicationDevice() }
+        }
+        @Suppress("DEPRECATION")
+        runCatching {
             if (audioManager.isBluetoothScoOn) {
                 audioManager.stopBluetoothSco()
                 audioManager.isBluetoothScoOn = false
             }
-            audioManager.mode = AudioManager.MODE_NORMAL
-            audioManager.isSpeakerphoneOn = false
-            voiceProfileActive = false
         }
     }
 

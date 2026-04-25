@@ -24,6 +24,15 @@
     <string name="menu_exit">Exit</string>
     <string name="settings_screen_title">Application settings</string>
     <string name="settings_screen_placeholder">This is a settings screen template. New options will be added here in the next stages.</string>
+    <string name="microphone_label">Microphone</string>
+    <string name="microphone_option_mic">Phone mic (MIC)</string>
+    <string name="microphone_option_default">System default</string>
+    <string name="microphone_option_camcorder">Camcorder</string>
+    <string name="microphone_option_voice_recognition">Voice recognition</string>
+    <string name="microphone_option_voice_communication">Voice communication</string>
+    <string name="microphone_option_unprocessed">Unprocessed</string>
+    <string name="microphone_option_voice_performance">Voice performance</string>
+    <string name="microphone_option_bluetooth_headset">Bluetooth headset mic</string>
     <string name="roger_signal_label">Roger signal</string>
     <string name="roger_custom_button">Custom</string>
     <string name="calling_signal_label">Calling signal</string>
