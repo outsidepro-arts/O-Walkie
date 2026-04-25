@@ -186,6 +186,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
             await _relayClientService.ConnectAsync(_settings.ActiveProfile, _settings.RepeaterEnabled);
             StatusText = "Status: Connected";
         }
+        catch (Exception ex)
+        {
+            StatusText = $"Connect failed: {ex.Message}";
+        }
         finally
         {
             _isConnecting = false;

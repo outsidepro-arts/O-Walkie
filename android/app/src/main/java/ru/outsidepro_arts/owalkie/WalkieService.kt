@@ -134,13 +134,15 @@ class WalkieService : Service() {
     private var channel: String = DEFAULT_CHANNEL
 
     @Volatile
-    private var targetUdpAddress: InetAddress? = resolveHost(DEFAULT_WS_HOST)
+    private var targetUdpAddress: InetAddress? = null
 
     @Volatile
     private var repeaterEnabled: Boolean = false
 
     @Volatile
     private var packetMs: Int = DEFAULT_PACKET_MS
+    @Volatile
+    private var wsSecure: Boolean = false
 
     private lateinit var codec: OpusCodec
     private lateinit var audioManager: AudioManager
@@ -284,7 +286,17 @@ class WalkieService : Service() {
             runCatching { webSocket?.cancel() }
             webSocket = null
         }
-        val request = Request.Builder().url(wsUrl()).build()
+        val wsUrl = wsUrl()
+        if (wsUrl.isBlank()) {
+            wsConnected.set(false)
+            broadcastStatus(currentSignalByte())
+            return
+        }
+        val request = runCatching { Request.Builder().url(wsUrl).build() }.getOrElse {
+            wsConnected.set(false)
+            broadcastStatus(currentSignalByte())
+            return
+        }
         webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 wsConnected.set(true)
@@ -802,7 +814,13 @@ class WalkieService : Service() {
         ws.send("""{"type":"repeater_mode","enabled":$repeaterEnabled}""")
     }
 
-    private fun wsUrl(): String = "ws://$serverHost:$wsPort/ws"
+    private fun wsUrl(): String {
+        val host = serverHost.trim()
+        if (host.isBlank()) return ""
+        val hostPart = if (host.contains(':') && !host.startsWith("[")) "[$host]" else host
+        val scheme = if (wsSecure) "wss" else "ws"
+        return "$scheme://$hostPart:$wsPort/ws"
+    }
 
     private fun normalizePacketMs(value: Int): Int {
         return when (value) {
@@ -824,7 +842,7 @@ class WalkieService : Service() {
 
     private fun resolveHost(host: String): InetAddress? {
         return try {
-            InetAddress.getByName(host)
+            InetAddress.getByName(host.removePrefix("[").removeSuffix("]"))
         } catch (_: UnknownHostException) {
             null
         }
@@ -837,30 +855,87 @@ class WalkieService : Service() {
         val newUdpPort = intent.getIntExtra(EXTRA_UDP_PORT, -1)
         val newChannel = intent.getStringExtra(EXTRA_CHANNEL)?.trim().orEmpty()
         val newRepeaterEnabled = intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, repeaterEnabled)
+        val parsedEndpoint = parseServerEndpoint(newHost, newWsPort)
 
-        if (newHost.isBlank() || newWsPort !in 1..65535 || newUdpPort !in 1..65535 || newChannel.isBlank()) {
+        if (parsedEndpoint == null || newUdpPort !in 1..65535 || newChannel.isBlank()) {
             return false
         }
 
         synchronized(configLock) {
-            val changed = serverHost != newHost ||
-                wsPort != newWsPort ||
+            val changed = serverHost != parsedEndpoint.host ||
+                wsPort != parsedEndpoint.wsPort ||
                 udpPort != newUdpPort ||
                 channel != newChannel ||
-                repeaterEnabled != newRepeaterEnabled
+                repeaterEnabled != newRepeaterEnabled ||
+                wsSecure != parsedEndpoint.wsSecure
             if (!changed) return false
 
-            serverHost = newHost
-            wsPort = newWsPort
+            serverHost = parsedEndpoint.host
+            wsPort = parsedEndpoint.wsPort
             udpPort = newUdpPort
             channel = newChannel
             repeaterEnabled = newRepeaterEnabled
-            targetUdpAddress = resolveHost(newHost)
+            wsSecure = parsedEndpoint.wsSecure
+            targetUdpAddress = null
             sessionId.set(0)
             seq.set(0)
             wsConnected.set(false)
             return true
         }
+    }
+
+    private data class ParsedServerEndpoint(
+        val host: String,
+        val wsPort: Int,
+        val wsSecure: Boolean,
+    )
+
+    private fun parseServerEndpoint(rawHost: String, fallbackWsPort: Int): ParsedServerEndpoint? {
+        var value = rawHost.trim()
+        if (value.isBlank()) return null
+        var secure = false
+        val lowered = value.lowercase()
+        when {
+            lowered.startsWith("wss://") -> {
+                secure = true
+                value = value.substring(6)
+            }
+            lowered.startsWith("https://") -> {
+                secure = true
+                value = value.substring(8)
+            }
+            lowered.startsWith("ws://") -> value = value.substring(5)
+            lowered.startsWith("http://") -> value = value.substring(7)
+        }
+        value = value.substringBefore('/').substringBefore('?').substringBefore('#').trim()
+        value = value.substringAfterLast('@')
+        if (value.isBlank()) return null
+
+        var port = fallbackWsPort
+        var host = value
+        if (host.startsWith("[")) {
+            val closing = host.indexOf(']')
+            if (closing <= 0) return null
+            val ipv6 = host.substring(1, closing).trim()
+            val rest = host.substring(closing + 1)
+            if (rest.startsWith(":")) {
+                val parsedPort = rest.substring(1).toIntOrNull() ?: return null
+                port = parsedPort
+            }
+            host = ipv6
+        } else {
+            val colonCount = host.count { it == ':' }
+            if (colonCount == 1) {
+                val idx = host.lastIndexOf(':')
+                val maybePort = host.substring(idx + 1).toIntOrNull()
+                if (maybePort != null) {
+                    port = maybePort
+                    host = host.substring(0, idx)
+                }
+            }
+        }
+        if (host.isBlank() || port !in 1..65535) return null
+        return ParsedServerEndpoint(host = host, wsPort = port, wsSecure = secure)
     }
 
     private fun cancelConnection() {

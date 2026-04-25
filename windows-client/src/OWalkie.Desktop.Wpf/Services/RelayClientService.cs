@@ -20,6 +20,8 @@ public sealed class RelayClientService
     private int _packetMs = 20;
     private int _seq;
     private int _connected;
+    private string _udpHost = string.Empty;
+    private int _udpPort;
 
     public bool IsConnected { get; private set; }
     public int PacketMs => _packetMs;
@@ -36,6 +38,11 @@ public sealed class RelayClientService
             return;
         }
 
+        if (!TryParseServerEndpoint(profile.Host, profile.WsPort, out var wsHost, out var wsPort, out var wsSecure))
+        {
+            throw new ArgumentException("Invalid server host/port value.");
+        }
+
         _activeProfile = profile;
         _connectionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _webSocket = new ClientWebSocket();
@@ -43,8 +50,10 @@ public sealed class RelayClientService
         _sessionId = 0;
         _packetMs = 20;
         _seq = 0;
+        _udpHost = wsHost;
+        _udpPort = profile.UdpPort;
 
-        var wsUri = new Uri($"ws://{profile.Host}:{profile.WsPort}/ws");
+        var wsUri = new UriBuilder(wsSecure ? "wss" : "ws", wsHost, wsPort, "/ws").Uri;
         await _webSocket.ConnectAsync(wsUri, _connectionCts.Token);
         IsConnected = true;
         Interlocked.Exchange(ref _connected, 1);
@@ -127,7 +136,78 @@ public sealed class RelayClientService
         opusBytes.CopyTo(payload.AsSpan(9));
 
         cancellationToken.ThrowIfCancellationRequested();
-        await _udpClient.SendAsync(payload, payload.Length, _activeProfile.Host, _activeProfile.UdpPort);
+        await _udpClient.SendAsync(payload, payload.Length, _udpHost, _udpPort);
+    }
+
+    private static bool TryParseServerEndpoint(string rawHost, int fallbackWsPort, out string host, out int wsPort, out bool wsSecure)
+    {
+        host = string.Empty;
+        wsPort = fallbackWsPort;
+        wsSecure = false;
+
+        var value = (rawHost ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (Uri.TryCreate(value, UriKind.Absolute, out var absoluteUri))
+        {
+            var scheme = absoluteUri.Scheme.ToLowerInvariant();
+            if (scheme is "ws" or "wss" or "http" or "https")
+            {
+                host = absoluteUri.Host;
+                wsPort = absoluteUri.IsDefaultPort ? fallbackWsPort : absoluteUri.Port;
+                wsSecure = scheme is "wss" or "https";
+                return !string.IsNullOrWhiteSpace(host) && wsPort is > 0 and <= 65535;
+            }
+        }
+
+        value = value.Split('/', '?', '#')[0].Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var atIndex = value.LastIndexOf('@');
+        if (atIndex >= 0 && atIndex < value.Length - 1)
+        {
+            value = value[(atIndex + 1)..];
+        }
+
+        if (value.StartsWith("[", StringComparison.Ordinal))
+        {
+            var close = value.IndexOf(']');
+            if (close <= 1)
+            {
+                return false;
+            }
+
+            host = value[1..close].Trim();
+            var rest = value[(close + 1)..];
+            if (rest.StartsWith(":", StringComparison.Ordinal) && !int.TryParse(rest[1..], out wsPort))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            var firstColon = value.IndexOf(':');
+            var lastColon = value.LastIndexOf(':');
+            if (firstColon >= 0 && firstColon == lastColon)
+            {
+                var maybePort = value[(lastColon + 1)..];
+                if (int.TryParse(maybePort, out var parsedPort))
+                {
+                    wsPort = parsedPort;
+                    value = value[..lastColon];
+                }
+            }
+
+            host = value.Trim();
+        }
+
+        return !string.IsNullOrWhiteSpace(host) && wsPort is > 0 and <= 65535;
     }
 
     private async Task SendWsJsonAsync<T>(T payload, CancellationToken cancellationToken)
