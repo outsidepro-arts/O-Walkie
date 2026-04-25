@@ -1,0 +1,123 @@
+﻿<Window x:Class="OWalkie.Desktop.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="O-Walkie Windows Client"
+        Width="620"
+        Height="620"
+        MinWidth="560"
+        MinHeight="560"
+        PreviewKeyDown="Window_OnPreviewKeyDown"
+        PreviewKeyUp="Window_OnPreviewKeyUp">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="130" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="Profile" />
+        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,8">
+            <ComboBox Width="250"
+                      ItemsSource="{Binding Profiles}"
+                      SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+                      DisplayMemberPath="Name" />
+            <Button Width="80" Margin="8,0,0,0" Content="Save" Command="{Binding SaveProfileCommand}" />
+            <Button Width="80" Margin="8,0,0,0" Content="Delete" Command="{Binding DeleteProfileCommand}" />
+        </StackPanel>
+
+        <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="Profile name" />
+        <TextBox Grid.Row="1" Grid.Column="1" Margin="0,0,0,8" Text="{Binding ProfileName, UpdateSourceTrigger=PropertyChanged}" />
+
+        <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="Host" />
+        <TextBox Grid.Row="2" Grid.Column="1" Margin="0,0,0,8" Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}" />
+
+        <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="WS port" />
+        <TextBox Grid.Row="3" Grid.Column="1" Margin="0,0,0,8" Text="{Binding WsPort, UpdateSourceTrigger=PropertyChanged}" />
+
+        <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="UDP port" />
+        <TextBox Grid.Row="4" Grid.Column="1" Margin="0,0,0,8" Text="{Binding UdpPort, UpdateSourceTrigger=PropertyChanged}" />
+
+        <TextBlock Grid.Row="5" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="Channel" />
+        <TextBox Grid.Row="5" Grid.Column="1" Margin="0,0,0,8" Text="{Binding Channel, UpdateSourceTrigger=PropertyChanged}" />
+
+        <StackPanel Grid.Row="6" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
+            <Button Width="140"
+                    Height="36"
+                    Command="{Binding ConnectCommand}"
+                    Content="{Binding ConnectButtonText}" />
+            <Button Width="100"
+                    Height="36"
+                    Margin="8,0,0,0"
+                    Content="Settings"
+                    Click="SettingsButton_OnClick" />
+            <TextBlock Margin="12,0,0,0"
+                       VerticalAlignment="Center"
+                       FontWeight="SemiBold"
+                       Text="{Binding StatusText}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="7" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,10,0,0">
+            <TextBlock VerticalAlignment="Center" Text="Signal" />
+            <ProgressBar Width="190"
+                         Height="16"
+                         Margin="10,0,0,0"
+                         Minimum="0"
+                         Maximum="100"
+                         Value="{Binding SignalPercent}" />
+            <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Text="{Binding SignalPercent, StringFormat={}{0}%}" />
+        </StackPanel>
+
+        <TextBlock Grid.Row="8"
+                   Grid.ColumnSpan="2"
+                   Margin="0,10,0,0"
+                   FontWeight="SemiBold"
+                   Text="{Binding HardwarePttStatusText}" />
+
+        <StackPanel Grid.Row="9" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
+            <Button Width="180" Height="32" Content="Assign hardware PTT key" Command="{Binding AssignHardwarePttCommand}" />
+            <Button Width="100" Height="32" Margin="8,0,0,0" Content="Clear" Command="{Binding ClearHardwarePttCommand}" />
+            <TextBlock Margin="10,0,0,0"
+                       VerticalAlignment="Center"
+                       FontStyle="Italic"
+                       Text="{Binding IsAwaitingHardwarePtt, StringFormat=Awaiting key: {0}}" />
+        </StackPanel>
+
+        <Border Grid.Row="10"
+                Grid.ColumnSpan="2"
+                Margin="0,14,0,0"
+                Padding="12"
+                CornerRadius="6"
+                BorderThickness="1"
+                BorderBrush="#444">
+            <TextBlock TextWrapping="Wrap">
+                Stage 2.1: WS + UDP + Opus + WASAPI pipeline is wired. Profiles and hardware PTT assignment are now
+                persisted in settings; preview key interception can trigger PTT without mouse interaction.
+            </TextBlock>
+        </Border>
+
+        <Button Grid.Row="11"
+                Grid.ColumnSpan="2"
+                Height="44"
+                Margin="0,16,0,0"
+                Content="Hold to Talk"
+                PreviewMouseLeftButtonDown="PttButton_OnMouseDown"
+                PreviewMouseLeftButtonUp="PttButton_OnMouseUp"
+                LostMouseCapture="PttButton_OnLostMouseCapture" />
+    </Grid>
+</Window>

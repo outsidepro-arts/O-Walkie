@@ -19,3 +19,9 @@ android/.kotlin/
 android/captures/
 *.apk
 *.aab
+
+# Windows client (.NET/WPF)
+windows-client/**/bin/
+windows-client/**/obj/
+*.user
+*.suo
