@@ -21,6 +21,7 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 - `modules.click.glitch_interval_max_ms` random in-TX click interval ceiling (`0` disables)
 - `modules.click.glitch_freq_min_hz` / `modules.click.glitch_freq_max_hz` random in-TX click frequency range
 - `modules.click.glitch_level_min_db` / `modules.click.glitch_level_max_db` random in-TX click loudness range
+- `modules.filter.low_cut_hz` / `modules.filter.high_cut_hz` band-pass cutoff range for full channel stream
 - `modules.compressor.*` compressor settings
 - `modules.distortion.*` distortion settings
 

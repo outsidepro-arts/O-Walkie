@@ -26,7 +26,11 @@
       "glitch_freq_max_hz": 200.0,
       "glitch_level_min_db": -25.0,
       "glitch_level_max_db": -11.0
-    },	
+    },
+    "filter": {
+      "low_cut_hz": 150.0,
+      "high_cut_hz": 3000.0
+    },
     "compressor": {
       "threshold_db": -35.0,
       "ratio": 10.0,

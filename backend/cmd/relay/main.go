@@ -54,6 +54,7 @@ type serverConfig struct {
 type modulesConfig struct {
 	Noise      noiseConfig      `json:"noise"`
 	Click      clickConfig      `json:"click"`
+	Filter     filterConfig     `json:"filter"`
 	Compressor compressorConfig `json:"compressor"`
 	Distortion distortionConfig `json:"distortion"`
 }
@@ -85,6 +86,11 @@ type clickConfig struct {
 	GlitchFreqMaxHz     float64 `json:"glitch_freq_max_hz"`
 	GlitchLevelMinDB    float64 `json:"glitch_level_min_db"`
 	GlitchLevelMaxDB    float64 `json:"glitch_level_max_db"`
+}
+
+type filterConfig struct {
+	LowCutHz  float64 `json:"low_cut_hz"`
+	HighCutHz float64 `json:"high_cut_hz"`
 }
 
 type distortionConfig struct {
@@ -366,7 +372,6 @@ type channelMixer struct {
 	seq          uint32
 	noiseLevelDB float64
 	lastSignal   float64
-	filter       *bandPass
 	modules      []audioModule
 	modulesCfg   modulesConfig
 
@@ -390,7 +395,6 @@ type repeaterSession struct {
 
 type audioProcessor struct {
 	modules      []audioModule
-	filter       *bandPass
 	noiseLevelDB float64
 	lastSignal   float64
 }
@@ -400,10 +404,10 @@ func newAudioProcessor(mcfg modulesConfig) *audioProcessor {
 		modules: []audioModule{
 			newWhiteNoiseSquelchModule(packetDur, mcfg.Noise),
 			newClickModule(packetDur, mcfg.Click),
+			newBandPassModule(sampleRate, mcfg.Filter),
 			newCompressorModule(sampleRate, mcfg.Compressor),
 			newDistortionModule(mcfg.Distortion),
 		},
-		filter:       newBandPass(sampleRate, 300.0, 3000.0),
 		noiseLevelDB: mcfg.Noise.MinNoiseDB,
 		lastSignal:   255.0,
 	}
@@ -444,7 +448,6 @@ func (p *audioProcessor) process(input []int16, signalByte float64, active bool)
 	for i := 0; i < packetSamples; i++ {
 		out[i] = hardClipFloat(ctx.Mixed[i], 15000.0)
 	}
-	p.filter.process(out)
 	return out, true
 }
 
@@ -466,11 +469,11 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 		encoder:      enc,
 		noiseLevelDB: -30.0,
 		lastSignal:   255.0,
-		filter:       newBandPass(sampleRate, 300.0, 3000.0),
 		modulesCfg:   mcfg,
 		modules: []audioModule{
 			newWhiteNoiseSquelchModule(packetDur, mcfg.Noise),
 			newClickModule(packetDur, mcfg.Click),
+			newBandPassModule(sampleRate, mcfg.Filter),
 			newCompressorModule(sampleRate, mcfg.Compressor),
 			newDistortionModule(mcfg.Distortion),
 		},
@@ -732,7 +735,6 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		// Saturated character: hard clip after sum.
 		outPCM[i] = hardClipFloat(mixed[i], 15000.0)
 	}
-	m.filter.process(outPCM)
 
 	opusBuf := make([]byte, opusMaxFrameLen)
 	n, err := m.encoder.Encode(outPCM, opusBuf)
@@ -1217,6 +1219,29 @@ func (m *distortionModule) Process(ctx *audioProcessContext) {
 	}
 }
 
+type bandPassModule struct {
+	filter *bandPass
+}
+
+func newBandPassModule(sr int, cfg filterConfig) *bandPassModule {
+	return &bandPassModule{
+		filter: newBandPass(sr, cfg.LowCutHz, cfg.HighCutHz),
+	}
+}
+
+func (m *bandPassModule) Name() string {
+	return "band_pass"
+}
+
+func (m *bandPassModule) Process(ctx *audioProcessContext) {
+	if m.filter == nil {
+		return
+	}
+	for i := range ctx.Mixed {
+		ctx.Mixed[i] = m.filter.processSample(ctx.Mixed[i])
+	}
+}
+
 type onePoleHP struct {
 	alpha float64
 	prevX float64
@@ -1269,10 +1294,14 @@ func newBandPass(sr int, lowCut float64, highCut float64) *bandPass {
 func (b *bandPass) process(frame []int16) {
 	for i := range frame {
 		x := float64(frame[i])
-		y := b.hp.process(x)
-		z := b.lp.process(y)
+		z := b.processSample(x)
 		frame[i] = hardClip(int32(z), 32767)
 	}
+}
+
+func (b *bandPass) processSample(x float64) float64 {
+	y := b.hp.process(x)
+	return b.lp.process(y)
 }
 
 func parseAudioPacket(buf []byte, n int, src *net.UDPAddr) (*audioPacket, error) {
@@ -1357,6 +1386,10 @@ func defaultConfig() appConfig {
 				GlitchLevelMinDB:    -14.0,
 				GlitchLevelMaxDB:    -6.0,
 			},
+			Filter: filterConfig{
+				LowCutHz:  300.0,
+				HighCutHz: 3000.0,
+			},
 			Compressor: compressorConfig{
 				ThresholdDB: -18.0,
 				Ratio:       3.2,
@@ -1432,6 +1465,14 @@ func validateConfig(cfg appConfig) error {
 	}
 	if cfg.Modules.Distortion.Mix < 0 || cfg.Modules.Distortion.Mix > 1 {
 		return errors.New("modules.distortion.mix must be in [0..1]")
+	}
+	if math.IsNaN(cfg.Modules.Filter.LowCutHz) || math.IsInf(cfg.Modules.Filter.LowCutHz, 0) ||
+		math.IsNaN(cfg.Modules.Filter.HighCutHz) || math.IsInf(cfg.Modules.Filter.HighCutHz, 0) {
+		return errors.New("modules.filter cutoff range must be finite")
+	}
+	nyquist := float64(sampleRate) / 2.0
+	if cfg.Modules.Filter.LowCutHz <= 0 || cfg.Modules.Filter.HighCutHz <= cfg.Modules.Filter.LowCutHz || cfg.Modules.Filter.HighCutHz >= nyquist {
+		return errors.New("modules.filter cutoff range is invalid")
 	}
 	if cfg.Modules.Noise.SquelchMinMs <= 0 || cfg.Modules.Noise.SquelchMaxMs < cfg.Modules.Noise.SquelchMinMs {
 		return errors.New("modules.noise squelch range is invalid")
