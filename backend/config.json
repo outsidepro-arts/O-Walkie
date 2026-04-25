@@ -2,7 +2,10 @@
   "server": {
     "ws_addr": ":5500",
     "udp_addr": ":5505",
-    "packet_ms": 60
+    "packet_ms": 60,
+    "hangover_ms": 180,
+    "eof_timeout_ms": 420,
+    "conceal_decay": 0.90
   },
   "modules": {
     "noise": {
@@ -25,9 +28,9 @@
       "glitch_level_max_db": -11.0
     },	
     "compressor": {
-      "threshold_db": -25.0,
+      "threshold_db": -35.0,
       "ratio": 10.0,
-      "attack_ms": 1.0,
+      "attack_ms": 10.0,
       "release_ms": 20.0,
       "makeup_db": 4.0
     },

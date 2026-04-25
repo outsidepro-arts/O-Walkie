@@ -70,6 +70,7 @@ public sealed class AudioEngineService
         StopCapture();
         ClearTxQueue();
         ScheduleRxResumeHoldoff();
+        _ = _relayClientService?.SendTxEofAsync(cancellationToken);
         return Task.CompletedTask;
     }
 

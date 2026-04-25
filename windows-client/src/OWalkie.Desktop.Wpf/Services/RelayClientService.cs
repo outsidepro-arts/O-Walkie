@@ -139,6 +139,14 @@ public sealed class RelayClientService
         await _udpClient.SendAsync(payload, payload.Length, _udpHost, _udpPort);
     }
 
+    public Task SendTxEofAsync(CancellationToken cancellationToken = default)
+    {
+        return SendWsJsonAsync(new
+        {
+            type = "tx_eof",
+        }, cancellationToken);
+    }
+
     private static bool TryParseServerEndpoint(string rawHost, int fallbackWsPort, out string host, out int wsPort, out bool wsSecure)
     {
         host = string.Empty;

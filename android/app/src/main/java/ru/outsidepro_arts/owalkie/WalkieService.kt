@@ -449,6 +449,7 @@ class WalkieService : Service() {
                     playLocalRogerPcm(localPlaybackPcm, LOCAL_PLAYBACK_SAMPLE_RATE)
                 }
                 streamRogerBeep(rogerPcm)
+                sendTxEofCommand()
             } finally {
                 scheduleRxResumeHoldoff()
                 rogerStreaming.set(false)
@@ -469,6 +470,7 @@ class WalkieService : Service() {
                     playLocalSignalPcm(localCallPcm, LOCAL_PLAYBACK_SAMPLE_RATE, CALL_LOCAL_GAIN_DB)
                 }
                 streamGeneratedSignal(callPcm)
+                sendTxEofCommand()
             } finally {
                 scheduleRxResumeHoldoff()
                 callStreaming.set(false)
@@ -812,6 +814,10 @@ class WalkieService : Service() {
 
     private fun sendRepeaterModeCommand(ws: WebSocket) {
         ws.send("""{"type":"repeater_mode","enabled":$repeaterEnabled}""")
+    }
+
+    private fun sendTxEofCommand() {
+        webSocket?.send("""{"type":"tx_eof"}""")
     }
 
     private fun wsUrl(): String {

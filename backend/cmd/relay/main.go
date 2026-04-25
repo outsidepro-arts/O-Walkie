@@ -43,9 +43,12 @@ type appConfig struct {
 }
 
 type serverConfig struct {
-	WSAddr   string `json:"ws_addr"`
-	UDPAddr  string `json:"udp_addr"`
-	PacketMs int    `json:"packet_ms"`
+	WSAddr        string `json:"ws_addr"`
+	UDPAddr       string `json:"udp_addr"`
+	PacketMs      int    `json:"packet_ms"`
+	HangoverMs    int    `json:"hangover_ms"`
+	EOFTimeoutMs  int    `json:"eof_timeout_ms"`
+	ConcealDecay  float64 `json:"conceal_decay"`
 }
 
 type modulesConfig struct {
@@ -185,6 +188,14 @@ type relayHub struct {
 	cfg     appConfig
 }
 
+type speakerStreamState struct {
+	pending      *audioPacket
+	lastPacketAt time.Time
+	lastSignal   float64
+	lastPCM      []int16
+	missCount    int
+}
+
 func newRelayHub(udpConn *net.UDPConn, cfg appConfig) *relayHub {
 	return &relayHub{
 		clients:  make(map[uint32]*client),
@@ -233,6 +244,11 @@ func (h *relayHub) getClient(sessionID uint32) *client {
 func (h *relayHub) switchChannel(c *client, newChannel string) {
 	oldChannel := c.getChannel()
 	if oldChannel == newChannel {
+		// Ensure participant registration even when channel value is unchanged.
+		// This covers initial connection cases where client.channel is pre-set.
+		if newChannel != "" {
+			h.getOrCreateChannel(newChannel).addParticipant(c.sessionID)
+		}
 		return
 	}
 	if oldChannel != "" {
@@ -255,10 +271,22 @@ func (h *relayHub) getOrCreateChannel(name string) *channelMixer {
 	if existing, found := h.channels[name]; found {
 		return existing
 	}
-	m := newChannelMixer(name, h, h.cfg.Modules)
+	m := newChannelMixer(name, h, h.cfg)
 	h.channels[name] = m
 	go m.run()
 	return m
+}
+
+func (h *relayHub) markTxEOF(sessionID uint32) {
+	c := h.getClient(sessionID)
+	if c == nil {
+		return
+	}
+	chName := c.getChannel()
+	if chName == "" {
+		return
+	}
+	h.getOrCreateChannel(chName).markEOF(sessionID)
 }
 
 func (h *relayHub) routePacket(pkt *audioPacket) {
@@ -322,6 +350,7 @@ type channelMixer struct {
 	hub  *relayHub
 
 	input chan *audioPacket
+	eof   chan uint32
 
 	participantsMu sync.RWMutex
 	participants   map[uint32]struct{}
@@ -342,6 +371,9 @@ type channelMixer struct {
 
 	lastSingleSpeaker   uint32
 	lastSingleSpeakerAt time.Time
+	hangoverDur         time.Duration
+	eofTimeoutDur       time.Duration
+	concealDecay        float64
 }
 
 type repeaterSession struct {
@@ -412,15 +444,19 @@ func (p *audioProcessor) process(input []int16, signalByte float64, active bool)
 	return out, true
 }
 
-func newChannelMixer(name string, hub *relayHub, mcfg modulesConfig) *channelMixer {
+func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
+	mcfg := cfg.Modules
 	enc, err := opus.NewEncoder(sampleRate, audioChannels, opus.AppVoIP)
 	if err != nil {
 		panic(fmt.Sprintf("create encoder for channel %s: %v", name, err))
 	}
+	hangoverMs := maxInt(cfg.Server.HangoverMs, normalizePacketMs(cfg.Server.PacketMs)*2)
+	eofTimeoutMs := maxInt(cfg.Server.EOFTimeoutMs, hangoverMs+normalizePacketMs(cfg.Server.PacketMs))
 	return &channelMixer{
 		name:         name,
 		hub:          hub,
 		input:        make(chan *audioPacket, 256),
+		eof:          make(chan uint32, 64),
 		participants: make(map[uint32]struct{}),
 		decoders:     make(map[uint32]*opus.Decoder),
 		encoder:      enc,
@@ -435,6 +471,9 @@ func newChannelMixer(name string, hub *relayHub, mcfg modulesConfig) *channelMix
 			newDistortionModule(mcfg.Distortion),
 		},
 		repeaterState: make(map[uint32]*repeaterSession),
+		hangoverDur:   time.Duration(hangoverMs) * time.Millisecond,
+		eofTimeoutDur: time.Duration(eofTimeoutMs) * time.Millisecond,
+		concealDecay:  cfg.Server.ConcealDecay,
 	}
 }
 
@@ -478,30 +517,95 @@ func (m *channelMixer) push(pkt *audioPacket) {
 	}
 }
 
-func (m *channelMixer) run() {
-	ticker := time.NewTicker(packetDur)
-	defer ticker.Stop()
-
-	latestBySpeaker := make(map[uint32]*audioPacket)
-
-	for {
+func (m *channelMixer) markEOF(sessionID uint32) {
+	select {
+	case m.eof <- sessionID:
+	default:
 		select {
-		case pkt := <-m.input:
-			latestBySpeaker[pkt.sessionID] = pkt
-		case <-ticker.C:
-			m.mixAndBroadcast(latestBySpeaker)
-			clear(latestBySpeaker)
+		case <-m.eof:
+		default:
+		}
+		select {
+		case m.eof <- sessionID:
+		default:
 		}
 	}
 }
 
-func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
+func (m *channelMixer) run() {
+	ticker := time.NewTicker(packetDur)
+	defer ticker.Stop()
+
+	states := make(map[uint32]*speakerStreamState)
+	eofMarked := make(map[uint32]bool)
+
+	for {
+		select {
+		case pkt := <-m.input:
+			st := states[pkt.sessionID]
+			if st == nil {
+				st = &speakerStreamState{}
+				states[pkt.sessionID] = st
+			}
+			st.pending = pkt
+			st.lastPacketAt = time.Now()
+			st.lastSignal = float64(pkt.signalStrength)
+			eofMarked[pkt.sessionID] = false
+		case sid := <-m.eof:
+			eofMarked[sid] = true
+			if st := states[sid]; st != nil {
+				// Explicit EOF should cut ongoing concealment immediately.
+				st.pending = nil
+			}
+		case <-ticker.C:
+			m.mixAndBroadcast(states, eofMarked)
+			m.cleanupStreamStates(states, eofMarked, time.Now())
+		}
+	}
+}
+
+func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool, now time.Time) {
+	m.participantsMu.RLock()
+	participants := make(map[uint32]struct{}, len(m.participants))
+	for sid := range m.participants {
+		participants[sid] = struct{}{}
+	}
+	m.participantsMu.RUnlock()
+
+	for sid, st := range states {
+		_, present := participants[sid]
+		if !present {
+			delete(states, sid)
+			delete(eofMarked, sid)
+			continue
+		}
+		if now.Sub(st.lastPacketAt) > m.eofTimeoutDur && st.pending == nil {
+			delete(states, sid)
+			delete(eofMarked, sid)
+		}
+	}
+}
+
+func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool) {
 	mixed := make([]float64, packetSamples)
-	activeSpeakers := make([]uint32, 0, len(frames))
+	activeSpeakers := make([]uint32, 0, len(states))
 	var signalSum float64
 	now := time.Now()
 
-	for sessionID, pkt := range frames {
+	for sessionID, st := range states {
+		if st == nil {
+			continue
+		}
+		pkt := st.pending
+		hasPacket := pkt != nil
+		speakerActive := false
+		speakerSignal := st.lastSignal
+		var pcmFrame []int16
+
+		if hasPacket {
+			st.pending = nil
+		}
+
 		var (
 			dec       *opus.Decoder
 			createErr error
@@ -520,32 +624,67 @@ func (m *channelMixer) mixAndBroadcast(frames map[uint32]*audioPacket) {
 			continue
 		}
 
-		pcm := make([]int16, packetSamples)
-		n, err := dec.Decode(pkt.opus, pcm)
-		if err != nil {
-			log.Printf("opus decode failed for %d: %v", sessionID, err)
-			continue
+		if hasPacket {
+			pcm := make([]int16, packetSamples)
+			n, err := dec.Decode(pkt.opus, pcm)
+			if err != nil {
+				log.Printf("opus decode failed for %d: %v", sessionID, err)
+				// Treat decode failures like temporary packet loss:
+				// keep stream active via concealment instead of triggering tail/squelch.
+				hasPacket = false
+			} else if n > 0 {
+				pcmFrame = make([]int16, packetSamples)
+				maxN := n
+				if maxN > packetSamples {
+					maxN = packetSamples
+				}
+				for i := 0; i < maxN; i++ {
+					pcmFrame[i] = pcm[i]
+				}
+				st.lastPCM = append(st.lastPCM[:0], pcmFrame...)
+				st.missCount = 0
+				st.lastPacketAt = now
+				st.lastSignal = float64(pkt.signalStrength)
+				speakerSignal = st.lastSignal
+				speakerActive = true
+			} else {
+				// Zero-sample decode behaves like a gap in transport.
+				hasPacket = false
+			}
 		}
-		if n <= 0 {
-			continue
+		if !speakerActive && !hasPacket && !eofMarked[sessionID] && now.Sub(st.lastPacketAt) <= m.eofTimeoutDur && len(st.lastPCM) > 0 {
+			decay := math.Pow(m.concealDecay, float64(st.missCount+1))
+			if now.Sub(st.lastPacketAt) > m.hangoverDur {
+				// After hangover window we keep stream alive, but fade faster
+				// until implicit EOF timeout to avoid abrupt squelch spikes.
+				decay *= math.Pow(0.80, float64(st.missCount+1))
+			}
+			if decay < 0.0 {
+				decay = 0.0
+			}
+			if decay > 1.0 {
+				decay = 1.0
+			}
+			pcmFrame = make([]int16, len(st.lastPCM))
+			for i := range st.lastPCM {
+				pcmFrame[i] = int16(float64(st.lastPCM[i]) * decay)
+			}
+			st.missCount++
+			speakerActive = true
+		} else if !speakerActive && now.Sub(st.lastPacketAt) > m.eofTimeoutDur {
+			eofMarked[sessionID] = true
 		}
 
-		pcmFrame := make([]int16, packetSamples)
-		maxN := n
-		if maxN > packetSamples {
-			maxN = packetSamples
+		if !speakerActive || len(pcmFrame) == 0 {
+			continue
 		}
-		for i := 0; i < maxN; i++ {
-			pcmFrame[i] = pcm[i]
-		}
-
 		client := m.hub.getClient(sessionID)
 		if client != nil && client.isRepeaterMode() {
-			m.processRepeaterCapture(sessionID, pcmFrame, float64(pkt.signalStrength), now)
+			m.processRepeaterCapture(sessionID, pcmFrame, speakerSignal, now)
 			continue
 		}
 		activeSpeakers = append(activeSpeakers, sessionID)
-		signalSum += float64(pkt.signalStrength)
+		signalSum += speakerSignal
 		for i := 0; i < packetSamples; i++ {
 			mixed[i] += float64(pcmFrame[i])
 		}
@@ -1187,9 +1326,12 @@ type server struct {
 func defaultConfig() appConfig {
 	return appConfig{
 		Server: serverConfig{
-			WSAddr:   ":5500",
-			UDPAddr:  ":5505",
-			PacketMs: defaultPacketMs,
+			WSAddr:       ":5500",
+			UDPAddr:      ":5505",
+			PacketMs:     defaultPacketMs,
+			HangoverMs:   180,
+			EOFTimeoutMs: 420,
+			ConcealDecay: 0.90,
 		},
 		Modules: modulesConfig{
 			Noise: noiseConfig{
@@ -1248,6 +1390,15 @@ func validateConfig(cfg appConfig) error {
 	}
 	if !isSupportedPacketMs(cfg.Server.PacketMs) {
 		return errors.New("server.packet_ms must be one of: 10, 20, 40, 60")
+	}
+	if cfg.Server.HangoverMs < cfg.Server.PacketMs {
+		return errors.New("server.hangover_ms must be >= server.packet_ms")
+	}
+	if cfg.Server.EOFTimeoutMs < cfg.Server.HangoverMs {
+		return errors.New("server.eof_timeout_ms must be >= server.hangover_ms")
+	}
+	if cfg.Server.ConcealDecay <= 0 || cfg.Server.ConcealDecay > 1 {
+		return errors.New("server.conceal_decay must be in (0..1]")
 	}
 	if cfg.Modules.Compressor.Ratio <= 0 {
 		return errors.New("modules.compressor.ratio must be > 0")
@@ -1356,6 +1507,8 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 				s.hub.getOrCreateChannel(c.getChannel()).clearRepeaterState(c.sessionID)
 			}
 			_ = conn.WriteJSON(wsServerMessage{Type: "repeater_mode", Info: strconv.FormatBool(enabled)})
+		case "tx_eof":
+			s.hub.markTxEOF(c.sessionID)
 		default:
 			_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "unknown message type"})
 		}

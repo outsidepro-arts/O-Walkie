@@ -13,6 +13,9 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 - `server.ws_addr` WebSocket control-plane address
 - `server.udp_addr` UDP data-plane address
 - `server.packet_ms` Opus frame duration in milliseconds (`10`, `20`, `40`, `60`; default `20`)
+- `server.hangover_ms` keep TX alive briefly on packet gaps before considering stream ended
+- `server.eof_timeout_ms` hard timeout for implicit EOF if no packets arrive
+- `server.conceal_decay` frame-to-frame attenuation for concealment replay during hangover (`0..1`)
 - `modules.noise.*` white-noise + squelch behavior
 - `modules.click.click_db` click level at transmission start/end
 - `modules.click.glitch_interval_max_ms` random in-TX click interval ceiling (`0` disables)
@@ -35,6 +38,7 @@ Client -> server:
 - `{"type":"switch_channel","channel":"teamA"}`
 - `{"type":"udp_hello","udpPort":7001}`
 - `{"type":"repeater_mode","enabled":true}`
+- `{"type":"tx_eof"}` marks end-of-transmission explicitly (after PTT/roger tail)
 - `{"type":"heartbeat"}`
 
 ## UDP Packet Format
