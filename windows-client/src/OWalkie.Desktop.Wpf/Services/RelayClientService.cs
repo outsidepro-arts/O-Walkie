@@ -15,6 +15,7 @@ public sealed class RelayClientService
     private CancellationTokenSource? _connectionCts;
     private Task? _wsReceiveTask;
     private Task? _udpReceiveTask;
+    private Task? _udpKeepaliveTask;
     private ConnectionProfile? _activeProfile;
     private int _sessionId;
     private int _packetMs = 20;
@@ -76,6 +77,7 @@ public sealed class RelayClientService
             type = "repeater_mode",
             enabled = repeaterEnabled,
         }, _connectionCts.Token);
+        _udpKeepaliveTask = Task.Run(() => UdpKeepaliveLoopAsync(_connectionCts.Token), _connectionCts.Token);
 
         _wsReceiveTask = Task.Run(() => WsReceiveLoopAsync(_connectionCts.Token), _connectionCts.Token);
     }
@@ -114,6 +116,7 @@ public sealed class RelayClientService
         _connectionCts = null;
         _wsReceiveTask = null;
         _udpReceiveTask = null;
+        _udpKeepaliveTask = null;
 
         IsConnected = false;
         Interlocked.Exchange(ref _connected, 0);
@@ -137,6 +140,41 @@ public sealed class RelayClientService
 
         cancellationToken.ThrowIfCancellationRequested();
         await _udpClient.SendAsync(payload, payload.Length, _udpHost, _udpPort);
+    }
+
+    private async Task SendUdpKeepaliveAsync(CancellationToken cancellationToken)
+    {
+        if (_udpClient == null || Interlocked.CompareExchange(ref _connected, 0, 0) == 0 || _sessionId == 0)
+        {
+            return;
+        }
+
+        var payload = new byte[9];
+        BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(0, 4), _sessionId);
+        BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(4, 4), 0);
+        payload[8] = 255;
+        cancellationToken.ThrowIfCancellationRequested();
+        await _udpClient.SendAsync(payload, payload.Length, _udpHost, _udpPort);
+    }
+
+    private async Task UdpKeepaliveLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await SendUdpKeepaliveAsync(cancellationToken);
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown.
+        }
+        catch (Exception ex)
+        {
+            StatusMessage?.Invoke(this, $"UDP keepalive ended: {ex.Message}");
+        }
     }
 
     public Task SendTxEofAsync(CancellationToken cancellationToken = default)

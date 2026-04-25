@@ -295,6 +295,10 @@ func (h *relayHub) routePacket(pkt *audioPacket) {
 		return
 	}
 	c.setUDPAddr(pkt.srcAddr)
+	if len(pkt.opus) == 0 {
+		// Empty-opus datagrams are treated as UDP keepalive punches.
+		return
+	}
 	channelName := c.getChannel()
 	if channelName == "" {
 		return
