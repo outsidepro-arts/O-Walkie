@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">O-Walkie</string>
-    <string name="server_profiles">Saved servers</string>
+    <string name="server_profiles">Connection list</string>
     <string name="server_name_label">Server name</string>
     <string name="server_name_hint">Server name (example: Team Alpha)</string>
     <string name="server_host_label">Server host</string>

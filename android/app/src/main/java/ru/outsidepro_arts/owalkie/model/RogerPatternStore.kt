@@ -1,4 +1,4 @@
-package com.owalkie.app.model
+package ru.outsidepro_arts.owalkie.model
 
 import android.content.Context
 import com.google.gson.Gson

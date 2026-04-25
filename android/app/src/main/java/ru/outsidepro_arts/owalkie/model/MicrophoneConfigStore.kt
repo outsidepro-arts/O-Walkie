@@ -1,9 +1,9 @@
-package com.owalkie.app.model
+package ru.outsidepro_arts.owalkie.model
 
 import android.content.Context
 import android.media.MediaRecorder
 import android.os.Build
-import com.owalkie.app.R
+import ru.outsidepro_arts.owalkie.R
 
 class MicrophoneConfigStore(private val context: Context) {
     data class MicrophoneOption(

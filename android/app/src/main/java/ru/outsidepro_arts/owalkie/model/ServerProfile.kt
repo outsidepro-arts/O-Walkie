@@ -1,4 +1,4 @@
-package com.owalkie.app.model
+package ru.outsidepro_arts.owalkie.model
 
 data class ServerProfile(
     val name: String,

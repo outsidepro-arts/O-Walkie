@@ -1,4 +1,4 @@
-package com.owalkie.app
+package ru.outsidepro_arts.owalkie
 
 import android.app.AlertDialog
 import android.os.Bundle
@@ -11,11 +11,11 @@ import android.widget.Spinner
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import com.owalkie.app.model.CallingPatternStore
-import com.owalkie.app.model.MicrophoneConfigStore
-import com.owalkie.app.model.PttHardwareKeyStore
-import com.owalkie.app.model.RogerPattern
-import com.owalkie.app.model.RogerPatternStore
+import ru.outsidepro_arts.owalkie.model.CallingPatternStore
+import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
+import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
+import ru.outsidepro_arts.owalkie.model.RogerPattern
+import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 
 class SettingsActivity : ComponentActivity() {
     private lateinit var rogerPatternStore: RogerPatternStore

@@ -1,4 +1,4 @@
-package com.owalkie.app
+package ru.outsidepro_arts.owalkie
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -22,11 +22,11 @@ import android.os.Build
 import android.os.IBinder
 import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
-import com.owalkie.app.audio.OpusCodec
-import com.owalkie.app.audio.OpusCodecFactory
-import com.owalkie.app.model.CallingPatternStore
-import com.owalkie.app.model.MicrophoneConfigStore
-import com.owalkie.app.model.RogerPatternStore
+import ru.outsidepro_arts.owalkie.audio.OpusCodec
+import ru.outsidepro_arts.owalkie.audio.OpusCodecFactory
+import ru.outsidepro_arts.owalkie.model.CallingPatternStore
+import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
+import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,14 +55,14 @@ import kotlin.math.sin
 
 class WalkieService : Service() {
     companion object {
-        const val ACTION_START = "com.owalkie.app.action.START"
-        const val ACTION_CANCEL_CONNECT = "com.owalkie.app.action.CANCEL_CONNECT"
-        const val ACTION_PTT_PRESS = "com.owalkie.app.action.PTT_PRESS"
-        const val ACTION_PTT_RELEASE = "com.owalkie.app.action.PTT_RELEASE"
-        const val ACTION_SET_REPEATER = "com.owalkie.app.action.SET_REPEATER"
-        const val ACTION_CALL_SIGNAL = "com.owalkie.app.action.CALL_SIGNAL"
-        const val ACTION_EXIT_APP = "com.owalkie.app.action.EXIT_APP"
-        const val ACTION_STATUS = "com.owalkie.app.action.STATUS"
+        const val ACTION_START = "ru.outsidepro_arts.owalkie.action.START"
+        const val ACTION_CANCEL_CONNECT = "ru.outsidepro_arts.owalkie.action.CANCEL_CONNECT"
+        const val ACTION_PTT_PRESS = "ru.outsidepro_arts.owalkie.action.PTT_PRESS"
+        const val ACTION_PTT_RELEASE = "ru.outsidepro_arts.owalkie.action.PTT_RELEASE"
+        const val ACTION_SET_REPEATER = "ru.outsidepro_arts.owalkie.action.SET_REPEATER"
+        const val ACTION_CALL_SIGNAL = "ru.outsidepro_arts.owalkie.action.CALL_SIGNAL"
+        const val ACTION_EXIT_APP = "ru.outsidepro_arts.owalkie.action.EXIT_APP"
+        const val ACTION_STATUS = "ru.outsidepro_arts.owalkie.action.STATUS"
         const val EXTRA_SIGNAL = "signal"
         const val EXTRA_WS_CONNECTED = "wsConnected"
         const val EXTRA_WS_CONNECTING = "wsConnecting"
@@ -659,7 +659,7 @@ class WalkieService : Service() {
 
     private fun generateSignalFromPattern(
         sampleRate: Int,
-        segments: List<com.owalkie.app.model.RogerPoint>,
+        segments: List<ru.outsidepro_arts.owalkie.model.RogerPoint>,
         appendTail: Boolean,
     ): ShortArray {
         val tailSamples = (sampleRate * ROGER_TAIL_MS) / 1000

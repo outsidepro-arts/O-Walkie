@@ -1,4 +1,4 @@
-package com.owalkie.app
+package ru.outsidepro_arts.owalkie
 
 import android.content.Context
 import android.content.Intent
@@ -10,9 +10,9 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ListView
 import androidx.activity.ComponentActivity
-import com.owalkie.app.model.CallingPatternStore
-import com.owalkie.app.model.RogerPatternStore
-import com.owalkie.app.model.RogerPoint
+import ru.outsidepro_arts.owalkie.model.CallingPatternStore
+import ru.outsidepro_arts.owalkie.model.RogerPatternStore
+import ru.outsidepro_arts.owalkie.model.RogerPoint
 
 class RogerPatternEditorActivity : ComponentActivity() {
     companion object {

@@ -17,6 +17,7 @@ backend/coverage.*
 android/local.properties
 android/.kotlin/
 android/captures/
+android/keystore/
 *.apk
 *.aab
 

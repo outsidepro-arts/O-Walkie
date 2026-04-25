@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -6,20 +7,42 @@ plugins {
 }
 
 android {
-    namespace = "com.owalkie.app"
+    namespace = "ru.outsidepro_arts.owalkie"
     compileSdk = 35
 
+    val releaseKeystoreFile = rootProject.file("keystore/release-keystore.properties")
+    val releaseKeystoreProps = Properties().apply {
+        if (releaseKeystoreFile.exists()) {
+            releaseKeystoreFile.inputStream().use { load(it) }
+        }
+    }
+
     defaultConfig {
-        applicationId = "com.owalkie.app"
+        applicationId = "ru.outsidepro_arts.owalkie"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            val storeFilePath = releaseKeystoreProps.getProperty("storeFile")
+                ?: error("Missing 'storeFile' in keystore/release-keystore.properties")
+            storeFile = rootProject.file(storeFilePath)
+            storePassword = releaseKeystoreProps.getProperty("storePassword")
+                ?: error("Missing 'storePassword' in keystore/release-keystore.properties")
+            keyAlias = releaseKeystoreProps.getProperty("keyAlias")
+                ?: error("Missing 'keyAlias' in keystore/release-keystore.properties")
+            keyPassword = releaseKeystoreProps.getProperty("keyPassword")
+                ?: error("Missing 'keyPassword' in keystore/release-keystore.properties")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

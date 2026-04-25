@@ -1,4 +1,4 @@
-package com.owalkie.app.audio
+package ru.outsidepro_arts.owalkie.audio
 
 import eu.buney.kopus.OpusApplication
 import eu.buney.kopus.OpusDecoder

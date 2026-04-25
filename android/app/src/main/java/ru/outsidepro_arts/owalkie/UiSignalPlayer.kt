@@ -1,4 +1,4 @@
-package com.owalkie.app
+package ru.outsidepro_arts.owalkie
 
 import android.content.Context
 import android.media.AudioFormat
@@ -13,6 +13,7 @@ class UiSignalPlayer(context: Context) {
     private val appContext = context.applicationContext
     private val pttPressTone: WavPcm = loadWavPcmFromRaw(R.raw.selfpttup_002)
     private val pttReleaseTone: WavPcm = loadWavPcmFromRaw(R.raw.selfttdown_002)
+    private val switchTone: WavPcm = loadWavPcmFromRaw(R.raw.switch_nav)
 
     fun playPttPress() {
         playPcm(pttPressTone.samples, pttPressTone.sampleRate)
@@ -30,6 +31,10 @@ class UiSignalPlayer(context: Context) {
     fun playConnectionError() {
         val pcm = generateConnectionErrorPcm()
         playPcm(pcm, SAMPLE_RATE)
+    }
+
+    fun playSwitch() {
+        playPcm(switchTone.samples, switchTone.sampleRate)
     }
 
     fun release() {

@@ -1,4 +1,4 @@
-package com.owalkie.app
+package ru.outsidepro_arts.owalkie
 
 import android.Manifest
 import android.content.BroadcastReceiver
@@ -22,14 +22,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
 import androidx.core.content.ContextCompat
-import com.owalkie.app.databinding.ActivityMainBinding
-import com.owalkie.app.model.PttHardwareKeyStore
-import com.owalkie.app.model.ServerProfile
-import com.owalkie.app.model.ServerStore
+import ru.outsidepro_arts.owalkie.databinding.ActivityMainBinding
+import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
+import ru.outsidepro_arts.owalkie.model.ServerProfile
+import ru.outsidepro_arts.owalkie.model.ServerStore
 
 class MainActivity : ComponentActivity() {
     companion object {
-        const val ACTION_OPEN_BATTERY_SETTINGS = "com.owalkie.app.action.OPEN_BATTERY_SETTINGS"
+        const val ACTION_OPEN_BATTERY_SETTINGS = "ru.outsidepro_arts.owalkie.action.OPEN_BATTERY_SETTINGS"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -603,6 +603,7 @@ class MainActivity : ComponentActivity() {
         val targetIndex = (selectedServerIndex + offset).coerceIn(0, servers.lastIndex)
         if (targetIndex == selectedServerIndex) return
         selectedServerIndex = targetIndex
+        uiSignalPlayer.playSwitch()
         binding.serverSpinner.setSelection(targetIndex)
     }
 }
