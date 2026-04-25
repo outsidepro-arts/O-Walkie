@@ -148,27 +148,6 @@
         android:layout_marginBottom="10dp"
         android:text="@string/connect_server" />
 
-    <CheckBox
-        android:id="@+id/repeaterModeCheckbox"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
-        android:text="@string/repeater_mode" />
-
-    <Button
-        android:id="@+id/batteryOptimizationButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="4dp"
-        android:text="@string/battery_optimization_request" />
-
-    <TextView
-        android:id="@+id/batteryOptimizationText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
-        android:text="@string/battery_optimization_status_unknown" />
-
     <TextView
         android:id="@+id/statusText"
         android:layout_width="wrap_content"
@@ -202,9 +181,24 @@
         android:layout_height="0dp"
         android:layout_weight="1" />
 
-    <Button
-        android:id="@+id/pttButton"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="72dp"
-        android:text="@string/ptt_hold" />
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/callButton"
+            android:layout_width="0dp"
+            android:layout_height="72dp"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:text="@string/call_signal" />
+
+        <Button
+            android:id="@+id/pttButton"
+            android:layout_width="0dp"
+            android:layout_height="72dp"
+            android:layout_weight="2"
+            android:text="@string/ptt_hold" />
+    </LinearLayout>
 </LinearLayout>

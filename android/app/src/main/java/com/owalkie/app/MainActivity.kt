@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -35,6 +37,7 @@ class MainActivity : ComponentActivity() {
     private var wsConnected = false
     private var wsConnecting = false
     private var receiverRegistered = false
+    private var repeaterModeEnabled = false
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -74,12 +77,6 @@ class MainActivity : ComponentActivity() {
         initServerProfilesUi()
         requestRuntimePermissions()
         updateBatteryOptimizationUi()
-        binding.repeaterModeCheckbox.setOnCheckedChangeListener { _, isChecked ->
-            sendRepeaterModeAction(isChecked)
-        }
-        binding.batteryOptimizationButton.setOnClickListener {
-            requestBatteryOptimizationExemption()
-        }
         if (intent?.action == ACTION_OPEN_BATTERY_SETTINGS) {
             openBatteryOptimizationSettings()
         }
@@ -99,6 +96,11 @@ class MainActivity : ComponentActivity() {
 
                 else -> false
             }
+        }
+
+        binding.callButton.setOnClickListener {
+            if (!wsConnected) return@setOnClickListener
+            sendServiceAction(WalkieService.ACTION_CALL_SIGNAL)
         }
 
         updateConnectButtonLabel()
@@ -140,6 +142,54 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.main_overflow_menu, menu)
+        return true
+    }
+
+    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+        menu.findItem(R.id.action_repeater_mode)?.isChecked = repeaterModeEnabled
+        menu.findItem(R.id.action_background_mode)?.title = getString(
+            R.string.menu_background_mode_format,
+            getString(
+                if (isBackgroundModeActive()) {
+                    R.string.menu_background_status_active
+                } else {
+                    R.string.menu_background_status_inactive
+                },
+            ),
+        )
+        return super.onPrepareOptionsMenu(menu)
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.action_repeater_mode -> {
+                repeaterModeEnabled = !item.isChecked
+                item.isChecked = repeaterModeEnabled
+                sendRepeaterModeAction(repeaterModeEnabled)
+                true
+            }
+
+            R.id.action_background_mode -> {
+                requestBatteryOptimizationExemption()
+                true
+            }
+
+            R.id.action_settings -> {
+                startActivity(Intent(this, SettingsActivity::class.java))
+                true
+            }
+
+            R.id.action_exit -> {
+                requestAppExit()
+                true
+            }
+
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
     private fun startTransmitUi() {
         if (transmitting) return
         if (!wsConnected) return
@@ -147,6 +197,7 @@ class MainActivity : ComponentActivity() {
         binding.statusText.text = getString(R.string.status_tx)
         sendServiceAction(WalkieService.ACTION_PTT_PRESS)
         binding.statusText.announceForAccessibility(binding.statusText.text)
+        binding.callButton.isEnabled = false
         updatePttLabel()
     }
 
@@ -156,6 +207,7 @@ class MainActivity : ComponentActivity() {
         binding.statusText.text = getString(R.string.status_idle)
         sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
         binding.statusText.announceForAccessibility(binding.statusText.text)
+        binding.callButton.isEnabled = wsConnected
         updatePttLabel()
     }
 
@@ -176,7 +228,7 @@ class MainActivity : ComponentActivity() {
             putExtra(WalkieService.EXTRA_WS_PORT, profile.wsPort)
             putExtra(WalkieService.EXTRA_UDP_PORT, profile.udpPort)
             putExtra(WalkieService.EXTRA_CHANNEL, profile.channel)
-            putExtra(WalkieService.EXTRA_REPEATER_ENABLED, binding.repeaterModeCheckbox.isChecked)
+            putExtra(WalkieService.EXTRA_REPEATER_ENABLED, repeaterModeEnabled)
         }
         ContextCompat.startForegroundService(this, intent)
     }
@@ -198,6 +250,11 @@ class MainActivity : ComponentActivity() {
             putExtra(WalkieService.EXTRA_REPEATER_ENABLED, enabled)
         }
         startService(intent)
+    }
+
+    private fun requestAppExit() {
+        sendServiceAction(WalkieService.ACTION_EXIT_APP)
+        finishAffinity()
     }
 
     private fun requestRuntimePermissions() {
@@ -242,20 +299,12 @@ class MainActivity : ComponentActivity() {
         return pm.isIgnoringBatteryOptimizations(packageName)
     }
 
+    private fun isBackgroundModeActive(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || isIgnoringBatteryOptimizations()
+    }
+
     private fun updateBatteryOptimizationUi() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            binding.batteryOptimizationText.text = getString(R.string.battery_optimization_disabled)
-            binding.batteryOptimizationButton.isEnabled = false
-            return
-        }
-        val ignored = isIgnoringBatteryOptimizations()
-        binding.batteryOptimizationText.text = getString(
-            if (ignored) R.string.battery_optimization_disabled else R.string.battery_optimization_enabled,
-        )
-        binding.batteryOptimizationButton.text = getString(
-            if (ignored) R.string.battery_optimization_open_settings else R.string.battery_optimization_request,
-        )
-        binding.batteryOptimizationButton.isEnabled = true
+        invalidateOptionsMenu()
     }
 
     private fun hasAudioPermission(): Boolean {
@@ -415,7 +464,9 @@ class MainActivity : ComponentActivity() {
     private fun updatePttAvailability() {
         val enabled = wsConnected
         binding.pttButton.isEnabled = enabled
+        binding.callButton.isEnabled = enabled && !transmitting
         binding.pttButton.alpha = if (enabled) 1.0f else 0.5f
+        binding.callButton.alpha = if (enabled) 1.0f else 0.5f
         if (!enabled && transmitting) {
             stopTransmitUi()
         }

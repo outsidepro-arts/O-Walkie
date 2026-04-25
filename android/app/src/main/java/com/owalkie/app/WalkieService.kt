@@ -12,7 +12,6 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
-import android.media.ToneGenerator
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
@@ -24,6 +23,8 @@ import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
 import com.owalkie.app.audio.OpusCodec
 import com.owalkie.app.audio.OpusCodecFactory
+import com.owalkie.app.model.CallingPatternStore
+import com.owalkie.app.model.RogerPatternStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,6 +58,8 @@ class WalkieService : Service() {
         const val ACTION_PTT_PRESS = "com.owalkie.app.action.PTT_PRESS"
         const val ACTION_PTT_RELEASE = "com.owalkie.app.action.PTT_RELEASE"
         const val ACTION_SET_REPEATER = "com.owalkie.app.action.SET_REPEATER"
+        const val ACTION_CALL_SIGNAL = "com.owalkie.app.action.CALL_SIGNAL"
+        const val ACTION_EXIT_APP = "com.owalkie.app.action.EXIT_APP"
         const val ACTION_STATUS = "com.owalkie.app.action.STATUS"
         const val EXTRA_SIGNAL = "signal"
         const val EXTRA_WS_CONNECTED = "wsConnected"
@@ -80,7 +83,8 @@ class WalkieService : Service() {
         private const val CHANNELS = 1
         private const val DEFAULT_PACKET_MS = 20
         private const val MAX_PACKET_SAMPLES = SAMPLE_RATE * 60 / 1000
-        private const val BEEP_MS = 300
+        private const val ROGER_TAIL_MS = 40
+        private const val CALL_LOCAL_GAIN_DB = -10.0
     }
 
     private val binder = Binder()
@@ -101,10 +105,17 @@ class WalkieService : Service() {
 
     private var udpReceiveJob: Job? = null
     private var txJob: Job? = null
+    private var rogerJob: Job? = null
+    private var callSignalJob: Job? = null
+    private var localRogerPlaybackJob: Job? = null
+    private var localCallPlaybackJob: Job? = null
 
     private val transmitting = AtomicBoolean(false)
+    private val rogerStreaming = AtomicBoolean(false)
+    private val callStreaming = AtomicBoolean(false)
     private val sessionId = AtomicLong(0L)
     private val seq = AtomicInteger(0)
+    private val encodeLock = Any()
 
     @Volatile
     private var serverHost: String = DEFAULT_WS_HOST
@@ -128,10 +139,18 @@ class WalkieService : Service() {
     private var packetMs: Int = DEFAULT_PACKET_MS
 
     private lateinit var codec: OpusCodec
+    private lateinit var audioManager: AudioManager
+    private lateinit var rogerPatternStore: RogerPatternStore
+    private lateinit var callingPatternStore: CallingPatternStore
+    @Volatile
+    private var voiceProfileActive: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
         codec = OpusCodecFactory().create(SAMPLE_RATE, CHANNELS)
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        rogerPatternStore = RogerPatternStore(this)
+        callingPatternStore = CallingPatternStore(this)
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -146,6 +165,8 @@ class WalkieService : Service() {
             ACTION_PTT_PRESS -> onPttPress()
             ACTION_PTT_RELEASE -> onPttRelease()
             ACTION_SET_REPEATER -> setRepeaterMode(intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, false))
+            ACTION_CALL_SIGNAL -> onCallSignal()
+            ACTION_EXIT_APP -> exitApp()
         }
         return START_STICKY
     }
@@ -154,6 +175,10 @@ class WalkieService : Service() {
         super.onDestroy()
         transmitting.set(false)
         txJob?.cancel()
+        rogerJob?.cancel()
+        callSignalJob?.cancel()
+        localRogerPlaybackJob?.cancel()
+        localCallPlaybackJob?.cancel()
         udpReceiveJob?.cancel()
         wsReconnectJob?.cancel()
         signalMonitorJob?.cancel()
@@ -162,6 +187,7 @@ class WalkieService : Service() {
             udpSocket?.close()
             udpSocket = null
         }
+        restoreMediaAudioProfile()
         okHttpClient.dispatcher.executorService.shutdown()
     }
 
@@ -354,7 +380,7 @@ class WalkieService : Service() {
                         continue
                     }
                     if (packet.length <= 9) continue
-                    if (transmitting.get()) {
+                    if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
                         // During local TX we intentionally drop inbound audio
                         // to avoid hearing server stream in parallel with speaking.
                         continue
@@ -371,7 +397,16 @@ class WalkieService : Service() {
     }
 
     private fun onPttPress() {
+        rogerJob?.cancel()
+        rogerJob = null
+        rogerStreaming.set(false)
+        callSignalJob?.cancel()
+        callSignalJob = null
+        callStreaming.set(false)
+        localCallPlaybackJob?.cancel()
+        localCallPlaybackJob = null
         if (transmitting.getAndSet(true)) return
+        ensureVoiceAudioProfile()
         if (txJob?.isActive == true) return
         txJob = serviceScope.launch(Dispatchers.Default) {
             runCaptureLoop()
@@ -380,7 +415,37 @@ class WalkieService : Service() {
 
     private fun onPttRelease() {
         if (!transmitting.getAndSet(false)) return
-        // Roger beep disabled for current testing phase.
+        if (rogerStreaming.getAndSet(true)) return
+        localRogerPlaybackJob?.cancel()
+        rogerJob = serviceScope.launch(Dispatchers.Default) {
+            try {
+                val rogerPcm = generateRogerFromSelectedPattern(SAMPLE_RATE)
+                localRogerPlaybackJob = serviceScope.launch(Dispatchers.IO) {
+                    playLocalRogerPcm(rogerPcm)
+                }
+                streamRogerBeep(rogerPcm)
+            } finally {
+                rogerStreaming.set(false)
+            }
+        }
+    }
+
+    private fun onCallSignal() {
+        if (transmitting.get() || rogerStreaming.get()) return
+        if (callStreaming.getAndSet(true)) return
+        ensureVoiceAudioProfile()
+        localCallPlaybackJob?.cancel()
+        callSignalJob = serviceScope.launch(Dispatchers.Default) {
+            try {
+                val callPcm = generateCallFromSelectedPattern(SAMPLE_RATE)
+                localCallPlaybackJob = serviceScope.launch(Dispatchers.IO) {
+                    playLocalSignalPcm(callPcm, CALL_LOCAL_GAIN_DB)
+                }
+                streamGeneratedSignal(callPcm)
+            } finally {
+                callStreaming.set(false)
+            }
+        }
     }
 
     private suspend fun runCaptureLoop() = withContext(Dispatchers.IO) {
@@ -399,16 +464,27 @@ class WalkieService : Service() {
         )
         disableRecordPreprocessing(recorder.audioSessionId)
 
-        val frame = ShortArray(frameSamples)
+        val readBuffer = ShortArray(frameSamples)
+        val txBuffer = ShortArray(frameSamples)
+        var txFill = 0
         try {
             recorder.startRecording()
             while (transmitting.get() && isActive) {
-                val read = recorder.read(frame, 0, frame.size, AudioRecord.READ_BLOCKING)
+                val read = recorder.read(readBuffer, 0, readBuffer.size, AudioRecord.READ_BLOCKING)
                 if (read <= 0) continue
-                val pcm = if (read == frame.size) frame else frame.copyOf(read)
-                val opus = codec.encode(pcm)
-                val signal = currentSignalByte()
-                sendUdpFrame(opus, signal)
+                var srcPos = 0
+                while (srcPos < read) {
+                    val toCopy = minOf(frameSamples - txFill, read - srcPos)
+                    System.arraycopy(readBuffer, srcPos, txBuffer, txFill, toCopy)
+                    txFill += toCopy
+                    srcPos += toCopy
+                    if (txFill == frameSamples) {
+                        val opus = encodePcm(txBuffer)
+                        val signal = currentSignalByte()
+                        sendUdpFrame(opus, signal)
+                        txFill = 0
+                    }
+                }
             }
             recorder.stop()
         } finally {
@@ -416,40 +492,118 @@ class WalkieService : Service() {
         }
     }
 
-    private suspend fun streamRogerBeep() {
-        val beepPcm = generateSineBeep(SAMPLE_RATE, 950.0, BEEP_MS)
+    private suspend fun streamRogerBeep(beepPcm: ShortArray) {
+        streamGeneratedSignal(beepPcm)
+    }
+
+    private suspend fun streamGeneratedSignal(pcmSignal: ShortArray) {
         var offset = 0
         val frameSamples = currentFrameSamples()
-        while (offset < beepPcm.size) {
-            val end = (offset + frameSamples).coerceAtMost(beepPcm.size)
-            val frame = beepPcm.copyOfRange(offset, end)
-            val opus = codec.encode(frame)
+        while (offset < pcmSignal.size) {
+            val frame = ShortArray(frameSamples)
+            val end = (offset + frameSamples).coerceAtMost(pcmSignal.size)
+            val count = end - offset
+            if (count > 0) {
+                System.arraycopy(pcmSignal, offset, frame, 0, count)
+            }
+            val opus = encodePcm(frame)
             sendUdpFrame(opus, currentSignalByte())
             offset = end
             delay(currentPacketMs().toLong())
         }
     }
 
-    private fun playLocalRogerBeep() {
-        val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 80)
-        tone.startTone(ToneGenerator.TONE_PROP_BEEP2, BEEP_MS)
-        serviceScope.launch {
-            delay(BEEP_MS.toLong() + 50L)
-            tone.release()
+    private suspend fun playLocalRogerPcm(pcm: ShortArray) = withContext(Dispatchers.IO) {
+        playLocalSignalPcm(pcm, 0.0)
+    }
+
+    private suspend fun playLocalSignalPcm(pcm: ShortArray, gainDb: Double) = withContext(Dispatchers.IO) {
+        if (pcm.isEmpty()) return@withContext
+        val playPcm = applyGainDb(pcm, gainDb)
+        val track = AudioTrack(
+            AudioManager.STREAM_MUSIC,
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            (playPcm.size * 2).coerceAtLeast(2),
+            AudioTrack.MODE_STATIC,
+        )
+        try {
+            val written = track.write(playPcm, 0, playPcm.size)
+            if (written <= 0) return@withContext
+            track.play()
+
+            val expected = written.coerceAtLeast(1)
+            val timeoutAt = System.currentTimeMillis() + 2000L
+            while (isActive && System.currentTimeMillis() < timeoutAt) {
+                if (track.playbackHeadPosition >= expected) {
+                    break
+                }
+                delay(5L)
+            }
+        } finally {
+            track.stop()
+            track.release()
         }
     }
 
-    private fun generateSineBeep(sr: Int, freq: Double, durationMs: Int): ShortArray {
-        val sampleCount = sr * durationMs / 1000
-        val out = ShortArray(sampleCount)
-        for (i in 0 until sampleCount) {
-            val t = i.toDouble() / sr
-            out[i] = (sin(2.0 * PI * freq * t) * 9000.0).toInt().toShort()
+    private fun applyGainDb(pcm: ShortArray, gainDb: Double): ShortArray {
+        if (gainDb == 0.0) return pcm
+        val gain = Math.pow(10.0, gainDb / 20.0)
+        val out = ShortArray(pcm.size)
+        for (i in pcm.indices) {
+            val v = (pcm[i] * gain).toInt()
+            out[i] = v.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
         }
         return out
     }
 
+    private fun generateRogerFromSelectedPattern(sampleRate: Int): ShortArray {
+        val selected = rogerPatternStore.getSelectedPattern()
+        return generateSignalFromPattern(sampleRate, selected.points, appendTail = true)
+    }
+
+    private fun generateCallFromSelectedPattern(sampleRate: Int): ShortArray {
+        val selected = callingPatternStore.getSelectedPattern()
+        return generateSignalFromPattern(sampleRate, selected.points, appendTail = false)
+    }
+
+    private fun generateSignalFromPattern(
+        sampleRate: Int,
+        segments: List<com.owalkie.app.model.RogerPoint>,
+        appendTail: Boolean,
+    ): ShortArray {
+        val tailSamples = (sampleRate * ROGER_TAIL_MS) / 1000
+        val totalSamples = segments.sumOf { (sampleRate * it.durationMs) / 1000 } + if (appendTail) tailSamples else 0
+        val out = ShortArray(totalSamples.coerceAtLeast(1))
+        var idx = 0
+        var phase = 0.0
+        for (seg in segments) {
+            val n = ((sampleRate * seg.durationMs) / 1000).coerceAtLeast(1)
+            val phaseStep = 2.0 * PI * seg.freqHz / sampleRate
+            for (i in 0 until n) {
+                val envPos = i.toDouble() / n
+                val env = when {
+                    envPos < 0.08 -> envPos / 0.08
+                    envPos > 0.92 -> (1.0 - envPos) / 0.08
+                    else -> 1.0
+                }
+                val sample = sin(phase) * env * 0.26
+                if (idx < out.size) {
+                    out[idx] = (sample * Short.MAX_VALUE).toInt().toShort()
+                    idx++
+                }
+                phase += phaseStep
+            }
+        }
+        return if (idx == out.size) out else out.copyOf(idx)
+    }
+
+
     private fun sendUdpFrame(opusBytes: ByteArray, signalByte: Int) {
+        if (opusBytes.isEmpty()) {
+            return
+        }
         val socket = udpSocket ?: run {
             ensureUdpSocket()
             udpSocket ?: return
@@ -472,6 +626,12 @@ class WalkieService : Service() {
             .onFailure {
                 recreateUdpSocket()
             }
+    }
+
+    private fun encodePcm(pcm: ShortArray): ByteArray {
+        synchronized(encodeLock) {
+            return codec.encode(pcm)
+        }
     }
 
     private fun disableRecordPreprocessing(audioSessionId: Int) {
@@ -616,6 +776,45 @@ class WalkieService : Service() {
         runCatching { webSocket?.cancel() }
         webSocket = null
         broadcastStatus(currentSignalByte())
+    }
+
+    private fun exitApp() {
+        transmitting.set(false)
+        txJob?.cancel()
+        rogerJob?.cancel()
+        callSignalJob?.cancel()
+        localRogerPlaybackJob?.cancel()
+        localCallPlaybackJob?.cancel()
+        cancelConnection()
+        restoreMediaAudioProfile()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun ensureVoiceAudioProfile() {
+        if (voiceProfileActive) return
+        runCatching {
+            // Test mode: use camera-like multimedia profile for recording.
+            audioManager.mode = AudioManager.MODE_NORMAL
+            audioManager.isSpeakerphoneOn = false
+            if (audioManager.isBluetoothScoOn) {
+                audioManager.stopBluetoothSco()
+                audioManager.isBluetoothScoOn = false
+            }
+            voiceProfileActive = true
+        }
+    }
+
+    private fun restoreMediaAudioProfile() {
+        runCatching {
+            if (audioManager.isBluetoothScoOn) {
+                audioManager.stopBluetoothSco()
+                audioManager.isBluetoothScoOn = false
+            }
+            audioManager.mode = AudioManager.MODE_NORMAL
+            audioManager.isSpeakerphoneOn = false
+            voiceProfileActive = false
+        }
     }
 
     @Suppress("DEPRECATION")

@@ -28,6 +28,16 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/menu_settings" />
+
+        <activity
+            android:name=".RogerPatternEditorActivity"
+            android:exported="false"
+            android:label="@string/roger_custom_title" />
+
         <service
             android:name=".WalkieService"
             android:enabled="true"

@@ -10,8 +10,8 @@
       "max_noise_db": -3.0,
       "noise_gain": 1200.0,
       "squelch_threshold_db": -3.0,
-      "squelch_min_ms": 15,
-      "squelch_max_ms": 20,
+      "squelch_min_ms": 5,
+      "squelch_max_ms": 10,
       "tail_noise_db": 10.0,
       "tail_min_ms": 15,
       "tail_max_ms": 60
