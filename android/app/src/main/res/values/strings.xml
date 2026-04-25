@@ -42,6 +42,10 @@
     <string name="hardware_ptt_dialog_waiting">Press a hardware button</string>
     <string name="common_ok">OK</string>
     <string name="common_reset">Reset</string>
+    <string name="play_signal_button">Play</string>
+    <string name="delete_signal_button">Delete</string>
+    <string name="delete_signal_confirm">Delete selected custom signal?</string>
+    <string name="roger_no_signal_option">No signal</string>
     <string name="roger_signal_label">Roger signal</string>
     <string name="roger_custom_button">Custom</string>
     <string name="calling_signal_label">Calling signal</string>

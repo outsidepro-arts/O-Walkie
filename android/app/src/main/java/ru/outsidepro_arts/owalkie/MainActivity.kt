@@ -12,8 +12,6 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.KeyEvent
-import android.view.Menu
-import android.view.MenuItem
 import android.view.MotionEvent
 import android.widget.PopupMenu
 import android.widget.AdapterView
@@ -180,11 +178,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.main_overflow_menu, menu)
-        return true
-    }
-
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val assignedPttKey = pttHardwareKeyStore.getAssignedKeyCode()
         if (assignedPttKey != KeyEvent.KEYCODE_UNKNOWN && event.keyCode == assignedPttKey) {
@@ -203,25 +196,6 @@ class MainActivity : ComponentActivity() {
             }
         }
         return super.dispatchKeyEvent(event)
-    }
-
-    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
-        menu.findItem(R.id.action_repeater_mode)?.isChecked = repeaterModeEnabled
-        menu.findItem(R.id.action_background_mode)?.title = getString(
-            R.string.menu_background_mode_format,
-            getString(
-                if (isBackgroundModeActive()) {
-                    R.string.menu_background_status_active
-                } else {
-                    R.string.menu_background_status_inactive
-                },
-            ),
-        )
-        return super.onPrepareOptionsMenu(menu)
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return handleMenuAction(item.itemId) || super.onOptionsItemSelected(item)
     }
 
     private fun handleMenuAction(itemId: Int): Boolean {
@@ -387,7 +361,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateBatteryOptimizationUi() {
-        invalidateOptionsMenu()
+        // Popup menu title is recalculated on each open.
     }
 
     private fun hasAudioPermission(): Boolean {
@@ -414,9 +388,11 @@ class MainActivity : ComponentActivity() {
             )
             serverStore.save(servers)
         }
+        val lastSelectedName = serverStore.getLastSelectedName()
+        selectedServerIndex = servers.indexOfFirst { it.name == lastSelectedName }.takeIf { it >= 0 } ?: 0
         refreshServerSpinner()
         bindServerButtons()
-        loadServerToInputs(servers.first())
+        applySelectedServerIndex(selectedServerIndex, announce = false)
         updateServerNavigationButtons()
     }
 
@@ -427,9 +403,7 @@ class MainActivity : ComponentActivity() {
         binding.serverSpinner.adapter = adapter
         binding.serverSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
-                selectedServerIndex = position
-                loadServerToInputs(servers[position])
-                updateServerNavigationButtons()
+                applySelectedServerIndex(position, announce = false)
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -449,7 +423,7 @@ class MainActivity : ComponentActivity() {
             }
             serverStore.save(servers)
             refreshServerSpinner()
-            binding.serverSpinner.setSelection(selectedServerIndex)
+            applySelectedServerIndex(selectedServerIndex, announce = false)
             binding.root.announceForAccessibility(getString(R.string.saved_server_announcement))
         }
 
@@ -460,8 +434,7 @@ class MainActivity : ComponentActivity() {
             selectedServerIndex = (idx - 1).coerceAtLeast(0)
             serverStore.save(servers)
             refreshServerSpinner()
-            binding.serverSpinner.setSelection(selectedServerIndex)
-            loadServerToInputs(servers[selectedServerIndex])
+            applySelectedServerIndex(selectedServerIndex, announce = false)
             binding.root.announceForAccessibility(getString(R.string.deleted_server_announcement))
         }
 
@@ -600,11 +573,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun moveSelectedServer(offset: Int) {
+        if (servers.isEmpty()) return
         val targetIndex = (selectedServerIndex + offset).coerceIn(0, servers.lastIndex)
         if (targetIndex == selectedServerIndex) return
-        selectedServerIndex = targetIndex
+        applySelectedServerIndex(targetIndex, announce = true)
         uiSignalPlayer.playSwitch()
-        binding.serverSpinner.setSelection(targetIndex)
+    }
+
+    private fun applySelectedServerIndex(index: Int, announce: Boolean) {
+        if (servers.isEmpty()) return
+        val safeIndex = index.coerceIn(0, servers.lastIndex)
+        selectedServerIndex = safeIndex
+        val profile = servers[safeIndex]
+        if (binding.serverSpinner.selectedItemPosition != safeIndex) {
+            binding.serverSpinner.setSelection(safeIndex, false)
+        }
+        loadServerToInputs(profile)
+        serverStore.setLastSelectedName(profile.name)
+        updateServerNavigationButtons()
+        if (announce) {
+            binding.root.announceForAccessibility(profile.name)
+        }
     }
 }
 

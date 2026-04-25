@@ -43,6 +43,18 @@ class CallingPatternStore(context: Context) {
         return pattern
     }
 
+    fun deleteCustomPattern(patternId: String): Boolean {
+        val custom = loadCustomPatterns().toMutableList()
+        val removed = custom.removeAll { it.id == patternId }
+        if (!removed) return false
+        saveCustomPatterns(custom)
+        val selectedId = prefs.getString(selectedKey, null)
+        if (selectedId == patternId) {
+            setSelectedPattern(builtInPatterns().first().id)
+        }
+        return true
+    }
+
     private fun loadCustomPatterns(): List<RogerPattern> {
         val raw = prefs.getString(customKey, null) ?: return emptyList()
         return runCatching {

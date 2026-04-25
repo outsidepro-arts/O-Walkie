@@ -29,6 +29,10 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var callingSpinner: Spinner
     private lateinit var customRogerButton: Button
     private lateinit var customCallingButton: Button
+    private lateinit var playRogerButton: Button
+    private lateinit var playCallingButton: Button
+    private lateinit var deleteRogerButton: Button
+    private lateinit var deleteCallingButton: Button
     private val microphoneOptions = mutableListOf<MicrophoneConfigStore.MicrophoneOption>()
     private val rogerPatterns = mutableListOf<RogerPattern>()
     private val callingPatterns = mutableListOf<RogerPattern>()
@@ -54,6 +58,10 @@ class SettingsActivity : ComponentActivity() {
         callingSpinner = findViewById(R.id.callingPatternSpinner)
         customRogerButton = findViewById(R.id.customRogerButton)
         customCallingButton = findViewById(R.id.customCallingButton)
+        playRogerButton = findViewById(R.id.playRogerButton)
+        playCallingButton = findViewById(R.id.playCallingButton)
+        deleteRogerButton = findViewById(R.id.deleteRogerButton)
+        deleteCallingButton = findViewById(R.id.deleteCallingButton)
 
         customRogerButton.setOnClickListener {
             customPatternEditorLauncher.launch(
@@ -65,6 +73,16 @@ class SettingsActivity : ComponentActivity() {
                 RogerPatternEditorActivity.intent(this, RogerPatternEditorActivity.SIGNAL_KIND_CALLING),
             )
         }
+        playRogerButton.setOnClickListener {
+            val pattern = rogerPatterns.getOrNull(rogerSpinner.selectedItemPosition) ?: rogerPatternStore.getSelectedPattern()
+            SignalPreviewPlayer.playPattern(pattern.points)
+        }
+        playCallingButton.setOnClickListener {
+            val pattern = callingPatterns.getOrNull(callingSpinner.selectedItemPosition) ?: callingPatternStore.getSelectedPattern()
+            SignalPreviewPlayer.playPattern(pattern.points)
+        }
+        deleteRogerButton.setOnClickListener { confirmDeleteSelectedRogerPattern() }
+        deleteCallingButton.setOnClickListener { confirmDeleteSelectedCallingPattern() }
         hardwarePttRow.setOnClickListener {
             showHardwarePttAssignmentDialog()
         }
@@ -176,10 +194,12 @@ class SettingsActivity : ComponentActivity() {
         rogerSpinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
                 rogerPatterns.getOrNull(position)?.let { rogerPatternStore.setSelectedPattern(it.id) }
+                updatePatternActionButtons()
             }
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
         })
+        updatePatternActionButtons()
     }
 
     private fun refreshCallingPatterns() {
@@ -199,9 +219,44 @@ class SettingsActivity : ComponentActivity() {
         callingSpinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
                 callingPatterns.getOrNull(position)?.let { callingPatternStore.setSelectedPattern(it.id) }
+                updatePatternActionButtons()
             }
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
         })
+        updatePatternActionButtons()
+    }
+
+    private fun updatePatternActionButtons() {
+        val selectedRoger = rogerPatterns.getOrNull(rogerSpinner.selectedItemPosition) ?: rogerPatternStore.getSelectedPattern()
+        val selectedCalling = callingPatterns.getOrNull(callingSpinner.selectedItemPosition) ?: callingPatternStore.getSelectedPattern()
+        deleteRogerButton.visibility = if (selectedRoger.builtIn) View.GONE else View.VISIBLE
+        deleteCallingButton.visibility = if (selectedCalling.builtIn) View.GONE else View.VISIBLE
+    }
+
+    private fun confirmDeleteSelectedRogerPattern() {
+        val selected = rogerPatterns.getOrNull(rogerSpinner.selectedItemPosition) ?: return
+        if (selected.builtIn) return
+        AlertDialog.Builder(this)
+            .setMessage(R.string.delete_signal_confirm)
+            .setPositiveButton(R.string.common_ok) { _, _ ->
+                rogerPatternStore.deleteCustomPattern(selected.id)
+                refreshRogerPatterns()
+            }
+            .setNegativeButton(R.string.roger_cancel, null)
+            .show()
+    }
+
+    private fun confirmDeleteSelectedCallingPattern() {
+        val selected = callingPatterns.getOrNull(callingSpinner.selectedItemPosition) ?: return
+        if (selected.builtIn) return
+        AlertDialog.Builder(this)
+            .setMessage(R.string.delete_signal_confirm)
+            .setPositiveButton(R.string.common_ok) { _, _ ->
+                callingPatternStore.deleteCustomPattern(selected.id)
+                refreshCallingPatterns()
+            }
+            .setNegativeButton(R.string.roger_cancel, null)
+            .show()
     }
 }

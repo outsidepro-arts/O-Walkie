@@ -3,6 +3,7 @@ package ru.outsidepro_arts.owalkie.model
 import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import ru.outsidepro_arts.owalkie.R
 
 data class RogerPoint(
     val freqHz: Double,
@@ -17,6 +18,7 @@ data class RogerPattern(
 )
 
 class RogerPatternStore(context: Context) {
+    private val appContext = context.applicationContext
     private val prefs = context.getSharedPreferences("roger_patterns", Context.MODE_PRIVATE)
     private val gson = Gson()
     private val customKey = "custom_items"
@@ -55,6 +57,18 @@ class RogerPatternStore(context: Context) {
         return pattern
     }
 
+    fun deleteCustomPattern(patternId: String): Boolean {
+        val custom = loadCustomPatterns().toMutableList()
+        val removed = custom.removeAll { it.id == patternId }
+        if (!removed) return false
+        saveCustomPatterns(custom)
+        val selectedId = prefs.getString(selectedKey, null)
+        if (selectedId == patternId) {
+            setSelectedPattern(builtInPatterns().first().id)
+        }
+        return true
+    }
+
     private fun loadCustomPatterns(): List<RogerPattern> {
         val raw = prefs.getString(customKey, null) ?: return emptyList()
         return runCatching {
@@ -70,6 +84,12 @@ class RogerPatternStore(context: Context) {
 
     private fun builtInPatterns(): List<RogerPattern> {
         return listOf(
+            RogerPattern(
+                id = "none",
+                name = appContext.getString(R.string.roger_no_signal_option),
+                builtIn = true,
+                points = emptyList(),
+            ),
             RogerPattern(
                 id = "variant_1",
                 name = "Вариант 1",

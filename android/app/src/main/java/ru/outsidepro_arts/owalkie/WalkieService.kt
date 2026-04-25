@@ -663,6 +663,7 @@ class WalkieService : Service() {
 
     private fun generateRogerFromSelectedPattern(sampleRate: Int): ShortArray {
         val selected = rogerPatternStore.getSelectedPattern()
+        if (selected.points.isEmpty()) return shortArrayOf()
         return generateSignalFromPattern(sampleRate, selected.points, appendTail = true)
     }
 

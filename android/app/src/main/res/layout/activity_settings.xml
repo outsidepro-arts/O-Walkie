@@ -73,6 +73,21 @@
             android:layout_weight="1" />
 
         <Button
+            android:id="@+id/playRogerButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="@string/play_signal_button" />
+
+        <Button
+            android:id="@+id/deleteRogerButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="@string/delete_signal_button"
+            android:visibility="gone" />
+
+        <Button
             android:id="@+id/customRogerButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -98,6 +113,21 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1" />
+
+        <Button
+            android:id="@+id/playCallingButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="@string/play_signal_button" />
+
+        <Button
+            android:id="@+id/deleteCallingButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="@string/delete_signal_button"
+            android:visibility="gone" />
 
         <Button
             android:id="@+id/customCallingButton"

@@ -29,6 +29,7 @@ class RogerPatternEditorActivity : ComponentActivity() {
     private lateinit var signalNameInput: EditText
     private lateinit var pointsList: ListView
     private lateinit var addPointButton: Button
+    private lateinit var playPatternButton: Button
     private lateinit var saveButton: Button
     private lateinit var cancelButton: Button
     private lateinit var rogerPatternStore: RogerPatternStore
@@ -53,10 +54,14 @@ class RogerPatternEditorActivity : ComponentActivity() {
         signalNameInput = findViewById(R.id.signalNameInput)
         pointsList = findViewById(R.id.pointsListView)
         addPointButton = findViewById(R.id.addPointButton)
+        playPatternButton = findViewById(R.id.playPatternButton)
         saveButton = findViewById(R.id.savePatternButton)
         cancelButton = findViewById(R.id.cancelPatternButton)
 
         addPointButton.setOnClickListener { showAddPointDialog() }
+        playPatternButton.setOnClickListener {
+            SignalPreviewPlayer.playPattern(points)
+        }
         saveButton.setOnClickListener { savePattern() }
         cancelButton.setOnClickListener { finish() }
         refreshPointsList()
