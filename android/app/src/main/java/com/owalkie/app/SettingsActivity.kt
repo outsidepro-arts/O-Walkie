@@ -1,14 +1,19 @@
 package com.owalkie.app
 
+import android.app.AlertDialog
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.Spinner
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import com.owalkie.app.model.CallingPatternStore
 import com.owalkie.app.model.MicrophoneConfigStore
+import com.owalkie.app.model.PttHardwareKeyStore
 import com.owalkie.app.model.RogerPattern
 import com.owalkie.app.model.RogerPatternStore
 
@@ -16,6 +21,9 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var rogerPatternStore: RogerPatternStore
     private lateinit var callingPatternStore: CallingPatternStore
     private lateinit var microphoneConfigStore: MicrophoneConfigStore
+    private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
+    private lateinit var hardwarePttRow: View
+    private lateinit var hardwarePttStatusText: TextView
     private lateinit var microphoneSpinner: Spinner
     private lateinit var rogerSpinner: Spinner
     private lateinit var callingSpinner: Spinner
@@ -37,7 +45,10 @@ class SettingsActivity : ComponentActivity() {
         rogerPatternStore = RogerPatternStore(this)
         callingPatternStore = CallingPatternStore(this)
         microphoneConfigStore = MicrophoneConfigStore(this)
+        pttHardwareKeyStore = PttHardwareKeyStore(this)
 
+        hardwarePttRow = findViewById(R.id.hardwarePttRow)
+        hardwarePttStatusText = findViewById(R.id.hardwarePttStatusText)
         microphoneSpinner = findViewById(R.id.microphoneSpinner)
         rogerSpinner = findViewById(R.id.rogerPatternSpinner)
         callingSpinner = findViewById(R.id.callingPatternSpinner)
@@ -54,6 +65,9 @@ class SettingsActivity : ComponentActivity() {
                 RogerPatternEditorActivity.intent(this, RogerPatternEditorActivity.SIGNAL_KIND_CALLING),
             )
         }
+        hardwarePttRow.setOnClickListener {
+            showHardwarePttAssignmentDialog()
+        }
 
         refreshPatterns()
     }
@@ -64,9 +78,62 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun refreshPatterns() {
+        refreshHardwarePttStatus()
         refreshMicrophoneOptions()
         refreshRogerPatterns()
         refreshCallingPatterns()
+    }
+
+    private fun refreshHardwarePttStatus() {
+        val keyCode = pttHardwareKeyStore.getAssignedKeyCode()
+        hardwarePttStatusText.text = if (keyCode == KeyEvent.KEYCODE_UNKNOWN) {
+            getString(R.string.hardware_ptt_status_unassigned)
+        } else {
+            getString(R.string.hardware_ptt_status_assigned_format, keyCodeToDisplayName(keyCode))
+        }
+    }
+
+    private fun showHardwarePttAssignmentDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_ptt_hardware_key, null)
+        val valueText = dialogView.findViewById<TextView>(R.id.pttKeyDialogValueText)
+        var pendingKeyCode = pttHardwareKeyStore.getAssignedKeyCode()
+        valueText.text = if (pendingKeyCode == KeyEvent.KEYCODE_UNKNOWN) {
+            getString(R.string.hardware_ptt_dialog_waiting)
+        } else {
+            keyCodeToDisplayName(pendingKeyCode)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.hardware_ptt_dialog_title)
+            .setView(dialogView)
+            .setNeutralButton(R.string.common_reset) { _, _ ->
+                pttHardwareKeyStore.setAssignedKeyCode(KeyEvent.KEYCODE_UNKNOWN)
+                refreshHardwarePttStatus()
+            }
+            .setPositiveButton(R.string.common_ok) { _, _ ->
+                pttHardwareKeyStore.setAssignedKeyCode(pendingKeyCode)
+                refreshHardwarePttStatus()
+            }
+            .setNegativeButton(R.string.roger_cancel, null)
+            .create()
+            .also { dialog ->
+                dialog.setOnKeyListener { _, keyCode, event ->
+                    if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                    if (keyCode == KeyEvent.KEYCODE_BACK) return@setOnKeyListener false
+                    pendingKeyCode = keyCode
+                    valueText.text = keyCodeToDisplayName(keyCode)
+                    true
+                }
+            }
+            .show()
+    }
+
+    private fun keyCodeToDisplayName(keyCode: Int): String {
+        val raw = KeyEvent.keyCodeToString(keyCode)
+        return raw
+            .removePrefix("KEYCODE_")
+            .replace('_', ' ')
+            .lowercase()
+            .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     }
 
     private fun refreshMicrophoneOptions() {

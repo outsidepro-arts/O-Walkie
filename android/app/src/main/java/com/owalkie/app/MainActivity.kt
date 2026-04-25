@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
@@ -21,6 +22,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
 import androidx.core.content.ContextCompat
 import com.owalkie.app.databinding.ActivityMainBinding
+import com.owalkie.app.model.PttHardwareKeyStore
 import com.owalkie.app.model.ServerProfile
 import com.owalkie.app.model.ServerStore
 
@@ -31,6 +33,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var serverStore: ServerStore
+    private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
     private lateinit var uiSignalPlayer: UiSignalPlayer
     private var transmitting = false
     private var selectedServerIndex = 0
@@ -82,6 +85,7 @@ class MainActivity : ComponentActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         serverStore = ServerStore(this)
+        pttHardwareKeyStore = PttHardwareKeyStore(this)
         uiSignalPlayer = UiSignalPlayer(this)
 
         initServerProfilesUi()
@@ -162,6 +166,26 @@ class MainActivity : ComponentActivity() {
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main_overflow_menu, menu)
         return true
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val assignedPttKey = pttHardwareKeyStore.getAssignedKeyCode()
+        if (assignedPttKey != KeyEvent.KEYCODE_UNKNOWN && event.keyCode == assignedPttKey) {
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    if (event.repeatCount == 0) {
+                        startTransmitUi()
+                    }
+                    return true
+                }
+
+                KeyEvent.ACTION_UP -> {
+                    stopTransmitUi()
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onPrepareOptionsMenu(menu: Menu): Boolean {

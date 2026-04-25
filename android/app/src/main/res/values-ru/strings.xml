@@ -33,6 +33,13 @@
     <string name="microphone_option_unprocessed">Без обработки (Unprocessed)</string>
     <string name="microphone_option_voice_performance">Сценический режим (Voice performance)</string>
     <string name="microphone_option_bluetooth_headset">Микрофон Bluetooth-гарнитуры</string>
+    <string name="hardware_ptt_label">Аппаратная кнопка для PTT</string>
+    <string name="hardware_ptt_status_unassigned">Не задана</string>
+    <string name="hardware_ptt_status_assigned_format">Назначена: %1$s</string>
+    <string name="hardware_ptt_dialog_title">Назначение аппаратной кнопки</string>
+    <string name="hardware_ptt_dialog_waiting">Нажмите аппаратную кнопку</string>
+    <string name="common_ok">Ок</string>
+    <string name="common_reset">Сбросить</string>
     <string name="roger_signal_label">Сигнал Роджер</string>
     <string name="roger_custom_button">Свой</string>
     <string name="calling_signal_label">Сигнал Вызова</string>

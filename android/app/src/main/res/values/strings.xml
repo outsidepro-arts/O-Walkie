@@ -33,6 +33,13 @@
     <string name="microphone_option_unprocessed">Unprocessed</string>
     <string name="microphone_option_voice_performance">Voice performance</string>
     <string name="microphone_option_bluetooth_headset">Bluetooth headset mic</string>
+    <string name="hardware_ptt_label">Hardware button for PTT</string>
+    <string name="hardware_ptt_status_unassigned">Not assigned</string>
+    <string name="hardware_ptt_status_assigned_format">Assigned: %1$s</string>
+    <string name="hardware_ptt_dialog_title">Assign hardware key</string>
+    <string name="hardware_ptt_dialog_waiting">Press a hardware button</string>
+    <string name="common_ok">OK</string>
+    <string name="common_reset">Reset</string>
     <string name="roger_signal_label">Roger signal</string>
     <string name="roger_custom_button">Custom</string>
     <string name="calling_signal_label">Calling signal</string>

@@ -26,6 +26,33 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content" />
 
+    <LinearLayout
+        android:id="@+id/hardwarePttRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true"
+        android:minHeight="56dp"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <TextView
+            android:id="@+id/hardwarePttLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/hardware_ptt_label"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/hardwarePttStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/hardware_ptt_status_unassigned" />
+    </LinearLayout>
+
     <TextView
         android:id="@+id/rogerSignalLabel"
         android:layout_width="wrap_content"
