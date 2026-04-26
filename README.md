@@ -1,5 +1,8 @@
 # O-Walkie
 
+[![CI](https://github.com/outsidepro-arts/O-Walkie/actions/workflows/ci.yml/badge.svg)](https://github.com/outsidepro-arts/O-Walkie/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 O-Walkie is a decentralized lo-fi walkie-talkie platform.  
 The project focuses on low latency, practical PTT workflow and atmospheric radio artifacts instead of hi-fi voice quality.
 
