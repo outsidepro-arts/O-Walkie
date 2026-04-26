@@ -23,6 +23,8 @@ public sealed class RelayClientService
     private int _connected;
     private string _udpHost = string.Empty;
     private int _udpPort;
+    private bool _channelBound;
+    private bool _requestedRepeaterEnabled;
 
     public bool IsConnected { get; private set; }
     public int PacketMs => _packetMs;
@@ -53,6 +55,8 @@ public sealed class RelayClientService
         _seq = 0;
         _udpHost = wsHost;
         _udpPort = profile.UdpPort;
+        _channelBound = false;
+        _requestedRepeaterEnabled = repeaterEnabled;
 
         var wsUri = new UriBuilder(wsSecure ? "wss" : "ws", wsHost, wsPort, "/ws").Uri;
         await _webSocket.ConnectAsync(wsUri, _connectionCts.Token);
@@ -62,21 +66,6 @@ public sealed class RelayClientService
         StatusMessage?.Invoke(this, $"WS connected: {wsUri}");
 
         _udpReceiveTask = Task.Run(() => UdpReceiveLoopAsync(_connectionCts.Token), _connectionCts.Token);
-        await SendWsJsonAsync(new
-        {
-            type = "join",
-            channel = profile.Channel,
-        }, _connectionCts.Token);
-        await SendWsJsonAsync(new
-        {
-            type = "udp_hello",
-            udpPort = ((IPEndPoint)_udpClient.Client.LocalEndPoint!).Port,
-        }, _connectionCts.Token);
-        await SendWsJsonAsync(new
-        {
-            type = "repeater_mode",
-            enabled = repeaterEnabled,
-        }, _connectionCts.Token);
         _udpKeepaliveTask = Task.Run(() => UdpKeepaliveLoopAsync(_connectionCts.Token), _connectionCts.Token);
 
         _wsReceiveTask = Task.Run(() => WsReceiveLoopAsync(_connectionCts.Token), _connectionCts.Token);
@@ -299,7 +288,7 @@ public sealed class RelayClientService
 
                 var message = builder.ToString();
                 builder.Clear();
-                HandleWsMessage(message);
+                await HandleWsMessageAsync(message, cancellationToken);
             }
         }
         catch (Exception ex)
@@ -347,7 +336,7 @@ public sealed class RelayClientService
         }
     }
 
-    private void HandleWsMessage(string message)
+    private async Task HandleWsMessageAsync(string message, CancellationToken cancellationToken)
     {
         try
         {
@@ -369,6 +358,29 @@ public sealed class RelayClientService
                 {
                     _packetMs = packet is 10 or 20 or 40 or 60 ? packet : 20;
                     PacketMsChanged?.Invoke(this, _packetMs);
+                }
+                if (!_channelBound && _activeProfile != null)
+                {
+                    var selectedChannel = (_activeProfile.Channel ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(selectedChannel))
+                    {
+                        await SendWsJsonAsync(new
+                        {
+                            type = "join",
+                            channel = selectedChannel,
+                        }, cancellationToken);
+                        _channelBound = true;
+                        await SendWsJsonAsync(new
+                        {
+                            type = "udp_hello",
+                            udpPort = ((IPEndPoint)_udpClient!.Client.LocalEndPoint!).Port,
+                        }, cancellationToken);
+                        await SendWsJsonAsync(new
+                        {
+                            type = "repeater_mode",
+                            enabled = _requestedRepeaterEnabled,
+                        }, cancellationToken);
+                    }
                 }
                 StatusMessage?.Invoke(this, $"Welcome received. sessionId={_sessionId}, packetMs={_packetMs}");
             }

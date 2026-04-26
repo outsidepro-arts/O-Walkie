@@ -1499,18 +1499,47 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	c := &client{
 		sessionID: s.nextSessionID(),
 		conn:      conn,
-		channel:   "global",
 	}
 	s.hub.addClient(c)
-	s.hub.switchChannel(c, "global")
 	defer s.hub.removeClient(c.sessionID)
 
 	_ = conn.WriteJSON(wsServerMessage{
 		Type:      "welcome",
 		SessionID: c.sessionID,
-		Channel:   "global",
 		PacketMs:  normalizePacketMs(s.hub.cfg.Server.PacketMs),
 	})
+
+	var initial wsMessage
+	if err := conn.ReadJSON(&initial); err != nil {
+		if isExpectedDisconnectError(err) {
+			log.Printf("ws disconnected before channel bind for %d: %v", c.sessionID, err)
+		} else {
+			log.Printf("ws initial bind read failed for %d: %v", c.sessionID, err)
+		}
+		return
+	}
+	initialType := strings.ToLower(strings.TrimSpace(initial.Type))
+	if initialType != "" && initialType != "join" {
+		_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "first message must bind channel"})
+		_ = conn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "missing initial channel bind"),
+			time.Now().Add(time.Second),
+		)
+		return
+	}
+	initialChannel := strings.TrimSpace(initial.Channel)
+	if initialChannel == "" {
+		_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "channel is required in first message"})
+		_ = conn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "missing initial channel bind"),
+			time.Now().Add(time.Second),
+		)
+		return
+	}
+	s.hub.switchChannel(c, initialChannel)
+	_ = conn.WriteJSON(wsServerMessage{Type: "joined", Channel: initialChannel})
 
 	for {
 		var msg wsMessage
@@ -1524,12 +1553,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		switch strings.ToLower(msg.Type) {
 		case "join", "switch_channel":
-			ch := strings.TrimSpace(msg.Channel)
-			if ch == "" {
-				ch = "global"
-			}
-			s.hub.switchChannel(c, ch)
-			_ = conn.WriteJSON(wsServerMessage{Type: "joined", Channel: ch})
+			_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "channel switch is disabled, reconnect with new channel"})
 		case "udp_hello":
 			host, _, err := net.SplitHostPort(r.RemoteAddr)
 			if err != nil {

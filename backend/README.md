@@ -29,18 +29,21 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 
 Server -> client:
 
-- `{"type":"welcome","sessionId":123,"channel":"global"}`
-- `{"type":"joined","channel":"newChannel"}`
+- `{"type":"welcome","sessionId":123,"packetMs":20}`
+- `{"type":"joined","channel":"teamA"}`
 - `{"type":"pong"}`
 
 Client -> server:
 
-- `{"type":"join","channel":"global"}`
-- `{"type":"switch_channel","channel":"teamA"}`
+- first client message after `welcome` must bind channel:
+  - `{"type":"join","channel":"teamA"}`
+- runtime channel switch is disabled; reconnect with new channel instead
 - `{"type":"udp_hello","udpPort":7001}`
 - `{"type":"repeater_mode","enabled":true}`
 - `{"type":"tx_eof"}` marks end-of-transmission explicitly (after PTT/roger tail)
 - `{"type":"heartbeat"}`
+
+If the first client message does not contain a valid channel bind, server replies with `error` and closes the WebSocket session.
 
 ## UDP Packet Format
 

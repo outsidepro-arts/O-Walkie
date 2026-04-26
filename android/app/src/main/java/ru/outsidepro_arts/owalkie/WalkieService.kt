@@ -143,6 +143,8 @@ class WalkieService : Service() {
     private var packetMs: Int = DEFAULT_PACKET_MS
     @Volatile
     private var wsSecure: Boolean = false
+    @Volatile
+    private var channelBound: Boolean = false
 
     private lateinit var codec: OpusCodec
     private lateinit var audioManager: AudioManager
@@ -302,18 +304,17 @@ class WalkieService : Service() {
                 wsConnected.set(true)
                 wsRetryAttempt.set(0)
                 packetMs = DEFAULT_PACKET_MS
-                webSocket.send("""{"type":"join","channel":"$channel"}""")
-                sendRepeaterModeCommand(webSocket)
-                sendUdpHello()
+                channelBound = false
                 broadcastStatus(currentSignalByte())
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                handleWsMessage(text)
+                handleWsMessage(webSocket, text)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 wsConnected.set(false)
+                channelBound = false
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get()) {
                     scheduleWsReconnect()
@@ -324,6 +325,7 @@ class WalkieService : Service() {
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 wsConnected.set(false)
+                channelBound = false
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get()) {
                     scheduleWsReconnect()
@@ -334,13 +336,22 @@ class WalkieService : Service() {
         })
     }
 
-    private fun handleWsMessage(text: String) {
+    private fun handleWsMessage(ws: WebSocket, text: String) {
         runCatching {
             val obj = JSONObject(text)
             when (obj.optString("type")) {
                 "welcome" -> {
                     sessionId.set(obj.optLong("sessionId", 0L))
                     packetMs = normalizePacketMs(obj.optInt("packetMs", DEFAULT_PACKET_MS))
+                    if (!channelBound) {
+                        val selectedChannel = channel.trim()
+                        if (selectedChannel.isNotBlank()) {
+                            ws.send("""{"type":"join","channel":"$selectedChannel"}""")
+                            channelBound = true
+                            sendRepeaterModeCommand(ws)
+                            sendUdpHello()
+                        }
+                    }
                 }
                 "pong" -> Unit
             }
