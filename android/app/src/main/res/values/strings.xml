@@ -87,7 +87,6 @@
     <string name="validation_server_host">Enter server host</string>
     <string name="validation_channel">Enter channel</string>
     <string name="validation_port">Enter valid ports 1..65535</string>
-    <string name="default_server_name">Default local relay</string>
     <string name="ptt_hold">Hold to Talk</string>
     <string name="ptt_hold_accessibility_hint">Press and hold to transmit.</string>
     <string name="ptt_start_talking">Start talking</string>

@@ -371,28 +371,16 @@ class MainActivity : ComponentActivity() {
     private fun initServerProfilesUi() {
         servers.clear()
         servers.addAll(serverStore.load())
-        if (servers.isEmpty()) {
-            servers += ServerProfile(
-                name = getString(R.string.default_server_name),
-                host = "192.168.100.2",
-                wsPort = 5500,
-                udpPort = 5505,
-                channel = "global",
-            )
-            serverStore.save(servers)
-        } else if (servers.size == 1 && servers.first().host == "10.0.2.2" && servers.first().wsPort == 8080 && servers.first().udpPort == 5000) {
-            servers[0] = servers.first().copy(
-                host = "192.168.100.2",
-                wsPort = 5500,
-                udpPort = 5505,
-            )
-            serverStore.save(servers)
-        }
         val lastSelectedName = serverStore.getLastSelectedName()
         selectedServerIndex = servers.indexOfFirst { it.name == lastSelectedName }.takeIf { it >= 0 } ?: 0
         refreshServerSpinner()
         bindServerButtons()
-        applySelectedServerIndex(selectedServerIndex, announce = false)
+        if (servers.isEmpty()) {
+            clearServerInputs()
+            updateServerNavigationButtons()
+        } else {
+            applySelectedServerIndex(selectedServerIndex, announce = false)
+        }
         updateServerNavigationButtons()
     }
 
@@ -428,13 +416,19 @@ class MainActivity : ComponentActivity() {
         }
 
         binding.deleteServerButton.setOnClickListener {
-            if (servers.size <= 1) return@setOnClickListener
+            if (servers.isEmpty()) return@setOnClickListener
             val idx = binding.serverSpinner.selectedItemPosition.coerceIn(0, servers.lastIndex)
             servers.removeAt(idx)
             selectedServerIndex = (idx - 1).coerceAtLeast(0)
             serverStore.save(servers)
             refreshServerSpinner()
-            applySelectedServerIndex(selectedServerIndex, announce = false)
+            if (servers.isEmpty()) {
+                clearServerInputs()
+                serverStore.setLastSelectedName("")
+                updateServerNavigationButtons()
+            } else {
+                applySelectedServerIndex(selectedServerIndex, announce = false)
+            }
             binding.root.announceForAccessibility(getString(R.string.deleted_server_announcement))
         }
 
@@ -594,6 +588,14 @@ class MainActivity : ComponentActivity() {
         if (announce) {
             binding.root.announceForAccessibility(profile.name)
         }
+    }
+
+    private fun clearServerInputs() {
+        binding.serverNameInput.setText("")
+        binding.serverHostInput.setText("")
+        binding.wsPortInput.setText("")
+        binding.udpPortInput.setText("")
+        binding.channelInput.setText("")
     }
 }
 

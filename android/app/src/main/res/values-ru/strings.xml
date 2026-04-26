@@ -87,7 +87,6 @@
     <string name="validation_server_host">Введите хост сервера</string>
     <string name="validation_channel">Введите канал</string>
     <string name="validation_port">Введите корректные порты 1..65535</string>
-    <string name="default_server_name">Локальный сервер по умолчанию</string>
     <string name="ptt_hold">Удерживайте для разговора</string>
     <string name="ptt_hold_accessibility_hint">Нажмите и удерживайте для передачи.</string>
     <string name="ptt_start_talking">Начать передачу</string>

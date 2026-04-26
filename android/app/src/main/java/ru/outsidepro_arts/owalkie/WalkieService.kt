@@ -76,7 +76,7 @@ class WalkieService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "owalkie_stream"
         private const val NOTIFICATION_ID = 101
 
-        private const val DEFAULT_WS_HOST = "10.0.2.2"
+        private const val DEFAULT_WS_HOST = ""
         private const val DEFAULT_WS_PORT = 8080
         private const val DEFAULT_UDP_PORT = 5000
         private const val DEFAULT_CHANNEL = "global"

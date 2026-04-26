@@ -40,7 +40,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         StartPttCommand = new RelayCommand(StartPtt, () => IsConnected && !_audioEngineService.IsTransmitting);
         StopPttCommand = new RelayCommand(StopPtt, () => _audioEngineService.IsTransmitting);
         SaveProfileCommand = new RelayCommand(SaveProfile);
-        DeleteProfileCommand = new RelayCommand(DeleteSelectedProfile, () => Profiles.Count > 1 && SelectedProfile != null);
+        DeleteProfileCommand = new RelayCommand(DeleteSelectedProfile, () => Profiles.Count > 0 && SelectedProfile != null);
         AssignHardwarePttCommand = new RelayCommand(BeginHardwarePttAssignment);
         ClearHardwarePttCommand = new RelayCommand(ClearHardwarePttAssignment);
 
@@ -78,6 +78,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     WsPort = value.WsPort;
                     UdpPort = value.UdpPort;
                     Channel = value.Channel;
+                }
+                else
+                {
+                    ProfileName = string.Empty;
+                    Host = string.Empty;
+                    WsPort = 5500;
+                    UdpPort = 5505;
+                    Channel = "global";
                 }
                 DeleteProfileCommand.RaiseCanExecuteChanged();
             }
@@ -151,14 +159,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Profiles.Add(profile.Clone());
         }
 
-        if (Profiles.Count == 0)
-        {
-            Profiles.Add(new ConnectionProfile());
-        }
-
         var selected = Profiles.FirstOrDefault(p =>
-            p.Name.Equals(_settings.ActiveProfile.Name, StringComparison.OrdinalIgnoreCase)) ?? Profiles[0];
+            p.Name.Equals(_settings.ActiveProfile.Name, StringComparison.OrdinalIgnoreCase));
         SelectedProfile = selected;
+        if (selected == null)
+        {
+            ProfileName = _settings.ActiveProfile.Name;
+            Host = _settings.ActiveProfile.Host;
+            WsPort = _settings.ActiveProfile.WsPort;
+            UdpPort = _settings.ActiveProfile.UdpPort;
+            Channel = _settings.ActiveProfile.Channel;
+        }
         UpdateHardwarePttStatus();
     }
 
@@ -217,7 +228,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         var updated = new ConnectionProfile
         {
-            Name = string.IsNullOrWhiteSpace(ProfileName) ? "Default local relay" : ProfileName.Trim(),
+            Name = string.IsNullOrWhiteSpace(ProfileName) ? "Profile" : ProfileName.Trim(),
             Host = Host,
             WsPort = WsPort,
             UdpPort = UdpPort,
@@ -313,7 +324,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void SaveProfile()
     {
-        var normalizedName = string.IsNullOrWhiteSpace(ProfileName) ? "Default local relay" : ProfileName.Trim();
+        var normalizedName = string.IsNullOrWhiteSpace(ProfileName) ? "Profile" : ProfileName.Trim();
         var existing = Profiles.FirstOrDefault(p => p.Name.Equals(normalizedName, StringComparison.OrdinalIgnoreCase));
         if (existing == null)
         {
@@ -337,7 +348,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void DeleteSelectedProfile()
     {
-        if (SelectedProfile == null || Profiles.Count <= 1)
+        if (SelectedProfile == null || Profiles.Count == 0)
         {
             return;
         }
@@ -345,11 +356,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var toDelete = SelectedProfile;
         var nextIndex = Math.Max(0, Profiles.IndexOf(toDelete) - 1);
         Profiles.Remove(toDelete);
-        SelectedProfile = Profiles[nextIndex];
+        SelectedProfile = Profiles.Count == 0 ? null : Profiles[nextIndex];
 
         if (SelectedProfile != null)
         {
             _settings.ActiveProfile = SelectedProfile.Clone();
+        }
+        else
+        {
+            _settings.ActiveProfile = new ConnectionProfile();
         }
         _settings.Profiles = Profiles.Select(p => p.Clone()).ToList();
         _settingsService.Save(_settings);
