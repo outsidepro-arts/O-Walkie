@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
     private var repeaterModeEnabled = false
     private var connectionDetailsExpanded = true
     private var lastSignalPercent = 0
+    private var protocolIncompatible = false
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -53,6 +54,7 @@ class MainActivity : ComponentActivity() {
             wsConnected = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTED, false)
             wsConnecting = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTING, false)
             val udpReady = intent.getBooleanExtra(WalkieService.EXTRA_UDP_READY, false)
+            protocolIncompatible = intent.getBooleanExtra(WalkieService.EXTRA_PROTOCOL_ERROR, false)
             val signalPercent = ((signal / 255.0) * 100.0).toInt().coerceIn(0, 100)
             lastSignalPercent = signalPercent
 
@@ -537,6 +539,7 @@ class MainActivity : ComponentActivity() {
 
     private fun updateStatusChips(udpReady: Boolean = false) {
         val connectionState = when {
+            protocolIncompatible -> getString(R.string.connection_state_protocol_incompatible)
             transmitting -> getString(R.string.connection_state_transmitting)
             wsConnecting -> getString(R.string.connection_state_connecting)
             wsConnected && udpReady -> getString(R.string.connection_state_connected)

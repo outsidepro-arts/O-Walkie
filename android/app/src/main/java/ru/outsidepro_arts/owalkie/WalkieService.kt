@@ -67,6 +67,7 @@ class WalkieService : Service() {
         const val EXTRA_WS_CONNECTED = "wsConnected"
         const val EXTRA_WS_CONNECTING = "wsConnecting"
         const val EXTRA_UDP_READY = "udpReady"
+        const val EXTRA_PROTOCOL_ERROR = "protocolError"
         const val EXTRA_SERVER_HOST = "serverHost"
         const val EXTRA_WS_PORT = "wsPort"
         const val EXTRA_UDP_PORT = "udpPort"
@@ -85,6 +86,7 @@ class WalkieService : Service() {
         private const val LOCAL_PLAYBACK_SAMPLE_RATE = 44100
         private const val CHANNELS = 1
         private const val DEFAULT_PACKET_MS = 20
+        private const val PROTOCOL_VERSION = 1
         private const val MAX_PACKET_SAMPLES = SAMPLE_RATE * 60 / 1000
         private const val ROGER_TAIL_MS = 40
         private const val CALL_LOCAL_GAIN_DB = -10.0
@@ -145,6 +147,8 @@ class WalkieService : Service() {
     private var wsSecure: Boolean = false
     @Volatile
     private var channelBound: Boolean = false
+    @Volatile
+    private var protocolError: Boolean = false
 
     private lateinit var codec: OpusCodec
     private lateinit var audioManager: AudioManager
@@ -305,6 +309,7 @@ class WalkieService : Service() {
                 wsRetryAttempt.set(0)
                 packetMs = DEFAULT_PACKET_MS
                 channelBound = false
+                protocolError = false
                 broadcastStatus(currentSignalByte())
             }
 
@@ -341,6 +346,15 @@ class WalkieService : Service() {
             val obj = JSONObject(text)
             when (obj.optString("type")) {
                 "welcome" -> {
+                    val serverProtocol = obj.optInt("protocolVersion", -1)
+                    if (serverProtocol != PROTOCOL_VERSION) {
+                        protocolError = true
+                        desiredConnection.set(false)
+                        wsConnected.set(false)
+                        ws.close(1002, "incompatible protocol version")
+                        broadcastStatus(currentSignalByte())
+                        return@runCatching
+                    }
                     sessionId.set(obj.optLong("sessionId", 0L))
                     packetMs = normalizePacketMs(obj.optInt("packetMs", DEFAULT_PACKET_MS))
                     if (!channelBound) {
@@ -798,6 +812,7 @@ class WalkieService : Service() {
             putExtra(EXTRA_WS_CONNECTED, wsConnected.get())
             putExtra(EXTRA_WS_CONNECTING, desiredConnection.get() && !wsConnected.get())
             putExtra(EXTRA_UDP_READY, udpSocket?.isClosed == false)
+            putExtra(EXTRA_PROTOCOL_ERROR, protocolError)
         }
         sendBroadcast(statusIntent)
     }

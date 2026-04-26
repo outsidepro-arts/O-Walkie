@@ -10,6 +10,7 @@ namespace OWalkie.Desktop.Wpf.Services;
 
 public sealed class RelayClientService
 {
+    private const int ProtocolVersion = 1;
     private ClientWebSocket? _webSocket;
     private UdpClient? _udpClient;
     private CancellationTokenSource? _connectionCts;
@@ -350,6 +351,14 @@ public sealed class RelayClientService
             var type = typeNode.GetString() ?? string.Empty;
             if (type == "welcome")
             {
+                if (!root.TryGetProperty("protocolVersion", out var protocolNode) ||
+                    !protocolNode.TryGetInt32(out var serverProtocol) ||
+                    serverProtocol != ProtocolVersion)
+                {
+                    StatusMessage?.Invoke(this, "Protocol incompatible: server/client protocolVersion mismatch.");
+                    await DisconnectAsync(CancellationToken.None);
+                    return;
+                }
                 if (root.TryGetProperty("sessionId", out var sessionNode) && sessionNode.TryGetInt32(out var sid))
                 {
                     _sessionId = sid;

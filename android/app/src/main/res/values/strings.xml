@@ -78,6 +78,7 @@
     <string name="connection_state_connected">Connected</string>
     <string name="connection_state_partial">Connected (UDP init)</string>
     <string name="connection_state_disconnected">Disconnected</string>
+    <string name="connection_state_protocol_incompatible">Protocol incompatible</string>
     <string name="connection_state_connecting">Connecting...</string>
     <string name="connection_state_transmitting">Transmitting</string>
     <string name="saved_server_announcement">Server saved</string>

@@ -29,7 +29,7 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 
 Server -> client:
 
-- `{"type":"welcome","sessionId":123,"packetMs":20}`
+- `{"type":"welcome","sessionId":123,"packetMs":20,"protocolVersion":1}`
 - `{"type":"joined","channel":"teamA"}`
 - `{"type":"pong"}`
 
@@ -44,6 +44,11 @@ Client -> server:
 - `{"type":"heartbeat"}`
 
 If the first client message does not contain a valid channel bind, server replies with `error` and closes the WebSocket session.
+
+Protocol compatibility:
+- current protocol version is `1`
+- clients must validate `welcome.protocolVersion`
+- missing or mismatched protocol version must be treated as incompatible protocol
 
 ## UDP Packet Format
 

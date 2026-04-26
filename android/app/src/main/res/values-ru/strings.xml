@@ -78,6 +78,7 @@
     <string name="connection_state_connected">Подключен</string>
     <string name="connection_state_partial">Подключен (иниц. UDP)</string>
     <string name="connection_state_disconnected">Отключен</string>
+    <string name="connection_state_protocol_incompatible">Несовместимая версия протокола</string>
     <string name="connection_state_connecting">Подключение...</string>
     <string name="connection_state_transmitting">Передача</string>
     <string name="saved_server_announcement">Сервер сохранен</string>
