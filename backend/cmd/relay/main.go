@@ -30,6 +30,7 @@ const (
 	opusMaxFrameLen = 512
 	configFilePath  = "config.json"
 	defaultPacketMs = 20
+	protocolVersion = 1
 )
 
 var (
@@ -106,11 +107,12 @@ type wsMessage struct {
 }
 
 type wsServerMessage struct {
-	Type      string `json:"type"`
-	SessionID uint32 `json:"sessionId,omitempty"`
-	Channel   string `json:"channel,omitempty"`
-	Info      string `json:"info,omitempty"`
-	PacketMs  int    `json:"packetMs,omitempty"`
+	Type            string `json:"type"`
+	SessionID       uint32 `json:"sessionId,omitempty"`
+	Channel         string `json:"channel,omitempty"`
+	Info            string `json:"info,omitempty"`
+	PacketMs        int    `json:"packetMs,omitempty"`
+	ProtocolVersion int    `json:"protocolVersion,omitempty"`
 }
 
 type client struct {
@@ -1504,9 +1506,10 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	defer s.hub.removeClient(c.sessionID)
 
 	_ = conn.WriteJSON(wsServerMessage{
-		Type:      "welcome",
-		SessionID: c.sessionID,
-		PacketMs:  normalizePacketMs(s.hub.cfg.Server.PacketMs),
+		Type:            "welcome",
+		SessionID:       c.sessionID,
+		PacketMs:        normalizePacketMs(s.hub.cfg.Server.PacketMs),
+		ProtocolVersion: protocolVersion,
 	})
 
 	var initial wsMessage
@@ -1636,7 +1639,13 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	log.Printf("relay started ws=%s udp=%s packet_ms=%d", cfg.Server.WSAddr, cfg.Server.UDPAddr, normalizePacketMs(cfg.Server.PacketMs))
+	log.Printf(
+		"relay started ws=%s udp=%s packet_ms=%d protocol_version=%d",
+		cfg.Server.WSAddr,
+		cfg.Server.UDPAddr,
+		normalizePacketMs(cfg.Server.PacketMs),
+		protocolVersion,
+	)
 	if err := http.ListenAndServe(cfg.Server.WSAddr, mux); err != nil {
 		log.Fatalf("ws server error: %v", err)
 	}
