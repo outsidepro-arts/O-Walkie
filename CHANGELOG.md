@@ -15,6 +15,19 @@ This project follows a lightweight Keep a Changelog style and Semantic Versionin
 ### Fixed
 - _(add bug fixes here)_
 
+## [v0.1.2] - 2026-04-26
+
+### Changed
+- Channel model switched to one-time initial bind on connect:
+  - clients send channel immediately after `welcome`
+  - runtime channel switching in active session is disabled (reconnect required)
+- Relay startup log now includes `protocol_version`.
+
+### Added
+- Protocol compatibility handshake via `welcome.protocolVersion` (current version: `1`).
+- Android and Windows clients now treat missing/mismatched protocol version as incompatible protocol and stop connection.
+- Protocol compatibility notes added to backend README.
+
 ## [v0.1.1] - 2026-04-26
 
 ### Added
