@@ -602,10 +602,20 @@ func (m *channelMixer) run() {
 				st = newSpeakerStreamState(m.jitterMinPackets)
 				states[pkt.sessionID] = st
 			}
+			prevLastPacketAt := st.lastPacketAt
 			st.jitter.Push(buildJitterRTPPacket(pkt))
 			st.lastPacketAt = time.Now()
 			st.lastSignal = float64(pkt.signalStrength)
-			eofMarked[pkt.sessionID] = false
+			if eofMarked[pkt.sessionID] {
+				// Do not immediately clear explicit EOF on trailing packets that are still
+				// draining from network/jitter. Clear only when a new burst starts
+				// after a noticeable gap.
+				if !prevLastPacketAt.IsZero() && time.Since(prevLastPacketAt) > (3*packetDur) {
+					eofMarked[pkt.sessionID] = false
+				}
+			} else {
+				eofMarked[pkt.sessionID] = false
+			}
 		case sid := <-m.eof:
 			eofMarked[sid] = true
 			if st := states[sid]; st != nil {
