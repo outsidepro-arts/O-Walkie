@@ -6,9 +6,9 @@
     "hangover_ms": 180,
     "eof_timeout_ms": 420,
     "conceal_decay": 0.90,
-    "jitter_min_packets": 3,
+    "jitter_min_packets": 4,
     "busy_mode": false,
-    "transmit_timeout": 0
+    "transmit_timeout": 60
   },
   "modules": {
     "noise": {
@@ -18,8 +18,8 @@
       "max_noise_db": -3.0,
       "noise_gain": 1200.0,
       "squelch_threshold_db": -3.0,
-      "squelch_min_ms": 3,
-      "squelch_max_ms": 5,
+      "squelch_min_ms": 10,
+      "squelch_max_ms": 20,
       "tail_noise_db": 10.0,
       "tail_min_ms": 5,
       "tail_max_ms": 10
