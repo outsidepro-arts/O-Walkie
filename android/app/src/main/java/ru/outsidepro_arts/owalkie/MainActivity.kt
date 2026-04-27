@@ -63,6 +63,8 @@ class MainActivity : ComponentActivity() {
     private var connectionDetailsExpanded = false
     private var lastSignalPercent = 0
     private var protocolIncompatible = false
+    private var busyModeEnabled = false
+    private var busyRxActive = false
     private var userRequestedConnection = false
     private var scanJob: Job? = null
     private val scanScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -76,9 +78,12 @@ class MainActivity : ComponentActivity() {
             val prevConnecting = wsConnecting
             wsConnected = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTED, false)
             wsConnecting = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTING, false)
+            transmitting = intent.getBooleanExtra(WalkieService.EXTRA_TX_ACTIVE, transmitting)
             val udpReady = intent.getBooleanExtra(WalkieService.EXTRA_UDP_READY, false)
             val prevProtocolIncompatible = protocolIncompatible
             protocolIncompatible = intent.getBooleanExtra(WalkieService.EXTRA_PROTOCOL_ERROR, false)
+            busyModeEnabled = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_MODE, false)
+            busyRxActive = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_RX_ACTIVE, false)
             val signalPercent = ((signal / 255.0) * 100.0).toInt().coerceIn(0, 100)
             lastSignalPercent = signalPercent
 
@@ -746,7 +751,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updatePttAvailability() {
-        val enabled = wsConnected
+        val blockedByBusyMode = busyModeEnabled && busyRxActive && !transmitting
+        val enabled = wsConnected && !blockedByBusyMode
         binding.pttButton.isEnabled = enabled
         binding.callButton.isEnabled = enabled && !transmitting
         binding.pttButton.alpha = if (enabled) 1.0f else 0.5f

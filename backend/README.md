@@ -17,6 +17,8 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 - `server.eof_timeout_ms` hard timeout for implicit EOF if no packets arrive
 - `server.conceal_decay` frame-to-frame attenuation for concealment replay during hangover (`0..1`)
 - `server.jitter_min_packets` minimum packets to accumulate before server-side jitter playout (`1..12`, recommended `2..4`)
+- `server.busy_mode` allow only one active transmitter per channel at a time (others are blocked until TX ends)
+- `server.transmit_timeout` max continuous TX duration in seconds (`0` disables timeout)
 - each module block in `modules.*` is optional:
   - if the block is missing, module is disabled
   - if the block exists, `enabled: true|false` controls activation
@@ -35,6 +37,8 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 Server -> client:
 
 - `{"type":"welcome","sessionId":123,"packetMs":20,"protocolVersion":1}`
+  - includes `busyMode: true|false` so clients can lock PTT while channel is receiving
+- `{"type":"tx_stop","info":"transmit_timeout_reached"}` server-enforced stop for overlong TX
 - `{"type":"joined","channel":"teamA"}`
 - `{"type":"pong"}`
 

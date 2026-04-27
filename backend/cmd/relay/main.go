@@ -47,13 +47,15 @@ type appConfig struct {
 }
 
 type serverConfig struct {
-	WSAddr        string  `json:"ws_addr"`
-	UDPAddr       string  `json:"udp_addr"`
-	PacketMs      int     `json:"packet_ms"`
-	HangoverMs    int     `json:"hangover_ms"`
-	EOFTimeoutMs  int     `json:"eof_timeout_ms"`
-	ConcealDecay  float64 `json:"conceal_decay"`
-	JitterMinPkts int     `json:"jitter_min_packets"`
+	WSAddr             string  `json:"ws_addr"`
+	UDPAddr            string  `json:"udp_addr"`
+	PacketMs           int     `json:"packet_ms"`
+	HangoverMs         int     `json:"hangover_ms"`
+	EOFTimeoutMs       int     `json:"eof_timeout_ms"`
+	ConcealDecay       float64 `json:"conceal_decay"`
+	JitterMinPkts      int     `json:"jitter_min_packets"`
+	BusyMode           bool    `json:"busy_mode"`
+	TransmitTimeoutSec int     `json:"transmit_timeout"`
 }
 
 type modulesConfig struct {
@@ -123,6 +125,7 @@ type wsServerMessage struct {
 	Info            string `json:"info,omitempty"`
 	PacketMs        int    `json:"packetMs,omitempty"`
 	ProtocolVersion int    `json:"protocolVersion,omitempty"`
+	BusyMode        *bool  `json:"busyMode,omitempty"`
 	Active          *bool  `json:"active,omitempty"`
 }
 
@@ -130,10 +133,11 @@ type client struct {
 	sessionID uint32
 	conn      *websocket.Conn
 
-	mu       sync.RWMutex
-	channel  string
-	udpAddr  *net.UDPAddr
-	repeater bool
+	mu        sync.RWMutex
+	wsWriteMu sync.Mutex
+	channel   string
+	udpAddr   *net.UDPAddr
+	repeater  bool
 }
 
 func (c *client) setChannel(ch string) {
@@ -170,6 +174,18 @@ func (c *client) isRepeaterMode() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.repeater
+}
+
+func (c *client) writeJSON(msg wsServerMessage) error {
+	c.wsWriteMu.Lock()
+	defer c.wsWriteMu.Unlock()
+	return c.conn.WriteJSON(msg)
+}
+
+func (c *client) writeControl(messageType int, data []byte, deadline time.Time) error {
+	c.wsWriteMu.Lock()
+	defer c.wsWriteMu.Unlock()
+	return c.conn.WriteControl(messageType, data, deadline)
 }
 
 type audioPacket struct {
@@ -430,6 +446,16 @@ type channelMixer struct {
 	eofTimeoutDur       time.Duration
 	concealDecay        float64
 	jitterMinPackets    uint16
+	busyMode            bool
+	busyMu              sync.Mutex
+	busySessionID       uint32
+	busyLastPacketAt    time.Time
+	busyExplicitEOF     bool
+	transmitTimeout     time.Duration
+	txMu                sync.Mutex
+	txStartedAt         map[uint32]time.Time
+	txForceStopped      map[uint32]bool
+	txLastStopNoticeAt  map[uint32]time.Time
 }
 
 type repeaterSession struct {
@@ -505,23 +531,123 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 	hangoverMs := maxInt(cfg.Server.HangoverMs, normalizePacketMs(cfg.Server.PacketMs)*2)
 	eofTimeoutMs := maxInt(cfg.Server.EOFTimeoutMs, hangoverMs+normalizePacketMs(cfg.Server.PacketMs))
 	return &channelMixer{
-		name:             name,
-		hub:              hub,
-		input:            make(chan *audioPacket, 256),
-		eof:              make(chan uint32, 64),
-		participants:     make(map[uint32]struct{}),
-		decoders:         make(map[uint32]*opus.Decoder),
-		encoder:          enc,
-		noiseLevelDB:     -30.0,
-		lastSignal:       255.0,
-		modulesCfg:       mcfg,
-		modules:          buildAudioModules(mcfg),
-		repeaterState:    make(map[uint32]*repeaterSession),
-		hangoverDur:      time.Duration(hangoverMs) * time.Millisecond,
-		eofTimeoutDur:    time.Duration(eofTimeoutMs) * time.Millisecond,
-		concealDecay:     cfg.Server.ConcealDecay,
-		jitterMinPackets: uint16(normalizeJitterMinPackets(cfg.Server.JitterMinPkts)),
+		name:               name,
+		hub:                hub,
+		input:              make(chan *audioPacket, 256),
+		eof:                make(chan uint32, 64),
+		participants:       make(map[uint32]struct{}),
+		decoders:           make(map[uint32]*opus.Decoder),
+		encoder:            enc,
+		noiseLevelDB:       -30.0,
+		lastSignal:         255.0,
+		modulesCfg:         mcfg,
+		modules:            buildAudioModules(mcfg),
+		repeaterState:      make(map[uint32]*repeaterSession),
+		hangoverDur:        time.Duration(hangoverMs) * time.Millisecond,
+		eofTimeoutDur:      time.Duration(eofTimeoutMs) * time.Millisecond,
+		concealDecay:       cfg.Server.ConcealDecay,
+		jitterMinPackets:   uint16(normalizeJitterMinPackets(cfg.Server.JitterMinPkts)),
+		busyMode:           cfg.Server.BusyMode,
+		transmitTimeout:    time.Duration(maxInt(cfg.Server.TransmitTimeoutSec, 0)) * time.Second,
+		txStartedAt:        make(map[uint32]time.Time),
+		txForceStopped:     make(map[uint32]bool),
+		txLastStopNoticeAt: make(map[uint32]time.Time),
 	}
+}
+
+func (m *channelMixer) canAcceptTxPacket(sessionID uint32) bool {
+	now := time.Now()
+	m.txMu.Lock()
+	shouldNotify := false
+	accept := true
+	if m.transmitTimeout > 0 {
+		startedAt, started := m.txStartedAt[sessionID]
+		if !started {
+			m.txStartedAt[sessionID] = now
+		} else if m.txForceStopped[sessionID] {
+			shouldNotify = m.shouldNotifyTxStopLocked(sessionID, now)
+			accept = false
+		} else if now.Sub(startedAt) >= m.transmitTimeout {
+			m.txForceStopped[sessionID] = true
+			shouldNotify = m.shouldNotifyTxStopLocked(sessionID, now)
+			accept = false
+		}
+	}
+	m.txMu.Unlock()
+	if shouldNotify {
+		m.notifyTxStop(sessionID)
+	}
+	if !accept {
+		return false
+	}
+	if !m.busyMode {
+		return true
+	}
+	return m.tryAcceptPacket(sessionID)
+}
+
+func (m *channelMixer) shouldNotifyTxStopLocked(sessionID uint32, now time.Time) bool {
+	last := m.txLastStopNoticeAt[sessionID]
+	if !last.IsZero() && now.Sub(last) < time.Second {
+		return false
+	}
+	m.txLastStopNoticeAt[sessionID] = now
+	return true
+}
+
+func (m *channelMixer) notifyTxStop(sessionID uint32) {
+	if c := m.hub.getClient(sessionID); c != nil {
+		_ = c.writeJSON(wsServerMessage{
+			Type: "tx_stop",
+			Info: "transmit_timeout_reached",
+		})
+	}
+}
+
+func (m *channelMixer) tryAcceptPacket(sessionID uint32) bool {
+	if !m.busyMode {
+		return true
+	}
+	now := time.Now()
+	m.busyMu.Lock()
+	defer m.busyMu.Unlock()
+
+	if m.busySessionID == 0 || m.busyWindowExpiredLocked(now) {
+		m.busySessionID = sessionID
+		m.busyLastPacketAt = now
+		m.busyExplicitEOF = false
+		return true
+	}
+	if m.busySessionID == sessionID {
+		m.busyLastPacketAt = now
+		m.busyExplicitEOF = false
+		return true
+	}
+	return false
+}
+
+func (m *channelMixer) markBusyEOF(sessionID uint32) {
+	if !m.busyMode {
+		return
+	}
+	m.busyMu.Lock()
+	defer m.busyMu.Unlock()
+	if m.busySessionID != sessionID {
+		return
+	}
+	m.busyExplicitEOF = true
+	m.busyLastPacketAt = time.Now()
+}
+
+func (m *channelMixer) busyWindowExpiredLocked(now time.Time) bool {
+	if m.busySessionID == 0 {
+		return true
+	}
+	hold := m.hangoverDur
+	if m.busyExplicitEOF {
+		hold = packetDur
+	}
+	return now.Sub(m.busyLastPacketAt) > hold
 }
 
 func buildAudioModules(mcfg modulesConfig) []audioModule {
@@ -609,6 +735,9 @@ func (m *channelMixer) clearRepeaterState(sessionID uint32) {
 }
 
 func (m *channelMixer) push(pkt *audioPacket) {
+	if !m.canAcceptTxPacket(pkt.sessionID) {
+		return
+	}
 	select {
 	case m.input <- pkt:
 	default:
@@ -625,6 +754,12 @@ func (m *channelMixer) push(pkt *audioPacket) {
 }
 
 func (m *channelMixer) markEOF(sessionID uint32) {
+	m.txMu.Lock()
+	delete(m.txStartedAt, sessionID)
+	delete(m.txForceStopped, sessionID)
+	delete(m.txLastStopNoticeAt, sessionID)
+	m.txMu.Unlock()
+	m.markBusyEOF(sessionID)
 	select {
 	case m.eof <- sessionID:
 	default:
@@ -692,16 +827,24 @@ func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState
 	}
 	m.participantsMu.RUnlock()
 
+	m.txMu.Lock()
+	defer m.txMu.Unlock()
 	for sid, st := range states {
 		_, present := participants[sid]
 		if !present {
 			delete(states, sid)
 			delete(eofMarked, sid)
+			delete(m.txStartedAt, sid)
+			delete(m.txForceStopped, sid)
+			delete(m.txLastStopNoticeAt, sid)
 			continue
 		}
 		if now.Sub(st.lastPacketAt) > m.eofTimeoutDur && st.pending == nil {
 			delete(states, sid)
 			delete(eofMarked, sid)
+			delete(m.txStartedAt, sid)
+			delete(m.txForceStopped, sid)
+			delete(m.txLastStopNoticeAt, sid)
 		}
 	}
 }
@@ -1485,13 +1628,15 @@ type server struct {
 func defaultConfig() appConfig {
 	return appConfig{
 		Server: serverConfig{
-			WSAddr:        ":5500",
-			UDPAddr:       ":5505",
-			PacketMs:      defaultPacketMs,
-			HangoverMs:    180,
-			EOFTimeoutMs:  420,
-			ConcealDecay:  0.90,
-			JitterMinPkts: 3,
+			WSAddr:             ":5500",
+			UDPAddr:            ":5505",
+			PacketMs:           defaultPacketMs,
+			HangoverMs:         180,
+			EOFTimeoutMs:       420,
+			ConcealDecay:       0.90,
+			JitterMinPkts:      3,
+			BusyMode:           false,
+			TransmitTimeoutSec: 0,
 		},
 		Modules: modulesConfig{
 			Noise: &noiseConfig{
@@ -1574,6 +1719,9 @@ func validateConfig(cfg appConfig) error {
 	if cfg.Server.JitterMinPkts < 1 || cfg.Server.JitterMinPkts > 12 {
 		return errors.New("server.jitter_min_packets must be in [1..12]")
 	}
+	if cfg.Server.TransmitTimeoutSec < 0 {
+		return errors.New("server.transmit_timeout must be >= 0")
+	}
 	if cfg.Modules.Compressor != nil && cfg.Modules.Compressor.Enabled {
 		if cfg.Modules.Compressor.Ratio <= 0 {
 			return errors.New("modules.compressor.ratio must be > 0")
@@ -1650,15 +1798,16 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	s.hub.addClient(c)
 	defer s.hub.removeClient(c.sessionID)
 
-	_ = conn.WriteJSON(wsServerMessage{
+	_ = c.writeJSON(wsServerMessage{
 		Type:            "welcome",
 		SessionID:       c.sessionID,
 		PacketMs:        normalizePacketMs(s.hub.cfg.Server.PacketMs),
 		ProtocolVersion: protocolVersion,
+		BusyMode:        boolPtr(s.hub.cfg.Server.BusyMode),
 	})
 
 	var initial wsMessage
-	if err := conn.ReadJSON(&initial); err != nil {
+	if err := c.conn.ReadJSON(&initial); err != nil {
 		if isExpectedDisconnectError(err) {
 			log.Printf("ws disconnected before channel bind for %d: %v", c.sessionID, err)
 		} else {
@@ -1670,7 +1819,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	if initialType == "has_activity" {
 		initialChannel := strings.TrimSpace(initial.Channel)
 		active := s.hub.channelHasRecentActivity(initialChannel)
-		_ = conn.WriteJSON(wsServerMessage{
+		_ = c.writeJSON(wsServerMessage{
 			Type:    "has_activity",
 			Channel: initialChannel,
 			Active:  boolPtr(active),
@@ -1678,8 +1827,8 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if initialType != "" && initialType != "join" {
-		_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "first message must bind channel"})
-		_ = conn.WriteControl(
+		_ = c.writeJSON(wsServerMessage{Type: "error", Info: "first message must bind channel"})
+		_ = c.writeControl(
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "missing initial channel bind"),
 			time.Now().Add(time.Second),
@@ -1688,8 +1837,8 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	initialChannel := strings.TrimSpace(initial.Channel)
 	if initialChannel == "" {
-		_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "channel is required in first message"})
-		_ = conn.WriteControl(
+		_ = c.writeJSON(wsServerMessage{Type: "error", Info: "channel is required in first message"})
+		_ = c.writeControl(
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "missing initial channel bind"),
 			time.Now().Add(time.Second),
@@ -1697,11 +1846,11 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.hub.switchChannel(c, initialChannel)
-	_ = conn.WriteJSON(wsServerMessage{Type: "joined", Channel: initialChannel})
+	_ = c.writeJSON(wsServerMessage{Type: "joined", Channel: initialChannel})
 
 	for {
 		var msg wsMessage
-		if err := conn.ReadJSON(&msg); err != nil {
+		if err := c.conn.ReadJSON(&msg); err != nil {
 			if isExpectedDisconnectError(err) {
 				log.Printf("ws disconnected for %d: %v", c.sessionID, err)
 			} else {
@@ -1711,7 +1860,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		switch strings.ToLower(msg.Type) {
 		case "join", "switch_channel":
-			_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "channel switch is disabled, reconnect with new channel"})
+			_ = c.writeJSON(wsServerMessage{Type: "error", Info: "channel switch is disabled, reconnect with new channel"})
 		case "udp_hello":
 			host, _, err := net.SplitHostPort(r.RemoteAddr)
 			if err != nil {
@@ -1723,29 +1872,29 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 					IP:   net.ParseIP(host),
 					Port: port,
 				})
-				_ = conn.WriteJSON(wsServerMessage{Type: "udp_registered", Info: host + ":" + strconv.Itoa(port)})
+				_ = c.writeJSON(wsServerMessage{Type: "udp_registered", Info: host + ":" + strconv.Itoa(port)})
 			}
 		case "ping", "heartbeat":
-			_ = conn.WriteJSON(wsServerMessage{Type: "pong"})
+			_ = c.writeJSON(wsServerMessage{Type: "pong"})
 		case "repeater_mode":
 			enabled := msg.RepeaterEnabled != nil && *msg.RepeaterEnabled
 			c.setRepeaterMode(enabled)
 			if !enabled {
 				s.hub.getOrCreateChannel(c.getChannel()).clearRepeaterState(c.sessionID)
 			}
-			_ = conn.WriteJSON(wsServerMessage{Type: "repeater_mode", Info: strconv.FormatBool(enabled)})
+			_ = c.writeJSON(wsServerMessage{Type: "repeater_mode", Info: strconv.FormatBool(enabled)})
 		case "tx_eof":
 			s.hub.markTxEOF(c.sessionID)
 		case "has_activity":
 			ch := strings.TrimSpace(msg.Channel)
 			active := s.hub.channelHasRecentActivity(ch)
-			_ = conn.WriteJSON(wsServerMessage{
+			_ = c.writeJSON(wsServerMessage{
 				Type:    "has_activity",
 				Channel: ch,
 				Active:  boolPtr(active),
 			})
 		default:
-			_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "unknown message type"})
+			_ = c.writeJSON(wsServerMessage{Type: "error", Info: "unknown message type"})
 		}
 	}
 }
@@ -1807,12 +1956,14 @@ func main() {
 	})
 
 	log.Printf(
-		"relay started ws=%s udp=%s packet_ms=%d protocol_version=%d jitter_min_packets=%d",
+		"relay started ws=%s udp=%s packet_ms=%d protocol_version=%d jitter_min_packets=%d busy_mode=%t transmit_timeout=%ds",
 		cfg.Server.WSAddr,
 		cfg.Server.UDPAddr,
 		normalizePacketMs(cfg.Server.PacketMs),
 		protocolVersion,
 		cfg.Server.JitterMinPkts,
+		cfg.Server.BusyMode,
+		cfg.Server.TransmitTimeoutSec,
 	)
 	if err := http.ListenAndServe(cfg.Server.WSAddr, mux); err != nil {
 		log.Fatalf("ws server error: %v", err)

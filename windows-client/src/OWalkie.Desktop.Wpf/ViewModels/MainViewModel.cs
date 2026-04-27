@@ -28,6 +28,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _channel = string.Empty;
     private string _hardwarePttStatusText = "Hardware PTT: not assigned";
     private ConnectionProfile? _selectedProfile;
+    private bool _busyTransmitBlocked;
 
     public MainViewModel(SettingsService settingsService, RelayClientService relayClientService, AudioEngineService audioEngineService)
     {
@@ -37,7 +38,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _settings = _settingsService.Load();
 
         ConnectCommand = new RelayCommand(ToggleConnection, () => !_isConnecting);
-        StartPttCommand = new RelayCommand(StartPtt, () => IsConnected && !_audioEngineService.IsTransmitting);
+        StartPttCommand = new RelayCommand(StartPtt, () => IsConnected && !_audioEngineService.IsTransmitting && !_busyTransmitBlocked);
         StopPttCommand = new RelayCommand(StopPtt, () => _audioEngineService.IsTransmitting);
         SaveProfileCommand = new RelayCommand(SaveProfile);
         DeleteProfileCommand = new RelayCommand(DeleteSelectedProfile, () => Profiles.Count > 0 && SelectedProfile != null);
@@ -49,6 +50,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _relayClientService.ConnectionStateChanged += OnConnectionStateChanged;
         _relayClientService.StatusMessage += OnStatusMessage;
         _relayClientService.PacketMsChanged += OnPacketMsChanged;
+        _relayClientService.BusyTransmitBlockedChanged += OnBusyTransmitBlockedChanged;
+        _relayClientService.ForceTransmitStopRequested += OnForceTransmitStopRequested;
         _audioEngineService.OutputLevelChanged += OnOutputLevelChanged;
     }
 
@@ -266,6 +269,34 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void OnOutputLevelChanged(object? sender, int levelPercent)
     {
         RunOnUi(() => SignalPercent = levelPercent);
+    }
+
+    private void OnBusyTransmitBlockedChanged(object? sender, bool blocked)
+    {
+        RunOnUi(() =>
+        {
+            _busyTransmitBlocked = blocked;
+            if (blocked && !_audioEngineService.IsTransmitting)
+            {
+                StatusText = "Status: Channel busy";
+            }
+            else if (!blocked && IsConnected && !_audioEngineService.IsTransmitting)
+            {
+                StatusText = "Status: Connected";
+            }
+            StartPttCommand.RaiseCanExecuteChanged();
+        });
+    }
+
+    private void OnForceTransmitStopRequested(object? sender, EventArgs e)
+    {
+        RunOnUi(async () =>
+        {
+            await _audioEngineService.StopTransmitAsync();
+            StatusText = IsConnected ? "Status: Connected" : "Status: Idle";
+            StartPttCommand.RaiseCanExecuteChanged();
+            StopPttCommand.RaiseCanExecuteChanged();
+        });
     }
 
     public bool HandlePreviewKeyDown(Key key, bool isRepeat)

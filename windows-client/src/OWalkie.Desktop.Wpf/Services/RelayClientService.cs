@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -26,6 +27,10 @@ public sealed class RelayClientService
     private int _udpPort;
     private bool _channelBound;
     private bool _requestedRepeaterEnabled;
+    private bool _busyMode;
+    private bool _busyRxActive;
+    private long _busyLastRxTicks;
+    private Task? _busyMonitorTask;
 
     public bool IsConnected { get; private set; }
     public int PacketMs => _packetMs;
@@ -34,6 +39,8 @@ public sealed class RelayClientService
     public event EventHandler<int>? PacketMsChanged;
     public event EventHandler<byte[]>? OpusFrameReceived;
     public event EventHandler<string>? StatusMessage;
+    public event EventHandler<bool>? BusyTransmitBlockedChanged;
+    public event EventHandler? ForceTransmitStopRequested;
 
     public async Task ConnectAsync(ConnectionProfile profile, bool repeaterEnabled = false, CancellationToken cancellationToken = default)
     {
@@ -58,6 +65,9 @@ public sealed class RelayClientService
         _udpPort = profile.UdpPort;
         _channelBound = false;
         _requestedRepeaterEnabled = repeaterEnabled;
+        _busyMode = false;
+        _busyRxActive = false;
+        _busyLastRxTicks = 0;
 
         var wsUri = new UriBuilder(wsSecure ? "wss" : "ws", wsHost, wsPort, "/ws").Uri;
         await _webSocket.ConnectAsync(wsUri, _connectionCts.Token);
@@ -68,6 +78,7 @@ public sealed class RelayClientService
 
         _udpReceiveTask = Task.Run(() => UdpReceiveLoopAsync(_connectionCts.Token), _connectionCts.Token);
         _udpKeepaliveTask = Task.Run(() => UdpKeepaliveLoopAsync(_connectionCts.Token), _connectionCts.Token);
+        _busyMonitorTask = Task.Run(() => BusyMonitorLoopAsync(_connectionCts.Token), _connectionCts.Token);
 
         _wsReceiveTask = Task.Run(() => WsReceiveLoopAsync(_connectionCts.Token), _connectionCts.Token);
     }
@@ -107,6 +118,9 @@ public sealed class RelayClientService
         _wsReceiveTask = null;
         _udpReceiveTask = null;
         _udpKeepaliveTask = null;
+        _busyMonitorTask = null;
+        _busyMode = false;
+        SetBusyRxActive(false);
 
         IsConnected = false;
         Interlocked.Exchange(ref _connected, 0);
@@ -324,6 +338,11 @@ public sealed class RelayClientService
 
                 var opus = new byte[result.Buffer.Length - 9];
                 Buffer.BlockCopy(result.Buffer, 9, opus, 0, opus.Length);
+                if (_busyMode)
+                {
+                    _busyLastRxTicks = Stopwatch.GetTimestamp();
+                    SetBusyRxActive(true);
+                }
                 OpusFrameReceived?.Invoke(this, opus);
             }
         }
@@ -368,6 +387,11 @@ public sealed class RelayClientService
                     _packetMs = packet is 10 or 20 or 40 or 60 ? packet : 20;
                     PacketMsChanged?.Invoke(this, _packetMs);
                 }
+                _busyMode = root.TryGetProperty("busyMode", out var busyNode) && busyNode.ValueKind == JsonValueKind.True;
+                if (!_busyMode)
+                {
+                    SetBusyRxActive(false);
+                }
                 if (!_channelBound && _activeProfile != null)
                 {
                     var selectedChannel = (_activeProfile.Channel ?? string.Empty).Trim();
@@ -392,11 +416,55 @@ public sealed class RelayClientService
                     }
                 }
                 StatusMessage?.Invoke(this, $"Welcome received. sessionId={_sessionId}, packetMs={_packetMs}");
+                return;
+            }
+            if (type == "tx_stop")
+            {
+                StatusMessage?.Invoke(this, "Server requested TX stop (transmit timeout).");
+                ForceTransmitStopRequested?.Invoke(this, EventArgs.Empty);
             }
         }
         catch
         {
             // Ignore malformed server events.
         }
+    }
+
+    private async Task BusyMonitorLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                if (_busyMode && _busyRxActive)
+                {
+                    var elapsed = Stopwatch.GetElapsedTime(_busyLastRxTicks);
+                    var holdMs = Math.Max(_packetMs, 20) * 2;
+                    if (elapsed > TimeSpan.FromMilliseconds(holdMs))
+                    {
+                        SetBusyRxActive(false);
+                    }
+                }
+                else if (!_busyMode && _busyRxActive)
+                {
+                    SetBusyRxActive(false);
+                }
+                await Task.Delay(50, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown.
+        }
+    }
+
+    private void SetBusyRxActive(bool active)
+    {
+        if (_busyRxActive == active)
+        {
+            return;
+        }
+        _busyRxActive = active;
+        BusyTransmitBlockedChanged?.Invoke(this, _busyMode && _busyRxActive);
     }
 }

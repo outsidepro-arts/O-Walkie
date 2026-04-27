@@ -6,7 +6,9 @@
     "hangover_ms": 180,
     "eof_timeout_ms": 420,
     "conceal_decay": 0.90,
-    "jitter_min_packets": 3
+    "jitter_min_packets": 3,
+    "busy_mode": false,
+    "transmit_timeout": 0
   },
   "modules": {
     "noise": {

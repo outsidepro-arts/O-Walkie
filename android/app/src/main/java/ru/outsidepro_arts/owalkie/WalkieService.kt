@@ -70,6 +70,9 @@ class WalkieService : Service() {
         const val EXTRA_WS_CONNECTING = "wsConnecting"
         const val EXTRA_UDP_READY = "udpReady"
         const val EXTRA_PROTOCOL_ERROR = "protocolError"
+        const val EXTRA_BUSY_MODE = "busyMode"
+        const val EXTRA_BUSY_RX_ACTIVE = "busyRxActive"
+        const val EXTRA_TX_ACTIVE = "txActive"
         const val EXTRA_SERVER_HOST = "serverHost"
         const val EXTRA_WS_PORT = "wsPort"
         const val EXTRA_UDP_PORT = "udpPort"
@@ -126,6 +129,8 @@ class WalkieService : Service() {
     private val seq = AtomicInteger(0)
     private val encodeLock = Any()
     private val rxResumeAtNs = AtomicLong(0L)
+    private val busyRxActive = AtomicBoolean(false)
+    private val busyLastRxAtNs = AtomicLong(0L)
 
     @Volatile
     private var serverHost: String = DEFAULT_WS_HOST
@@ -153,6 +158,8 @@ class WalkieService : Service() {
     private var channelBound: Boolean = false
     @Volatile
     private var protocolError: Boolean = false
+    @Volatile
+    private var busyMode: Boolean = false
 
     private lateinit var codec: OpusCodec
     private lateinit var audioManager: AudioManager
@@ -385,6 +392,8 @@ class WalkieService : Service() {
                 packetMs = DEFAULT_PACKET_MS
                 channelBound = false
                 protocolError = false
+                busyMode = false
+                busyRxActive.set(false)
                 broadcastStatus(currentSignalByte())
             }
 
@@ -396,6 +405,8 @@ class WalkieService : Service() {
                 wsOpening.set(false)
                 wsConnected.set(false)
                 channelBound = false
+                busyMode = false
+                busyRxActive.set(false)
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get()) {
                     scheduleWsReconnect()
@@ -408,6 +419,8 @@ class WalkieService : Service() {
                 wsOpening.set(false)
                 wsConnected.set(false)
                 channelBound = false
+                busyMode = false
+                busyRxActive.set(false)
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get()) {
                     scheduleWsReconnect()
@@ -434,6 +447,8 @@ class WalkieService : Service() {
                     }
                     sessionId.set(obj.optLong("sessionId", 0L))
                     packetMs = normalizePacketMs(obj.optInt("packetMs", DEFAULT_PACKET_MS))
+                    busyMode = obj.optBoolean("busyMode", false)
+                    busyRxActive.set(false)
                     if (!channelBound) {
                         val selectedChannel = channel.trim()
                         if (selectedChannel.isNotBlank()) {
@@ -445,8 +460,31 @@ class WalkieService : Service() {
                     }
                 }
                 "pong" -> Unit
+                "tx_stop" -> {
+                    forceStopTransmissionFromServer()
+                }
             }
         }
+    }
+
+    private fun forceStopTransmissionFromServer() {
+        // Server-side transmit timeout requested immediate TX stop.
+        val wasTx = transmitting.getAndSet(false)
+        if (wasTx) {
+            txJob?.cancel()
+            txJob = null
+            sendTxEofCommand()
+        }
+        if (rogerStreaming.getAndSet(false)) {
+            rogerJob?.cancel()
+            rogerJob = null
+        }
+        if (callStreaming.getAndSet(false)) {
+            callSignalJob?.cancel()
+            callSignalJob = null
+        }
+        scheduleRxResumeHoldoff()
+        broadcastStatus(currentSignalByte())
     }
 
     private fun ensureUdpSocket() {
@@ -503,6 +541,12 @@ class WalkieService : Service() {
                         continue
                     }
                     if (packet.length <= 9) continue
+                    if (busyMode) {
+                        busyLastRxAtNs.set(System.nanoTime())
+                        if (!busyRxActive.getAndSet(true)) {
+                            broadcastStatus(currentSignalByte())
+                        }
+                    }
                     if (transmitting.get() || rogerStreaming.get() || callStreaming.get() || isRxHoldoffActive()) {
                         // During local TX we intentionally drop inbound audio
                         // to avoid hearing server stream in parallel with speaking.
@@ -876,10 +920,21 @@ class WalkieService : Service() {
                     scheduleWsReconnect()
                 }
                 val signal = currentSignalByte()
+                updateBusyRxState()
                 broadcastStatus(signal)
                 delay(1000L)
             }
         }
+    }
+
+    private fun updateBusyRxState() {
+        if (!busyMode) {
+            busyRxActive.set(false)
+            return
+        }
+        val holdNs = (currentPacketMs().coerceAtLeast(DEFAULT_PACKET_MS) * 2L) * 1_000_000L
+        val active = (System.nanoTime() - busyLastRxAtNs.get()) <= holdNs
+        busyRxActive.set(active)
     }
 
     private fun broadcastStatus(signal: Int) {
@@ -891,6 +946,9 @@ class WalkieService : Service() {
             putExtra(EXTRA_WS_CONNECTING, desiredConnection.get() && !wsConnected.get())
             putExtra(EXTRA_UDP_READY, udpSocket?.isClosed == false)
             putExtra(EXTRA_PROTOCOL_ERROR, protocolError)
+            putExtra(EXTRA_BUSY_MODE, busyMode)
+            putExtra(EXTRA_BUSY_RX_ACTIVE, busyRxActive.get())
+            putExtra(EXTRA_TX_ACTIVE, transmitting.get() || rogerStreaming.get() || callStreaming.get())
         }
         sendBroadcast(statusIntent)
     }
@@ -1068,6 +1126,9 @@ class WalkieService : Service() {
         wsOpening.set(false)
         channelBound = false
         protocolError = false
+        busyMode = false
+        busyRxActive.set(false)
+        busyLastRxAtNs.set(0L)
         wsReconnectJob?.cancel()
         wsReconnectJob = null
         runCatching { webSocket?.close(1000, "cancel requested") }
