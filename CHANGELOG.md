@@ -15,6 +15,25 @@ This project follows a lightweight Keep a Changelog style and Semantic Versionin
 ### Fixed
 - _(add bug fixes here)_
 
+## [v0.1.3] - 2026-04-27
+
+### Added
+- Server-side busy mode (`server.busy_mode`) with protocol announcement in `welcome.busyMode`.
+- Server-side transmit timeout (`server.transmit_timeout`) with `tx_stop` signaling and hard UDP drop fallback.
+- Android RX volume control slider above PTT with persistence and accessibility announcements.
+- Android Bluetooth headset mode toggle (`Use Bluetooth headset`) with service-side route policy controls.
+
+### Changed
+- Default relay config tuned for stability:
+  - `jitter_min_packets` increased to `4`
+  - `transmit_timeout` default set to `60` seconds
+  - noise squelch burst window adjusted (`10..20 ms`).
+- Android hardware PTT binding now stores both `keyCode` and `scanCode` for better HID/custom key compatibility.
+- Android communication audio profile now releases when TX-related activity is idle, except when headset policy intentionally holds route.
+
+### Fixed
+- Busy headset mode now auto-falls back to normal behavior when no active Bluetooth communication device is available.
+
 ## [v0.1.2] - 2026-04-26
 
 ### Changed
