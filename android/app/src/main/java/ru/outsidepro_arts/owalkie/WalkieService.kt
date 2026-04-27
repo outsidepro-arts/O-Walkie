@@ -25,6 +25,7 @@ import androidx.core.app.NotificationCompat
 import ru.outsidepro_arts.owalkie.audio.OpusCodec
 import ru.outsidepro_arts.owalkie.audio.OpusCodecFactory
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
+import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
 import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
 import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 import ru.outsidepro_arts.owalkie.model.RxVolumeStore
@@ -67,6 +68,8 @@ class WalkieService : Service() {
         const val ACTION_TOGGLE_CONNECTION = "ru.outsidepro_arts.owalkie.action.TOGGLE_CONNECTION"
         const val ACTION_STATUS = "ru.outsidepro_arts.owalkie.action.STATUS"
         const val ACTION_SET_RX_VOLUME = "ru.outsidepro_arts.owalkie.action.SET_RX_VOLUME"
+        const val ACTION_SET_BLUETOOTH_HEADSET_MODE = "ru.outsidepro_arts.owalkie.action.SET_BLUETOOTH_HEADSET_MODE"
+        const val ACTION_SET_ACTIVITY_FOCUS = "ru.outsidepro_arts.owalkie.action.SET_ACTIVITY_FOCUS"
         const val EXTRA_SIGNAL = "signal"
         const val EXTRA_WS_CONNECTED = "wsConnected"
         const val EXTRA_WS_CONNECTING = "wsConnecting"
@@ -81,6 +84,8 @@ class WalkieService : Service() {
         const val EXTRA_CHANNEL = "channel"
         const val EXTRA_REPEATER_ENABLED = "repeaterEnabled"
         const val EXTRA_RX_VOLUME_PERCENT = "rxVolumePercent"
+        const val EXTRA_USE_BLUETOOTH_HEADSET = "useBluetoothHeadset"
+        const val EXTRA_ACTIVITY_FOCUSED = "activityFocused"
 
         private const val NOTIFICATION_CHANNEL_ID = "owalkie_stream"
         private const val NOTIFICATION_ID = 101
@@ -169,12 +174,17 @@ class WalkieService : Service() {
     private lateinit var rogerPatternStore: RogerPatternStore
     private lateinit var callingPatternStore: CallingPatternStore
     private lateinit var microphoneConfigStore: MicrophoneConfigStore
+    private lateinit var bluetoothHeadsetRouteStore: BluetoothHeadsetRouteStore
     private lateinit var rxVolumeStore: RxVolumeStore
     private var localPttReleasePcm: ShortArray = shortArrayOf()
     @Volatile
     private var voiceProfileActive: Boolean = false
     @Volatile
     private var rxVolumePercent: Int = RxVolumeStore.DEFAULT_RX_VOLUME_PERCENT
+    @Volatile
+    private var useBluetoothHeadset: Boolean = false
+    @Volatile
+    private var activityFocused: Boolean = true
 
     override fun onCreate() {
         super.onCreate()
@@ -183,7 +193,9 @@ class WalkieService : Service() {
         rogerPatternStore = RogerPatternStore(this)
         callingPatternStore = CallingPatternStore(this)
         microphoneConfigStore = MicrophoneConfigStore(this)
+        bluetoothHeadsetRouteStore = BluetoothHeadsetRouteStore(this)
         rxVolumeStore = RxVolumeStore(this)
+        useBluetoothHeadset = bluetoothHeadsetRouteStore.isEnabled()
         rxVolumePercent = rxVolumeStore.getPercent()
         val pttReleaseWav = loadWavPcmFromRaw(R.raw.selfttdown_002)
         localPttReleasePcm = resampleLinear(pttReleaseWav.samples, pttReleaseWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
@@ -213,6 +225,12 @@ class WalkieService : Service() {
             ACTION_CALL_SIGNAL -> onCallSignal()
             ACTION_SET_RX_VOLUME -> updateRxVolumePercent(
                 intent.getIntExtra(EXTRA_RX_VOLUME_PERCENT, rxVolumePercent),
+            )
+            ACTION_SET_BLUETOOTH_HEADSET_MODE -> updateBluetoothHeadsetMode(
+                intent.getBooleanExtra(EXTRA_USE_BLUETOOTH_HEADSET, useBluetoothHeadset),
+            )
+            ACTION_SET_ACTIVITY_FOCUS -> updateActivityFocus(
+                intent.getBooleanExtra(EXTRA_ACTIVITY_FOCUSED, activityFocused),
             )
             ACTION_EXIT_APP -> exitApp()
         }
@@ -261,6 +279,7 @@ class WalkieService : Service() {
 
     private fun startCore(intent: Intent?) {
         val changed = applyConfigFromIntent(intent)
+        enforceAudioRoutePolicy()
         startForegroundInternal()
         ensureUdpSocket()
         wsReconnectJob?.cancel()
@@ -586,7 +605,7 @@ class WalkieService : Service() {
         localCallPlaybackJob = null
         if (transmitting.getAndSet(true)) return
         val micOption = microphoneConfigStore.getSelectedOption()
-        ensureVoiceAudioProfile(micOption.preferBluetooth)
+        ensureVoiceAudioProfile(useBluetoothHeadset || micOption.preferBluetooth)
         if (txJob?.isActive == true) return
         txJob = serviceScope.launch(Dispatchers.Default) {
             runCaptureLoop()
@@ -619,7 +638,7 @@ class WalkieService : Service() {
     private fun onCallSignal() {
         if (transmitting.get() || rogerStreaming.get()) return
         if (callStreaming.getAndSet(true)) return
-        ensureVoiceAudioProfile()
+        ensureVoiceAudioProfile(useBluetoothHeadset)
         localCallPlaybackJob?.cancel()
         callSignalJob = serviceScope.launch(Dispatchers.Default) {
             try {
@@ -945,6 +964,9 @@ class WalkieService : Service() {
                 if (desiredConnection.get() && !wsConnected.get() && webSocket == null) {
                     scheduleWsReconnect()
                 }
+                // Re-evaluate headset availability continuously so checked mode
+                // auto-applies when headset connects and auto-falls back when disconnected.
+                enforceAudioRoutePolicy()
                 val signal = currentSignalByte()
                 updateBusyRxState()
                 broadcastStatus(signal)
@@ -1051,6 +1073,7 @@ class WalkieService : Service() {
         val newChannel = intent.getStringExtra(EXTRA_CHANNEL)?.trim().orEmpty()
         val newRepeaterEnabled = intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, repeaterEnabled)
         val incomingRxVolume = intent.getIntExtra(EXTRA_RX_VOLUME_PERCENT, rxVolumePercent)
+        val incomingUseBluetoothHeadset = intent.getBooleanExtra(EXTRA_USE_BLUETOOTH_HEADSET, useBluetoothHeadset)
         val parsedEndpoint = parseServerEndpoint(newHost, newWsPort)
 
         if (parsedEndpoint == null || newUdpPort !in 1..65535 || newChannel.isBlank()) {
@@ -1059,6 +1082,8 @@ class WalkieService : Service() {
 
         synchronized(configLock) {
             updateRxVolumePercent(incomingRxVolume)
+            useBluetoothHeadset = incomingUseBluetoothHeadset
+            bluetoothHeadsetRouteStore.setEnabled(incomingUseBluetoothHeadset)
             val changed = serverHost != parsedEndpoint.host ||
                 wsPort != parsedEndpoint.wsPort ||
                 udpPort != newUdpPort ||
@@ -1085,6 +1110,37 @@ class WalkieService : Service() {
         val safe = percent.coerceIn(RxVolumeStore.MIN_RX_VOLUME_PERCENT, RxVolumeStore.MAX_RX_VOLUME_PERCENT)
         rxVolumePercent = safe
         rxVolumeStore.setPercent(safe)
+    }
+
+    private fun updateBluetoothHeadsetMode(enabled: Boolean) {
+        useBluetoothHeadset = enabled
+        bluetoothHeadsetRouteStore.setEnabled(enabled)
+        enforceAudioRoutePolicy()
+    }
+
+    private fun updateActivityFocus(focused: Boolean) {
+        activityFocused = focused
+        enforceAudioRoutePolicy()
+    }
+
+    private fun shouldHoldBluetoothCommunicationProfile(): Boolean {
+        return useBluetoothHeadset &&
+            desiredConnection.get() &&
+            activityFocused &&
+            isBluetoothHeadsetAvailable()
+    }
+
+    private fun enforceAudioRoutePolicy() {
+        if (shouldHoldBluetoothCommunicationProfile()) {
+            ensureVoiceAudioProfile(preferBluetoothMic = true)
+            return
+        }
+        if (!activityFocused && useBluetoothHeadset) {
+            // Explicitly release communication profile when app goes background.
+            restoreMediaAudioProfile()
+            return
+        }
+        releaseVoiceProfileIfIdle()
     }
 
     private data class ParsedServerEndpoint(
@@ -1209,9 +1265,10 @@ class WalkieService : Service() {
 
     private fun ensureVoiceAudioProfile(preferBluetoothMic: Boolean = false) {
         runCatching {
-            audioManager.mode = if (preferBluetoothMic) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
+            val bluetoothRouteAllowed = preferBluetoothMic && isBluetoothHeadsetAvailable()
+            audioManager.mode = if (bluetoothRouteAllowed) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
             audioManager.isSpeakerphoneOn = false
-            if (preferBluetoothMic) {
+            if (bluetoothRouteAllowed) {
                 enableBluetoothInputRoute()
             } else {
                 disableBluetoothInputRoute()
@@ -1230,6 +1287,9 @@ class WalkieService : Service() {
     }
 
     private fun releaseVoiceProfileIfIdle() {
+        if (shouldHoldBluetoothCommunicationProfile()) {
+            return
+        }
         if (!transmitting.get() && !rogerStreaming.get() && !callStreaming.get()) {
             restoreMediaAudioProfile()
         }
@@ -1252,6 +1312,18 @@ class WalkieService : Service() {
             runCatching {
                 audioManager.startBluetoothSco()
                 audioManager.isBluetoothScoOn = true
+            }
+        }
+    }
+
+    private fun isBluetoothHeadsetAvailable(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            audioManager.availableCommunicationDevices.any {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
+            }
+        } else {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
             }
         }
     }

@@ -40,6 +40,7 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import ru.outsidepro_arts.owalkie.databinding.ActivityMainBinding
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
+import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
 import ru.outsidepro_arts.owalkie.model.RxVolumeStore
 import ru.outsidepro_arts.owalkie.model.ServerProfile
 import ru.outsidepro_arts.owalkie.model.ServerStore
@@ -54,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var serverStore: ServerStore
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
+    private lateinit var bluetoothHeadsetRouteStore: BluetoothHeadsetRouteStore
     private lateinit var rxVolumeStore: RxVolumeStore
     private lateinit var uiSignalPlayer: UiSignalPlayer
     private var transmitting = false
@@ -115,6 +117,7 @@ class MainActivity : ComponentActivity() {
         setContentView(binding.root)
         serverStore = ServerStore(this)
         pttHardwareKeyStore = PttHardwareKeyStore(this)
+        bluetoothHeadsetRouteStore = BluetoothHeadsetRouteStore(this)
         rxVolumeStore = RxVolumeStore(this)
         uiSignalPlayer = UiSignalPlayer(this)
 
@@ -180,6 +183,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        sendActivityFocusState(true)
         updateBatteryOptimizationUi()
         if (!receiverRegistered) {
             ContextCompat.registerReceiver(
@@ -199,6 +203,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        sendActivityFocusState(false)
         if (receiverRegistered) {
             unregisterReceiver(statusReceiver)
             receiverRegistered = false
@@ -328,6 +333,7 @@ class MainActivity : ComponentActivity() {
             putExtra(WalkieService.EXTRA_CHANNEL, profile.channel)
             putExtra(WalkieService.EXTRA_REPEATER_ENABLED, repeaterModeEnabled)
             putExtra(WalkieService.EXTRA_RX_VOLUME_PERCENT, rxVolumeStore.getPercent())
+            putExtra(WalkieService.EXTRA_USE_BLUETOOTH_HEADSET, bluetoothHeadsetRouteStore.isEnabled())
         }
         ContextCompat.startForegroundService(this, intent)
     }
@@ -341,6 +347,14 @@ class MainActivity : ComponentActivity() {
         } else {
             startService(intent)
         }
+    }
+
+    private fun sendActivityFocusState(focused: Boolean) {
+        val intent = Intent(this, WalkieService::class.java).apply {
+            action = WalkieService.ACTION_SET_ACTIVITY_FOCUS
+            putExtra(WalkieService.EXTRA_ACTIVITY_FOCUSED, focused)
+        }
+        startService(intent)
     }
 
     private fun sendRepeaterModeAction(enabled: Boolean) {

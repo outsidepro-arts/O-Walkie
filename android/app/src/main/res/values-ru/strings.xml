@@ -34,7 +34,7 @@
     <string name="microphone_option_voice_communication">Голосовая связь</string>
     <string name="microphone_option_unprocessed">Без обработки (Unprocessed)</string>
     <string name="microphone_option_voice_performance">Сценический режим (Voice performance)</string>
-    <string name="microphone_option_bluetooth_headset">Микрофон Bluetooth-гарнитуры</string>
+    <string name="use_bluetooth_headset_label">Использовать Bluetooth-гарнитуру</string>
     <string name="hardware_ptt_label">Аппаратная кнопка для PTT</string>
     <string name="hardware_ptt_status_unassigned">Не задана</string>
     <string name="hardware_ptt_status_assigned_format">Назначена: %1$s</string>

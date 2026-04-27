@@ -7,11 +7,13 @@ import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
+import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
 import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
 import ru.outsidepro_arts.owalkie.model.RogerPattern
@@ -21,10 +23,12 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var rogerPatternStore: RogerPatternStore
     private lateinit var callingPatternStore: CallingPatternStore
     private lateinit var microphoneConfigStore: MicrophoneConfigStore
+    private lateinit var bluetoothHeadsetRouteStore: BluetoothHeadsetRouteStore
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
     private lateinit var hardwarePttRow: View
     private lateinit var hardwarePttStatusText: TextView
     private lateinit var microphoneSpinner: Spinner
+    private lateinit var useBluetoothHeadsetCheckBox: CheckBox
     private lateinit var rogerSpinner: Spinner
     private lateinit var callingSpinner: Spinner
     private lateinit var customRogerButton: Button
@@ -49,11 +53,13 @@ class SettingsActivity : ComponentActivity() {
         rogerPatternStore = RogerPatternStore(this)
         callingPatternStore = CallingPatternStore(this)
         microphoneConfigStore = MicrophoneConfigStore(this)
+        bluetoothHeadsetRouteStore = BluetoothHeadsetRouteStore(this)
         pttHardwareKeyStore = PttHardwareKeyStore(this)
 
         hardwarePttRow = findViewById(R.id.hardwarePttRow)
         hardwarePttStatusText = findViewById(R.id.hardwarePttStatusText)
         microphoneSpinner = findViewById(R.id.microphoneSpinner)
+        useBluetoothHeadsetCheckBox = findViewById(R.id.useBluetoothHeadsetCheckBox)
         rogerSpinner = findViewById(R.id.rogerPatternSpinner)
         callingSpinner = findViewById(R.id.callingPatternSpinner)
         customRogerButton = findViewById(R.id.customRogerButton)
@@ -86,6 +92,10 @@ class SettingsActivity : ComponentActivity() {
         hardwarePttRow.setOnClickListener {
             showHardwarePttAssignmentDialog()
         }
+        useBluetoothHeadsetCheckBox.setOnCheckedChangeListener { _, isChecked ->
+            bluetoothHeadsetRouteStore.setEnabled(isChecked)
+            sendBluetoothHeadsetModeToService(isChecked)
+        }
 
         refreshPatterns()
     }
@@ -98,8 +108,19 @@ class SettingsActivity : ComponentActivity() {
     private fun refreshPatterns() {
         refreshHardwarePttStatus()
         refreshMicrophoneOptions()
+        refreshBluetoothHeadsetToggle()
         refreshRogerPatterns()
         refreshCallingPatterns()
+    }
+
+    private fun refreshBluetoothHeadsetToggle() {
+        val enabled = bluetoothHeadsetRouteStore.isEnabled()
+        useBluetoothHeadsetCheckBox.setOnCheckedChangeListener(null)
+        useBluetoothHeadsetCheckBox.isChecked = enabled
+        useBluetoothHeadsetCheckBox.setOnCheckedChangeListener { _, isChecked ->
+            bluetoothHeadsetRouteStore.setEnabled(isChecked)
+            sendBluetoothHeadsetModeToService(isChecked)
+        }
     }
 
     private fun refreshHardwarePttStatus() {
@@ -191,6 +212,14 @@ class SettingsActivity : ComponentActivity() {
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
+    }
+
+    private fun sendBluetoothHeadsetModeToService(enabled: Boolean) {
+        val intent = android.content.Intent(this, WalkieService::class.java).apply {
+            action = WalkieService.ACTION_SET_BLUETOOTH_HEADSET_MODE
+            putExtra(WalkieService.EXTRA_USE_BLUETOOTH_HEADSET, enabled)
+        }
+        startService(intent)
     }
 
     private fun refreshRogerPatterns() {

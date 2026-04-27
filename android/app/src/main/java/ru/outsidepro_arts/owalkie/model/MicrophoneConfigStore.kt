@@ -64,12 +64,6 @@ class MicrophoneConfigStore(private val context: Context) {
             )
         }
 
-        options += MicrophoneOption(
-            id = ID_BLUETOOTH_HEADSET,
-            title = context.getString(R.string.microphone_option_bluetooth_headset),
-            audioSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            preferBluetooth = true,
-        )
         return options
     }
 
@@ -96,6 +90,5 @@ class MicrophoneConfigStore(private val context: Context) {
         const val ID_VOICE_COMMUNICATION = "voice_communication"
         const val ID_UNPROCESSED = "unprocessed"
         const val ID_VOICE_PERFORMANCE = "voice_performance"
-        const val ID_BLUETOOTH_HEADSET = "bluetooth_headset"
     }
 }

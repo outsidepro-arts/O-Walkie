@@ -34,7 +34,7 @@
     <string name="microphone_option_voice_communication">Voice communication</string>
     <string name="microphone_option_unprocessed">Unprocessed</string>
     <string name="microphone_option_voice_performance">Voice performance</string>
-    <string name="microphone_option_bluetooth_headset">Bluetooth headset mic</string>
+    <string name="use_bluetooth_headset_label">Use Bluetooth headset</string>
     <string name="hardware_ptt_label">Hardware button for PTT</string>
     <string name="hardware_ptt_status_unassigned">Not assigned</string>
     <string name="hardware_ptt_status_assigned_format">Assigned: %1$s</string>
