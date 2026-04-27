@@ -21,8 +21,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hraban/opus"
-	"github.com/pion/interceptor/pkg/jitterbuffer"
-	"github.com/pion/rtp"
 )
 
 const (
@@ -229,11 +227,19 @@ type relayHub struct {
 
 type speakerStreamState struct {
 	pending      *audioPacket
-	jitter       *jitterbuffer.JitterBuffer
+	jitter       *speakerJitterBuffer
 	lastPacketAt time.Time
 	lastSignal   float64
 	lastPCM      []int16
 	missCount    int
+}
+
+type speakerJitterBuffer struct {
+	minStart int
+	maxKeep  int
+	packets  map[uint32]*audioPacket
+	head     uint32
+	started  bool
 }
 
 func newRelayHub(udpConn *net.UDPConn, cfg appConfig) *relayHub {
@@ -671,43 +677,141 @@ func buildAudioModules(mcfg modulesConfig) []audioModule {
 }
 
 func newSpeakerStreamState(jitterMinPackets uint16) *speakerStreamState {
+	minStart := int(jitterMinPackets)
+	if minStart < 1 {
+		minStart = 1
+	}
+	maxKeep := minStart * 8
+	if maxKeep < 32 {
+		maxKeep = 32
+	}
 	return &speakerStreamState{
-		jitter: jitterbuffer.New(jitterbuffer.WithMinimumPacketCount(jitterMinPackets)),
+		jitter: &speakerJitterBuffer{
+			minStart: minStart,
+			maxKeep:  maxKeep,
+			packets:  make(map[uint32]*audioPacket),
+		},
 	}
 }
 
-func buildJitterRTPPacket(pkt *audioPacket) *rtp.Packet {
-	payload := make([]byte, 1+len(pkt.opus))
-	payload[0] = pkt.signalStrength
-	copy(payload[1:], pkt.opus)
-	return &rtp.Packet{
-		Header: rtp.Header{
-			Version:        2,
-			PayloadType:    111,
-			SequenceNumber: uint16(pkt.seq & 0xFFFF),
-			Timestamp:      uint32(pkt.seq) * uint32(packetSamples),
-		},
-		Payload: payload,
+func (b *speakerJitterBuffer) reset() {
+	b.packets = make(map[uint32]*audioPacket)
+	b.head = 0
+	b.started = false
+}
+
+func (b *speakerJitterBuffer) minSeq() (uint32, bool) {
+	if len(b.packets) == 0 {
+		return 0, false
 	}
+	var min uint32
+	first := true
+	for seq := range b.packets {
+		if first || seq < min {
+			min = seq
+			first = false
+		}
+	}
+	return min, true
+}
+
+func (b *speakerJitterBuffer) maxSeq() (uint32, bool) {
+	if len(b.packets) == 0 {
+		return 0, false
+	}
+	var max uint32
+	first := true
+	for seq := range b.packets {
+		if first || seq > max {
+			max = seq
+			first = false
+		}
+	}
+	return max, true
+}
+
+func (b *speakerJitterBuffer) push(pkt *audioPacket) {
+	if b == nil || pkt == nil {
+		return
+	}
+	if _, exists := b.packets[pkt.seq]; exists {
+		return
+	}
+	b.packets[pkt.seq] = pkt
+	if !b.started && len(b.packets) >= b.minStart {
+		if minSeq, ok := b.minSeq(); ok {
+			b.head = minSeq
+			b.started = true
+		}
+	}
+	for len(b.packets) > b.maxKeep {
+		minSeq, ok := b.minSeq()
+		if !ok {
+			break
+		}
+		delete(b.packets, minSeq)
+		if b.started && minSeq >= b.head {
+			b.head = minSeq + 1
+		}
+	}
+}
+
+func (b *speakerJitterBuffer) pop() *audioPacket {
+	if b == nil {
+		return nil
+	}
+	if len(b.packets) == 0 {
+		b.started = false
+		return nil
+	}
+	if !b.started {
+		if len(b.packets) < b.minStart {
+			return nil
+		}
+		minSeq, ok := b.minSeq()
+		if !ok {
+			return nil
+		}
+		b.head = minSeq
+		b.started = true
+	}
+	if pkt, ok := b.packets[b.head]; ok {
+		delete(b.packets, b.head)
+		b.head++
+		return pkt
+	}
+	// Missing head: skip forward if queue has moved on.
+	minSeq, minOk := b.minSeq()
+	maxSeq, maxOk := b.maxSeq()
+	if !minOk || !maxOk {
+		b.started = false
+		return nil
+	}
+	if b.head < minSeq {
+		b.head = minSeq
+		if pkt, ok := b.packets[b.head]; ok {
+			delete(b.packets, b.head)
+			b.head++
+			return pkt
+		}
+	}
+	if b.head+uint32(b.maxKeep/2) < maxSeq {
+		b.head = minSeq
+		if pkt, ok := b.packets[b.head]; ok {
+			delete(b.packets, b.head)
+			b.head++
+			return pkt
+		}
+	}
+	return nil
 }
 
 func (m *channelMixer) pullNextPacket(sessionID uint32, st *speakerStreamState) *audioPacket {
-	rtpPkt, err := st.jitter.Pop()
-	if err != nil {
-		if errors.Is(err, jitterbuffer.ErrPopWhileBuffering) || errors.Is(err, jitterbuffer.ErrBufferUnderrun) {
-			return nil
-		}
+	pkt := st.jitter.pop()
+	if pkt == nil {
 		return nil
 	}
-	if len(rtpPkt.Payload) == 0 {
-		return nil
-	}
-	return &audioPacket{
-		sessionID:      sessionID,
-		seq:            uint32(rtpPkt.SequenceNumber),
-		signalStrength: rtpPkt.Payload[0],
-		opus:           append([]byte(nil), rtpPkt.Payload[1:]...),
-	}
+	return pkt
 }
 
 func (m *channelMixer) addParticipant(sessionID uint32) {
@@ -790,7 +894,7 @@ func (m *channelMixer) run() {
 				states[pkt.sessionID] = st
 			}
 			prevLastPacketAt := st.lastPacketAt
-			st.jitter.Push(buildJitterRTPPacket(pkt))
+			st.jitter.push(pkt)
 			st.lastPacketAt = time.Now()
 			st.lastSignal = float64(pkt.signalStrength)
 			if eofMarked[pkt.sessionID] {
@@ -805,13 +909,9 @@ func (m *channelMixer) run() {
 			}
 		case sid := <-m.eof:
 			eofMarked[sid] = true
-			if st := states[sid]; st != nil {
-				// Explicit EOF should cut ongoing concealment immediately.
-				st.pending = nil
-				if st.jitter != nil {
-					st.jitter.Clear(false)
-				}
-			}
+			// Keep already buffered packets for a short natural drain, but disable
+			// concealment via eofMarked in mix logic. This avoids truncating the tail
+			// of TX when tx_eof arrives slightly before the last UDP frames.
 		case <-ticker.C:
 			m.mixAndBroadcast(states, eofMarked)
 			m.cleanupStreamStates(states, eofMarked, time.Now())
@@ -1808,9 +1908,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var initial wsMessage
 	if err := c.conn.ReadJSON(&initial); err != nil {
-		if isExpectedDisconnectError(err) {
-			log.Printf("ws disconnected before channel bind for %d: %v", c.sessionID, err)
-		} else {
+		if !isExpectedDisconnectError(err) {
 			log.Printf("ws initial bind read failed for %d: %v", c.sessionID, err)
 		}
 		return
@@ -1851,9 +1949,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	for {
 		var msg wsMessage
 		if err := c.conn.ReadJSON(&msg); err != nil {
-			if isExpectedDisconnectError(err) {
-				log.Printf("ws disconnected for %d: %v", c.sessionID, err)
-			} else {
+			if !isExpectedDisconnectError(err) {
 				log.Printf("ws read failed for %d: %v", c.sessionID, err)
 			}
 			return
