@@ -226,14 +226,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void SaveCurrentConnectionProfile()
     {
+        var normalizedHost = Host.Trim();
+        var normalizedChannel = string.IsNullOrWhiteSpace(Channel) ? "global" : Channel.Trim();
+        var normalizedWsPort = WsPort is > 0 and <= 65535 ? WsPort : 5500;
+        var normalizedUdpPort = UdpPort is > 0 and <= 65535 ? UdpPort : 5505;
         var updated = new ConnectionProfile
         {
             Name = string.IsNullOrWhiteSpace(ProfileName) ? "Profile" : ProfileName.Trim(),
-            Host = Host,
-            WsPort = WsPort,
-            UdpPort = UdpPort,
-            Channel = Channel,
+            Host = normalizedHost,
+            WsPort = normalizedWsPort,
+            UdpPort = normalizedUdpPort,
+            Channel = normalizedChannel,
         };
+        Host = normalizedHost;
+        WsPort = normalizedWsPort;
+        UdpPort = normalizedUdpPort;
+        Channel = normalizedChannel;
         _settings.ActiveProfile = updated.Clone();
         _settings.Profiles = Profiles.Select(p => p.Clone()).ToList();
         _settingsService.Save(_settings);

@@ -26,13 +26,14 @@ import (
 )
 
 const (
-	sampleRate      = 8000
-	audioChannels   = 1
-	maxUDPDatagram  = 1500
-	opusMaxFrameLen = 512
-	configFilePath  = "config.json"
-	defaultPacketMs = 20
-	protocolVersion = 1
+	sampleRate         = 8000
+	audioChannels      = 1
+	maxUDPDatagram     = 1500
+	opusMaxFrameLen    = 512
+	configFilePath     = "config.json"
+	defaultPacketMs    = 20
+	protocolVersion    = 1
+	scanActivityWindow = 10 * time.Second
 )
 
 var (
@@ -116,6 +117,7 @@ type wsServerMessage struct {
 	Info            string `json:"info,omitempty"`
 	PacketMs        int    `json:"packetMs,omitempty"`
 	ProtocolVersion int    `json:"protocolVersion,omitempty"`
+	Active          *bool  `json:"active,omitempty"`
 }
 
 type client struct {
@@ -195,6 +197,10 @@ type relayHub struct {
 	channelMu sync.RWMutex
 	channels  map[string]*channelMixer
 
+	activityMu      sync.RWMutex
+	channelActivity map[string]time.Time
+	activityWindow  time.Duration
+
 	udpConn *net.UDPConn
 	cfg     appConfig
 }
@@ -210,11 +216,38 @@ type speakerStreamState struct {
 
 func newRelayHub(udpConn *net.UDPConn, cfg appConfig) *relayHub {
 	return &relayHub{
-		clients:  make(map[uint32]*client),
-		channels: make(map[string]*channelMixer),
-		udpConn:  udpConn,
-		cfg:      cfg,
+		clients:         make(map[uint32]*client),
+		channels:        make(map[string]*channelMixer),
+		channelActivity: make(map[string]time.Time),
+		activityWindow:  scanActivityWindow,
+		udpConn:         udpConn,
+		cfg:             cfg,
 	}
+}
+
+func (h *relayHub) markChannelActivity(channel string) {
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		return
+	}
+	h.activityMu.Lock()
+	h.channelActivity[channel] = time.Now()
+	h.activityMu.Unlock()
+}
+
+func (h *relayHub) channelHasRecentActivity(channel string) bool {
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		return false
+	}
+	h.activityMu.RLock()
+	lastAt, ok := h.channelActivity[channel]
+	window := h.activityWindow
+	h.activityMu.RUnlock()
+	if !ok {
+		return false
+	}
+	return time.Since(lastAt) <= window
 }
 
 func (h *relayHub) addClient(c *client) {
@@ -315,6 +348,7 @@ func (h *relayHub) routePacket(pkt *audioPacket) {
 	if channelName == "" {
 		return
 	}
+	h.markChannelActivity(channelName)
 	h.getOrCreateChannel(channelName).push(pkt)
 }
 
@@ -1592,6 +1626,16 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	initialType := strings.ToLower(strings.TrimSpace(initial.Type))
+	if initialType == "has_activity" {
+		initialChannel := strings.TrimSpace(initial.Channel)
+		active := s.hub.channelHasRecentActivity(initialChannel)
+		_ = conn.WriteJSON(wsServerMessage{
+			Type:    "has_activity",
+			Channel: initialChannel,
+			Active:  boolPtr(active),
+		})
+		return
+	}
 	if initialType != "" && initialType != "join" {
 		_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "first message must bind channel"})
 		_ = conn.WriteControl(
@@ -1651,10 +1695,22 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 			_ = conn.WriteJSON(wsServerMessage{Type: "repeater_mode", Info: strconv.FormatBool(enabled)})
 		case "tx_eof":
 			s.hub.markTxEOF(c.sessionID)
+		case "has_activity":
+			ch := strings.TrimSpace(msg.Channel)
+			active := s.hub.channelHasRecentActivity(ch)
+			_ = conn.WriteJSON(wsServerMessage{
+				Type:    "has_activity",
+				Channel: ch,
+				Active:  boolPtr(active),
+			})
 		default:
 			_ = conn.WriteJSON(wsServerMessage{Type: "error", Info: "unknown message type"})
 		}
 	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func isExpectedDisconnectError(err error) bool {

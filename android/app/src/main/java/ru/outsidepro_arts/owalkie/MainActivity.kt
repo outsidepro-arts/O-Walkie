@@ -20,6 +20,23 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import org.json.JSONObject
 import ru.outsidepro_arts.owalkie.databinding.ActivityMainBinding
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
 import ru.outsidepro_arts.owalkie.model.ServerProfile
@@ -28,6 +45,8 @@ import ru.outsidepro_arts.owalkie.model.ServerStore
 class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_OPEN_BATTERY_SETTINGS = "ru.outsidepro_arts.owalkie.action.OPEN_BATTERY_SETTINGS"
+        private const val SCAN_INTERVAL_MS = 10_000L
+        private const val SCAN_QUERY_TIMEOUT_MS = 4_000L
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -45,6 +64,9 @@ class MainActivity : ComponentActivity() {
     private var lastSignalPercent = 0
     private var protocolIncompatible = false
     private var userRequestedConnection = false
+    private var scanJob: Job? = null
+    private val scanScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val scanClient = OkHttpClient.Builder().retryOnConnectionFailure(true).build()
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -132,6 +154,9 @@ class MainActivity : ComponentActivity() {
         binding.compactConnectButton.setOnClickListener {
             handleConnectAction()
         }
+        binding.scanButton.setOnClickListener {
+            toggleScanning()
+        }
         binding.moreButton.setOnClickListener {
             showMoreMenu()
         }
@@ -140,6 +165,7 @@ class MainActivity : ComponentActivity() {
         updateConnectButtonLabel()
         updatePttAvailability()
         updateStatusChips()
+        updateScanButtonLabel()
     }
 
     override fun onStart() {
@@ -171,6 +197,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopScanning(announce = false)
+        scanScope.cancel()
+        scanClient.dispatcher.executorService.shutdown()
         if (::uiSignalPlayer.isInitialized) {
             uiSignalPlayer.release()
         }
@@ -532,6 +561,190 @@ class MainActivity : ComponentActivity() {
         binding.compactConnectButton.text = label
     }
 
+    private fun toggleScanning() {
+        if (scanJob?.isActive == true) {
+            stopScanning(announce = true)
+        } else {
+            startScanning()
+        }
+    }
+
+    private fun startScanning() {
+        if (scanJob?.isActive == true) return
+        if (servers.isEmpty()) return
+        scanJob = scanScope.launch {
+            binding.root.announceForAccessibility(getString(R.string.scan_started_announcement))
+            updateScanButtonLabel()
+            while (isActive) {
+                if (servers.isEmpty()) {
+                    delay(SCAN_INTERVAL_MS)
+                    continue
+                }
+                val snapshot = servers.toList()
+                var foundIndex = -1
+                var foundProfile: ServerProfile? = null
+                for (profile in snapshot) {
+                    val active = queryServerActivity(profile)
+                    if (active) {
+                        foundProfile = profile
+                        foundIndex = servers.indexOfFirst { it.name == profile.name && it.host == profile.host && it.channel == profile.channel }
+                        if (foundIndex < 0) {
+                            foundIndex = servers.indexOf(profile)
+                        }
+                        break
+                    }
+                }
+                if (foundProfile != null) {
+                    val idx = foundIndex.coerceAtLeast(0).coerceAtMost((servers.size - 1).coerceAtLeast(0))
+                    if (servers.isNotEmpty()) {
+                        applySelectedServerIndex(idx, announce = true)
+                    }
+                    val profile = foundProfile
+                    binding.root.announceForAccessibility(getString(R.string.scan_found_server_announcement, profile.name))
+                    connectToProfileFromScan(profile)
+                    stopScanning(announce = false)
+                    break
+                }
+                delay(SCAN_INTERVAL_MS)
+            }
+            updateScanButtonLabel()
+        }
+    }
+
+    private fun stopScanning(announce: Boolean) {
+        scanJob?.cancel()
+        scanJob = null
+        updateScanButtonLabel()
+        if (announce) {
+            binding.root.announceForAccessibility(getString(R.string.scan_stopped_announcement))
+        }
+    }
+
+    private fun updateScanButtonLabel() {
+        val labelRes = if (scanJob?.isActive == true) R.string.scan_stop else R.string.scan_start
+        binding.scanButton.text = getString(labelRes)
+        updateStatusChips()
+    }
+
+    private suspend fun connectToProfileFromScan(profile: ServerProfile) {
+        userRequestedConnection = true
+        sendServiceAction(WalkieService.ACTION_CANCEL_CONNECT)
+        wsConnecting = false
+        wsConnected = false
+        protocolIncompatible = false
+        updateConnectButtonLabel()
+        updatePttAvailability()
+        updateStatusChips()
+        delay(150L)
+        startWalkieService(profile)
+        wsConnecting = true
+        wsConnected = false
+        protocolIncompatible = false
+        updateConnectButtonLabel()
+        updatePttAvailability()
+        updateStatusChips()
+    }
+
+    private suspend fun queryServerActivity(profile: ServerProfile): Boolean = withContext(Dispatchers.IO) {
+        val wsUrl = buildWsUrlForScan(profile) ?: return@withContext false
+        val deferred = CompletableDeferred<Boolean>()
+        val request = runCatching { Request.Builder().url(wsUrl).build() }.getOrNull() ?: return@withContext false
+        val ws = scanClient.newWebSocket(request, object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val parseResult = runCatching {
+                    val obj = JSONObject(text)
+                    when (obj.optString("type")) {
+                        "welcome" -> {
+                            webSocket.send("""{"type":"has_activity","channel":"${profile.channel}"}""")
+                            null
+                        }
+                        "has_activity" -> obj.optBoolean("active", false)
+                        else -> null
+                    }
+                }.getOrNull()
+                if (parseResult != null) {
+                    if (!deferred.isCompleted) deferred.complete(parseResult)
+                    webSocket.close(1000, "done")
+                }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (!deferred.isCompleted) deferred.complete(false)
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (!deferred.isCompleted) deferred.complete(false)
+            }
+        })
+        val result = withTimeoutOrNull(SCAN_QUERY_TIMEOUT_MS) { deferred.await() } ?: false
+        runCatching { ws.cancel() }
+        return@withContext result
+    }
+
+    private fun buildWsUrlForScan(profile: ServerProfile): String? {
+        val endpoint = parseServerEndpointForScan(profile.host, profile.wsPort) ?: return null
+        val hostPart = if (endpoint.host.contains(':') && !endpoint.host.startsWith("[")) {
+            "[${endpoint.host}]"
+        } else {
+            endpoint.host
+        }
+        val scheme = if (endpoint.secure) "wss" else "ws"
+        return "$scheme://$hostPart:${endpoint.port}/ws"
+    }
+
+    private data class ParsedScanEndpoint(
+        val host: String,
+        val port: Int,
+        val secure: Boolean,
+    )
+
+    private fun parseServerEndpointForScan(rawHost: String, fallbackWsPort: Int): ParsedScanEndpoint? {
+        var value = rawHost.trim()
+        if (value.isBlank()) return null
+        var secure = false
+        val lowered = value.lowercase()
+        when {
+            lowered.startsWith("wss://") -> {
+                secure = true
+                value = value.substring(6)
+            }
+            lowered.startsWith("https://") -> {
+                secure = true
+                value = value.substring(8)
+            }
+            lowered.startsWith("ws://") -> value = value.substring(5)
+            lowered.startsWith("http://") -> value = value.substring(7)
+        }
+        value = value.substringBefore('/').substringBefore('?').substringBefore('#').trim()
+        value = value.substringAfterLast('@')
+        if (value.isBlank()) return null
+        var port = fallbackWsPort
+        var host = value
+        if (host.startsWith("[")) {
+            val closing = host.indexOf(']')
+            if (closing <= 0) return null
+            val ipv6 = host.substring(1, closing).trim()
+            val rest = host.substring(closing + 1)
+            if (rest.startsWith(":")) {
+                val parsedPort = rest.substring(1).toIntOrNull() ?: return null
+                port = parsedPort
+            }
+            host = ipv6
+        } else {
+            val colonCount = host.count { it == ':' }
+            if (colonCount == 1) {
+                val idx = host.lastIndexOf(':')
+                val maybePort = host.substring(idx + 1).toIntOrNull()
+                if (maybePort != null) {
+                    port = maybePort
+                    host = host.substring(0, idx)
+                }
+            }
+        }
+        if (host.isBlank() || port !in 1..65535) return null
+        return ParsedScanEndpoint(host = host, port = port, secure = secure)
+    }
+
     private fun updatePttAvailability() {
         val enabled = wsConnected
         binding.pttButton.isEnabled = enabled
@@ -549,6 +762,7 @@ class MainActivity : ComponentActivity() {
         val connectionState = when {
             protocolIncompatible -> getString(R.string.connection_state_protocol_incompatible)
             transmitting -> getString(R.string.connection_state_transmitting)
+            scanJob?.isActive == true -> getString(R.string.connection_state_scanning)
             wsConnecting -> getString(R.string.connection_state_connecting)
             wsConnected && udpReady -> getString(R.string.connection_state_connected)
             wsConnected -> getString(R.string.connection_state_partial)
@@ -633,5 +847,6 @@ class MainActivity : ComponentActivity() {
         binding.udpPortInput.setText("")
         binding.channelInput.setText("")
     }
+
 }
 

@@ -80,10 +80,16 @@
     <string name="connection_state_disconnected">Отключен</string>
     <string name="connection_state_protocol_incompatible">Несовместимая версия протокола</string>
     <string name="connection_state_connecting">Подключение...</string>
+    <string name="connection_state_scanning">Сканирование...</string>
     <string name="connection_state_transmitting">Передача</string>
     <string name="saved_server_announcement">Сервер сохранен</string>
     <string name="deleted_server_announcement">Сервер удален</string>
     <string name="connected_server_announcement">Подключение к выбранному серверу</string>
+    <string name="scan_start">Сканирование</string>
+    <string name="scan_stop">Остановить сканирование</string>
+    <string name="scan_started_announcement">Сканирование запущено</string>
+    <string name="scan_stopped_announcement">Сканирование остановлено</string>
+    <string name="scan_found_server_announcement">Обнаружена активность на %1$s, выполняется подключение</string>
     <string name="validation_server_name">Введите название сервера</string>
     <string name="validation_server_host">Введите хост сервера</string>
     <string name="validation_channel">Введите канал</string>

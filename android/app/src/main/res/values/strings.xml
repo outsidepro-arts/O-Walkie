@@ -80,10 +80,16 @@
     <string name="connection_state_disconnected">Disconnected</string>
     <string name="connection_state_protocol_incompatible">Protocol incompatible</string>
     <string name="connection_state_connecting">Connecting...</string>
+    <string name="connection_state_scanning">Scanning...</string>
     <string name="connection_state_transmitting">Transmitting</string>
     <string name="saved_server_announcement">Server saved</string>
     <string name="deleted_server_announcement">Server deleted</string>
     <string name="connected_server_announcement">Connecting to selected server</string>
+    <string name="scan_start">Scan</string>
+    <string name="scan_stop">Stop scan</string>
+    <string name="scan_started_announcement">Scanning started</string>
+    <string name="scan_stopped_announcement">Scanning stopped</string>
+    <string name="scan_found_server_announcement">Activity found on %1$s, connecting</string>
     <string name="validation_server_name">Enter server name</string>
     <string name="validation_server_host">Enter server host</string>
     <string name="validation_channel">Enter channel</string>

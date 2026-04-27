@@ -18,7 +18,7 @@ public sealed class RelayClientService
     private Task? _udpReceiveTask;
     private Task? _udpKeepaliveTask;
     private ConnectionProfile? _activeProfile;
-    private int _sessionId;
+    private uint _sessionId;
     private int _packetMs = 20;
     private int _seq;
     private int _connected;
@@ -123,7 +123,7 @@ public sealed class RelayClientService
 
         var seq = Interlocked.Increment(ref _seq);
         var payload = new byte[9 + opusBytes.Length];
-        BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(0, 4), _sessionId);
+        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(0, 4), _sessionId);
         BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(4, 4), seq);
         payload[8] = signalStrength;
         opusBytes.CopyTo(payload.AsSpan(9));
@@ -140,7 +140,7 @@ public sealed class RelayClientService
         }
 
         var payload = new byte[9];
-        BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(0, 4), _sessionId);
+        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(0, 4), _sessionId);
         BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(4, 4), 0);
         payload[8] = 255;
         cancellationToken.ThrowIfCancellationRequested();
@@ -359,7 +359,7 @@ public sealed class RelayClientService
                     await DisconnectAsync(CancellationToken.None);
                     return;
                 }
-                if (root.TryGetProperty("sessionId", out var sessionNode) && sessionNode.TryGetInt32(out var sid))
+                if (root.TryGetProperty("sessionId", out var sessionNode) && sessionNode.TryGetUInt32(out var sid))
                 {
                     _sessionId = sid;
                 }
