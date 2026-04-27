@@ -17,6 +17,10 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 - `server.eof_timeout_ms` hard timeout for implicit EOF if no packets arrive
 - `server.conceal_decay` frame-to-frame attenuation for concealment replay during hangover (`0..1`)
 - `server.jitter_min_packets` minimum packets to accumulate before server-side jitter playout (`1..12`, recommended `2..4`)
+- each module block in `modules.*` is optional:
+  - if the block is missing, module is disabled
+  - if the block exists, `enabled: true|false` controls activation
+- `modules.noise.signal_dependent` controls whether noise level follows signal strength (`true`) or stays fixed at `min_noise_db` (`false`)
 - `modules.noise.*` white-noise + squelch behavior
 - `modules.click.click_db` click level at transmission start/end
 - `modules.click.glitch_interval_max_ms` random in-TX click interval ceiling (`0` disables)

@@ -57,14 +57,16 @@ type serverConfig struct {
 }
 
 type modulesConfig struct {
-	Noise      noiseConfig      `json:"noise"`
-	Click      clickConfig      `json:"click"`
-	Filter     filterConfig     `json:"filter"`
-	Compressor compressorConfig `json:"compressor"`
-	Distortion distortionConfig `json:"distortion"`
+	Noise      *noiseConfig      `json:"noise,omitempty"`
+	Click      *clickConfig      `json:"click,omitempty"`
+	Filter     *filterConfig     `json:"filter,omitempty"`
+	Compressor *compressorConfig `json:"compressor,omitempty"`
+	Distortion *distortionConfig `json:"distortion,omitempty"`
 }
 
 type noiseConfig struct {
+	Enabled            bool    `json:"enabled"`
+	SignalDependent    bool    `json:"signal_dependent"`
 	MinNoiseDB         float64 `json:"min_noise_db"`
 	MaxNoiseDB         float64 `json:"max_noise_db"`
 	NoiseGain          float64 `json:"noise_gain"`
@@ -77,6 +79,7 @@ type noiseConfig struct {
 }
 
 type compressorConfig struct {
+	Enabled     bool    `json:"enabled"`
 	ThresholdDB float64 `json:"threshold_db"`
 	Ratio       float64 `json:"ratio"`
 	AttackMs    float64 `json:"attack_ms"`
@@ -85,6 +88,7 @@ type compressorConfig struct {
 }
 
 type clickConfig struct {
+	Enabled             bool    `json:"enabled"`
 	ClickDB             float64 `json:"click_db"`
 	GlitchIntervalMaxMs int     `json:"glitch_interval_max_ms"`
 	GlitchFreqMinHz     float64 `json:"glitch_freq_min_hz"`
@@ -94,13 +98,15 @@ type clickConfig struct {
 }
 
 type filterConfig struct {
+	Enabled   bool    `json:"enabled"`
 	LowCutHz  float64 `json:"low_cut_hz"`
 	HighCutHz float64 `json:"high_cut_hz"`
 }
 
 type distortionConfig struct {
-	Drive float64 `json:"drive"`
-	Mix   float64 `json:"mix"`
+	Enabled bool    `json:"enabled"`
+	Drive   float64 `json:"drive"`
+	Mix     float64 `json:"mix"`
 }
 
 type wsMessage struct {
@@ -441,15 +447,13 @@ type audioProcessor struct {
 }
 
 func newAudioProcessor(mcfg modulesConfig) *audioProcessor {
+	noiseFloor := -30.0
+	if mcfg.Noise != nil {
+		noiseFloor = mcfg.Noise.MinNoiseDB
+	}
 	return &audioProcessor{
-		modules: []audioModule{
-			newWhiteNoiseSquelchModule(packetDur, mcfg.Noise),
-			newClickModule(packetDur, mcfg.Click),
-			newBandPassModule(sampleRate, mcfg.Filter),
-			newCompressorModule(sampleRate, mcfg.Compressor),
-			newDistortionModule(mcfg.Distortion),
-		},
-		noiseLevelDB: mcfg.Noise.MinNoiseDB,
+		modules:      buildAudioModules(mcfg),
+		noiseLevelDB: noiseFloor,
 		lastSignal:   255.0,
 	}
 }
@@ -501,29 +505,43 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 	hangoverMs := maxInt(cfg.Server.HangoverMs, normalizePacketMs(cfg.Server.PacketMs)*2)
 	eofTimeoutMs := maxInt(cfg.Server.EOFTimeoutMs, hangoverMs+normalizePacketMs(cfg.Server.PacketMs))
 	return &channelMixer{
-		name:         name,
-		hub:          hub,
-		input:        make(chan *audioPacket, 256),
-		eof:          make(chan uint32, 64),
-		participants: make(map[uint32]struct{}),
-		decoders:     make(map[uint32]*opus.Decoder),
-		encoder:      enc,
-		noiseLevelDB: -30.0,
-		lastSignal:   255.0,
-		modulesCfg:   mcfg,
-		modules: []audioModule{
-			newWhiteNoiseSquelchModule(packetDur, mcfg.Noise),
-			newClickModule(packetDur, mcfg.Click),
-			newBandPassModule(sampleRate, mcfg.Filter),
-			newCompressorModule(sampleRate, mcfg.Compressor),
-			newDistortionModule(mcfg.Distortion),
-		},
+		name:             name,
+		hub:              hub,
+		input:            make(chan *audioPacket, 256),
+		eof:              make(chan uint32, 64),
+		participants:     make(map[uint32]struct{}),
+		decoders:         make(map[uint32]*opus.Decoder),
+		encoder:          enc,
+		noiseLevelDB:     -30.0,
+		lastSignal:       255.0,
+		modulesCfg:       mcfg,
+		modules:          buildAudioModules(mcfg),
 		repeaterState:    make(map[uint32]*repeaterSession),
 		hangoverDur:      time.Duration(hangoverMs) * time.Millisecond,
 		eofTimeoutDur:    time.Duration(eofTimeoutMs) * time.Millisecond,
 		concealDecay:     cfg.Server.ConcealDecay,
 		jitterMinPackets: uint16(normalizeJitterMinPackets(cfg.Server.JitterMinPkts)),
 	}
+}
+
+func buildAudioModules(mcfg modulesConfig) []audioModule {
+	mods := make([]audioModule, 0, 5)
+	if mcfg.Noise != nil && mcfg.Noise.Enabled {
+		mods = append(mods, newWhiteNoiseSquelchModule(packetDur, *mcfg.Noise))
+	}
+	if mcfg.Click != nil && mcfg.Click.Enabled {
+		mods = append(mods, newClickModule(packetDur, *mcfg.Click))
+	}
+	if mcfg.Filter != nil && mcfg.Filter.Enabled {
+		mods = append(mods, newBandPassModule(sampleRate, *mcfg.Filter))
+	}
+	if mcfg.Compressor != nil && mcfg.Compressor.Enabled {
+		mods = append(mods, newCompressorModule(sampleRate, *mcfg.Compressor))
+	}
+	if mcfg.Distortion != nil && mcfg.Distortion.Enabled {
+		mods = append(mods, newDistortionModule(*mcfg.Distortion))
+	}
+	return mods
 }
 
 func newSpeakerStreamState(jitterMinPackets uint16) *speakerStreamState {
@@ -843,7 +861,11 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	} else if len(activeSpeakers) == 0 && m.lastSingleSpeaker != 0 {
 		// During post-TX tail frames, avoid feeding a sender its own ending burst.
 		packetMs := int(packetDur / time.Millisecond)
-		tailGrace := time.Duration(maxInt(m.modulesCfg.Noise.TailMaxMs, packetMs*2)) * time.Millisecond
+		tailMaxMs := packetMs * 2
+		if m.modulesCfg.Noise != nil && m.modulesCfg.Noise.Enabled {
+			tailMaxMs = maxInt(m.modulesCfg.Noise.TailMaxMs, packetMs*2)
+		}
+		tailGrace := time.Duration(tailMaxMs) * time.Millisecond
 		if now.Sub(m.lastSingleSpeakerAt) <= tailGrace {
 			exclude = m.lastSingleSpeaker
 		}
@@ -1118,7 +1140,10 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 	}
 	m.lastActive = true
 
-	noiseDB := mapSignalByteToNoiseDB(ctx.AvgSignalByte, m.cfg)
+	noiseDB := m.cfg.MinNoiseDB
+	if m.cfg.SignalDependent {
+		noiseDB = mapSignalByteToNoiseDB(ctx.AvgSignalByte, m.cfg)
+	}
 	ctx.NoiseLevelDB = noiseDB
 	noiseAmplitude := m.cfg.NoiseGain * dbToLinear(noiseDB)
 
@@ -1469,7 +1494,9 @@ func defaultConfig() appConfig {
 			JitterMinPkts: 3,
 		},
 		Modules: modulesConfig{
-			Noise: noiseConfig{
+			Noise: &noiseConfig{
+				Enabled:            true,
+				SignalDependent:    true,
 				MinNoiseDB:         -20.0,
 				MaxNoiseDB:         -3.0,
 				NoiseGain:          1200.0,
@@ -1480,7 +1507,8 @@ func defaultConfig() appConfig {
 				TailMinMs:          15,
 				TailMaxMs:          60,
 			},
-			Click: clickConfig{
+			Click: &clickConfig{
+				Enabled:             true,
 				ClickDB:             -8.0,
 				GlitchIntervalMaxMs: 0,
 				GlitchFreqMinHz:     120.0,
@@ -1488,20 +1516,23 @@ func defaultConfig() appConfig {
 				GlitchLevelMinDB:    -14.0,
 				GlitchLevelMaxDB:    -6.0,
 			},
-			Filter: filterConfig{
+			Filter: &filterConfig{
+				Enabled:   true,
 				LowCutHz:  300.0,
 				HighCutHz: 3000.0,
 			},
-			Compressor: compressorConfig{
+			Compressor: &compressorConfig{
+				Enabled:     true,
 				ThresholdDB: -18.0,
 				Ratio:       3.2,
 				AttackMs:    5.0,
 				ReleaseMs:   80.0,
 				MakeupDB:    4.0,
 			},
-			Distortion: distortionConfig{
-				Drive: 1.35,
-				Mix:   0.28,
+			Distortion: &distortionConfig{
+				Enabled: true,
+				Drive:   1.35,
+				Mix:     0.28,
 			},
 		},
 	}
@@ -1543,48 +1574,58 @@ func validateConfig(cfg appConfig) error {
 	if cfg.Server.JitterMinPkts < 1 || cfg.Server.JitterMinPkts > 12 {
 		return errors.New("server.jitter_min_packets must be in [1..12]")
 	}
-	if cfg.Modules.Compressor.Ratio <= 0 {
-		return errors.New("modules.compressor.ratio must be > 0")
+	if cfg.Modules.Compressor != nil && cfg.Modules.Compressor.Enabled {
+		if cfg.Modules.Compressor.Ratio <= 0 {
+			return errors.New("modules.compressor.ratio must be > 0")
+		}
 	}
-	if cfg.Modules.Noise.NoiseGain <= 0 {
-		return errors.New("modules.noise.noise_gain must be > 0")
+	if cfg.Modules.Noise != nil && cfg.Modules.Noise.Enabled {
+		if cfg.Modules.Noise.NoiseGain <= 0 {
+			return errors.New("modules.noise.noise_gain must be > 0")
+		}
+		if cfg.Modules.Noise.SquelchMinMs <= 0 || cfg.Modules.Noise.SquelchMaxMs < cfg.Modules.Noise.SquelchMinMs {
+			return errors.New("modules.noise squelch range is invalid")
+		}
+		if cfg.Modules.Noise.TailMinMs <= 0 || cfg.Modules.Noise.TailMaxMs < cfg.Modules.Noise.TailMinMs {
+			return errors.New("modules.noise tail range is invalid")
+		}
 	}
-	if math.IsNaN(cfg.Modules.Click.ClickDB) || math.IsInf(cfg.Modules.Click.ClickDB, 0) {
-		return errors.New("modules.click.click_db must be a finite number")
+	if cfg.Modules.Click != nil && cfg.Modules.Click.Enabled {
+		if math.IsNaN(cfg.Modules.Click.ClickDB) || math.IsInf(cfg.Modules.Click.ClickDB, 0) {
+			return errors.New("modules.click.click_db must be a finite number")
+		}
+		if cfg.Modules.Click.GlitchIntervalMaxMs < 0 {
+			return errors.New("modules.click.glitch_interval_max_ms must be >= 0")
+		}
+		if math.IsNaN(cfg.Modules.Click.GlitchFreqMinHz) || math.IsInf(cfg.Modules.Click.GlitchFreqMinHz, 0) ||
+			math.IsNaN(cfg.Modules.Click.GlitchFreqMaxHz) || math.IsInf(cfg.Modules.Click.GlitchFreqMaxHz, 0) {
+			return errors.New("modules.click glitch_freq range must be finite")
+		}
+		if cfg.Modules.Click.GlitchFreqMinHz <= 0 || cfg.Modules.Click.GlitchFreqMaxHz < cfg.Modules.Click.GlitchFreqMinHz {
+			return errors.New("modules.click glitch_freq range is invalid")
+		}
+		if math.IsNaN(cfg.Modules.Click.GlitchLevelMinDB) || math.IsInf(cfg.Modules.Click.GlitchLevelMinDB, 0) ||
+			math.IsNaN(cfg.Modules.Click.GlitchLevelMaxDB) || math.IsInf(cfg.Modules.Click.GlitchLevelMaxDB, 0) {
+			return errors.New("modules.click glitch_level range must be finite")
+		}
+		if cfg.Modules.Click.GlitchLevelMaxDB < cfg.Modules.Click.GlitchLevelMinDB {
+			return errors.New("modules.click glitch_level range is invalid")
+		}
 	}
-	if cfg.Modules.Click.GlitchIntervalMaxMs < 0 {
-		return errors.New("modules.click.glitch_interval_max_ms must be >= 0")
+	if cfg.Modules.Distortion != nil && cfg.Modules.Distortion.Enabled {
+		if cfg.Modules.Distortion.Mix < 0 || cfg.Modules.Distortion.Mix > 1 {
+			return errors.New("modules.distortion.mix must be in [0..1]")
+		}
 	}
-	if math.IsNaN(cfg.Modules.Click.GlitchFreqMinHz) || math.IsInf(cfg.Modules.Click.GlitchFreqMinHz, 0) ||
-		math.IsNaN(cfg.Modules.Click.GlitchFreqMaxHz) || math.IsInf(cfg.Modules.Click.GlitchFreqMaxHz, 0) {
-		return errors.New("modules.click glitch_freq range must be finite")
-	}
-	if cfg.Modules.Click.GlitchFreqMinHz <= 0 || cfg.Modules.Click.GlitchFreqMaxHz < cfg.Modules.Click.GlitchFreqMinHz {
-		return errors.New("modules.click glitch_freq range is invalid")
-	}
-	if math.IsNaN(cfg.Modules.Click.GlitchLevelMinDB) || math.IsInf(cfg.Modules.Click.GlitchLevelMinDB, 0) ||
-		math.IsNaN(cfg.Modules.Click.GlitchLevelMaxDB) || math.IsInf(cfg.Modules.Click.GlitchLevelMaxDB, 0) {
-		return errors.New("modules.click glitch_level range must be finite")
-	}
-	if cfg.Modules.Click.GlitchLevelMaxDB < cfg.Modules.Click.GlitchLevelMinDB {
-		return errors.New("modules.click glitch_level range is invalid")
-	}
-	if cfg.Modules.Distortion.Mix < 0 || cfg.Modules.Distortion.Mix > 1 {
-		return errors.New("modules.distortion.mix must be in [0..1]")
-	}
-	if math.IsNaN(cfg.Modules.Filter.LowCutHz) || math.IsInf(cfg.Modules.Filter.LowCutHz, 0) ||
-		math.IsNaN(cfg.Modules.Filter.HighCutHz) || math.IsInf(cfg.Modules.Filter.HighCutHz, 0) {
-		return errors.New("modules.filter cutoff range must be finite")
-	}
-	nyquist := float64(sampleRate) / 2.0
-	if cfg.Modules.Filter.LowCutHz <= 0 || cfg.Modules.Filter.HighCutHz <= cfg.Modules.Filter.LowCutHz || cfg.Modules.Filter.HighCutHz >= nyquist {
-		return errors.New("modules.filter cutoff range is invalid")
-	}
-	if cfg.Modules.Noise.SquelchMinMs <= 0 || cfg.Modules.Noise.SquelchMaxMs < cfg.Modules.Noise.SquelchMinMs {
-		return errors.New("modules.noise squelch range is invalid")
-	}
-	if cfg.Modules.Noise.TailMinMs <= 0 || cfg.Modules.Noise.TailMaxMs < cfg.Modules.Noise.TailMinMs {
-		return errors.New("modules.noise tail range is invalid")
+	if cfg.Modules.Filter != nil && cfg.Modules.Filter.Enabled {
+		if math.IsNaN(cfg.Modules.Filter.LowCutHz) || math.IsInf(cfg.Modules.Filter.LowCutHz, 0) ||
+			math.IsNaN(cfg.Modules.Filter.HighCutHz) || math.IsInf(cfg.Modules.Filter.HighCutHz, 0) {
+			return errors.New("modules.filter cutoff range must be finite")
+		}
+		nyquist := float64(sampleRate) / 2.0
+		if cfg.Modules.Filter.LowCutHz <= 0 || cfg.Modules.Filter.HighCutHz <= cfg.Modules.Filter.LowCutHz || cfg.Modules.Filter.HighCutHz >= nyquist {
+			return errors.New("modules.filter cutoff range is invalid")
+		}
 	}
 	return nil
 }
