@@ -40,6 +40,7 @@
     <string name="hardware_ptt_status_assigned_format">Назначена: %1$s</string>
     <string name="hardware_ptt_dialog_title">Назначение аппаратной кнопки</string>
     <string name="hardware_ptt_dialog_waiting">Нажмите аппаратную кнопку</string>
+    <string name="hardware_ptt_unknown_key">Неизвестная кнопка</string>
     <string name="common_ok">Ок</string>
     <string name="common_reset">Сбросить</string>
     <string name="play_signal_button">Проиграть</string>

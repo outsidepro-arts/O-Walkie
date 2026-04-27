@@ -103,32 +103,32 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun refreshHardwarePttStatus() {
-        val keyCode = pttHardwareKeyStore.getAssignedKeyCode()
-        hardwarePttStatusText.text = if (keyCode == KeyEvent.KEYCODE_UNKNOWN) {
+        val binding = pttHardwareKeyStore.getBinding()
+        hardwarePttStatusText.text = if (!binding.isAssigned()) {
             getString(R.string.hardware_ptt_status_unassigned)
         } else {
-            getString(R.string.hardware_ptt_status_assigned_format, keyCodeToDisplayName(keyCode))
+            getString(R.string.hardware_ptt_status_assigned_format, bindingToDisplayName(binding))
         }
     }
 
     private fun showHardwarePttAssignmentDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_ptt_hardware_key, null)
         val valueText = dialogView.findViewById<TextView>(R.id.pttKeyDialogValueText)
-        var pendingKeyCode = pttHardwareKeyStore.getAssignedKeyCode()
-        valueText.text = if (pendingKeyCode == KeyEvent.KEYCODE_UNKNOWN) {
+        var pendingBinding = pttHardwareKeyStore.getBinding()
+        valueText.text = if (!pendingBinding.isAssigned()) {
             getString(R.string.hardware_ptt_dialog_waiting)
         } else {
-            keyCodeToDisplayName(pendingKeyCode)
+            bindingToDisplayName(pendingBinding)
         }
         AlertDialog.Builder(this)
             .setTitle(R.string.hardware_ptt_dialog_title)
             .setView(dialogView)
             .setNeutralButton(R.string.common_reset) { _, _ ->
-                pttHardwareKeyStore.setAssignedKeyCode(KeyEvent.KEYCODE_UNKNOWN)
+                pttHardwareKeyStore.clearBinding()
                 refreshHardwarePttStatus()
             }
             .setPositiveButton(R.string.common_ok) { _, _ ->
-                pttHardwareKeyStore.setAssignedKeyCode(pendingKeyCode)
+                pttHardwareKeyStore.setBinding(pendingBinding)
                 refreshHardwarePttStatus()
             }
             .setNegativeButton(R.string.roger_cancel, null)
@@ -137,8 +137,11 @@ class SettingsActivity : ComponentActivity() {
                 dialog.setOnKeyListener { _, keyCode, event ->
                     if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
                     if (keyCode == KeyEvent.KEYCODE_BACK) return@setOnKeyListener false
-                    pendingKeyCode = keyCode
-                    valueText.text = keyCodeToDisplayName(keyCode)
+                    pendingBinding = PttHardwareKeyStore.Binding(
+                        keyCode = if (keyCode > KeyEvent.KEYCODE_UNKNOWN) keyCode else KeyEvent.KEYCODE_UNKNOWN,
+                        scanCode = event.scanCode.coerceAtLeast(0),
+                    )
+                    valueText.text = bindingToDisplayName(pendingBinding)
                     true
                 }
             }
@@ -152,6 +155,19 @@ class SettingsActivity : ComponentActivity() {
             .replace('_', ' ')
             .lowercase()
             .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    }
+
+    private fun bindingToDisplayName(binding: PttHardwareKeyStore.Binding): String {
+        val keyLabel = if (binding.keyCode != KeyEvent.KEYCODE_UNKNOWN) {
+            keyCodeToDisplayName(binding.keyCode)
+        } else {
+            getString(R.string.hardware_ptt_unknown_key)
+        }
+        return if (binding.scanCode > 0) {
+            "$keyLabel (scan ${binding.scanCode})"
+        } else {
+            keyLabel
+        }
     }
 
     private fun refreshMicrophoneOptions() {

@@ -40,6 +40,7 @@
     <string name="hardware_ptt_status_assigned_format">Assigned: %1$s</string>
     <string name="hardware_ptt_dialog_title">Assign hardware key</string>
     <string name="hardware_ptt_dialog_waiting">Press a hardware button</string>
+    <string name="hardware_ptt_unknown_key">Unknown key</string>
     <string name="common_ok">OK</string>
     <string name="common_reset">Reset</string>
     <string name="play_signal_button">Play</string>

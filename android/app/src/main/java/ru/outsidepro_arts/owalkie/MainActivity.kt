@@ -224,8 +224,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val assignedPttKey = pttHardwareKeyStore.getAssignedKeyCode()
-        if (assignedPttKey != KeyEvent.KEYCODE_UNKNOWN && event.keyCode == assignedPttKey) {
+        if (pttHardwareKeyStore.matches(event)) {
             when (event.action) {
                 KeyEvent.ACTION_DOWN -> {
                     if (event.repeatCount == 0) {

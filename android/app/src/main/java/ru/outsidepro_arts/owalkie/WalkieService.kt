@@ -494,6 +494,7 @@ class WalkieService : Service() {
             callSignalJob?.cancel()
             callSignalJob = null
         }
+        releaseVoiceProfileIfIdle()
         scheduleRxResumeHoldoff()
         broadcastStatus(currentSignalByte())
     }
@@ -610,6 +611,7 @@ class WalkieService : Service() {
             } finally {
                 scheduleRxResumeHoldoff()
                 rogerStreaming.set(false)
+                releaseVoiceProfileIfIdle()
             }
         }
     }
@@ -631,6 +633,7 @@ class WalkieService : Service() {
             } finally {
                 scheduleRxResumeHoldoff()
                 callStreaming.set(false)
+                releaseVoiceProfileIfIdle()
             }
         }
     }
@@ -1223,6 +1226,12 @@ class WalkieService : Service() {
             audioManager.mode = AudioManager.MODE_NORMAL
             audioManager.isSpeakerphoneOn = false
             voiceProfileActive = false
+        }
+    }
+
+    private fun releaseVoiceProfileIfIdle() {
+        if (!transmitting.get() && !rogerStreaming.get() && !callStreaming.get()) {
+            restoreMediaAudioProfile()
         }
     }
 
