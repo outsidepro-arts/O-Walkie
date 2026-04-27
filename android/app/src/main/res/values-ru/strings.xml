@@ -109,5 +109,7 @@
     <string name="service_channel_name">Поток Walkie</string>
     <string name="service_notification_title">O-Walkie запущен</string>
     <string name="service_notification_text">Сервис аудио-реле активен</string>
+    <string name="service_notification_action_connect">Подключиться</string>
+    <string name="service_notification_action_disconnect">Отключиться</string>
     <string name="service_notification_action_battery">Батарея</string>
 </resources>

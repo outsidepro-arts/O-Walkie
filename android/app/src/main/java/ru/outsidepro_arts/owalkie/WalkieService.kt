@@ -57,11 +57,13 @@ class WalkieService : Service() {
     companion object {
         const val ACTION_START = "ru.outsidepro_arts.owalkie.action.START"
         const val ACTION_CANCEL_CONNECT = "ru.outsidepro_arts.owalkie.action.CANCEL_CONNECT"
+        const val ACTION_DISCONNECT_AND_STOP = "ru.outsidepro_arts.owalkie.action.DISCONNECT_AND_STOP"
         const val ACTION_PTT_PRESS = "ru.outsidepro_arts.owalkie.action.PTT_PRESS"
         const val ACTION_PTT_RELEASE = "ru.outsidepro_arts.owalkie.action.PTT_RELEASE"
         const val ACTION_SET_REPEATER = "ru.outsidepro_arts.owalkie.action.SET_REPEATER"
         const val ACTION_CALL_SIGNAL = "ru.outsidepro_arts.owalkie.action.CALL_SIGNAL"
         const val ACTION_EXIT_APP = "ru.outsidepro_arts.owalkie.action.EXIT_APP"
+        const val ACTION_TOGGLE_CONNECTION = "ru.outsidepro_arts.owalkie.action.TOGGLE_CONNECTION"
         const val ACTION_STATUS = "ru.outsidepro_arts.owalkie.action.STATUS"
         const val EXTRA_SIGNAL = "signal"
         const val EXTRA_WS_CONNECTED = "wsConnected"
@@ -100,9 +102,11 @@ class WalkieService : Service() {
     private var wsReconnectJob: Job? = null
     private var signalMonitorJob: Job? = null
     private val wsConnected = AtomicBoolean(false)
+    private val wsOpening = AtomicBoolean(false)
     private val wsRetryAttempt = AtomicInteger(0)
     private val desiredConnection = AtomicBoolean(false)
     private val configLock = Any()
+    private val wsConnectLock = Any()
 
     @Volatile
     private var udpSocket: DatagramSocket? = null
@@ -179,6 +183,15 @@ class WalkieService : Service() {
                 startCore(intent)
             }
             ACTION_CANCEL_CONNECT -> cancelConnection()
+            ACTION_DISCONNECT_AND_STOP -> disconnectAndStopService()
+            ACTION_TOGGLE_CONNECTION -> {
+                if (desiredConnection.get() || wsConnected.get()) {
+                    cancelConnection()
+                } else {
+                    desiredConnection.set(true)
+                    startCore(null)
+                }
+            }
             ACTION_PTT_PRESS -> onPttPress()
             ACTION_PTT_RELEASE -> onPttRelease()
             ACTION_SET_REPEATER -> setRepeaterMode(intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, false))
@@ -232,6 +245,8 @@ class WalkieService : Service() {
         val changed = applyConfigFromIntent(intent)
         startForegroundInternal()
         ensureUdpSocket()
+        wsReconnectJob?.cancel()
+        wsReconnectJob = null
         if (changed) {
             connectWebSocket(force = true)
         } else {
@@ -242,14 +257,12 @@ class WalkieService : Service() {
     }
 
     private fun startForegroundInternal() {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                getString(R.string.service_channel_name),
-                NotificationManager.IMPORTANCE_LOW,
-            )
-            nm.createNotificationChannel(channel)
+        ensureNotificationChannel()
+        val isConnectingOrConnected = desiredConnection.get() || wsConnected.get()
+        val actionLabel = if (isConnectingOrConnected) {
+            getString(R.string.service_notification_action_disconnect)
+        } else {
+            getString(R.string.service_notification_action_connect)
         }
         val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle(getString(R.string.service_notification_title))
@@ -259,6 +272,11 @@ class WalkieService : Service() {
             .setContentIntent(mainActivityPendingIntent())
             .addAction(
                 0,
+                actionLabel,
+                toggleConnectionPendingIntent(),
+            )
+            .addAction(
+                0,
                 getString(R.string.service_notification_action_battery),
                 batterySettingsPendingIntent(),
             )
@@ -266,6 +284,48 @@ class WalkieService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
         startForeground(NOTIFICATION_ID, notification)
+    }
+
+    private fun updateForegroundNotification() {
+        ensureNotificationChannel()
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val isConnectingOrConnected = desiredConnection.get() || wsConnected.get()
+        val actionLabel = if (isConnectingOrConnected) {
+            getString(R.string.service_notification_action_disconnect)
+        } else {
+            getString(R.string.service_notification_action_connect)
+        }
+        val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setContentTitle(getString(R.string.service_notification_title))
+            .setContentText(getString(R.string.service_notification_text))
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOngoing(true)
+            .setContentIntent(mainActivityPendingIntent())
+            .addAction(
+                0,
+                actionLabel,
+                toggleConnectionPendingIntent(),
+            )
+            .addAction(
+                0,
+                getString(R.string.service_notification_action_battery),
+                batterySettingsPendingIntent(),
+            )
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        nm.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID,
+            getString(R.string.service_channel_name),
+            NotificationManager.IMPORTANCE_LOW,
+        )
+        nm.createNotificationChannel(channel)
     }
 
     private fun mainActivityPendingIntent(): PendingIntent {
@@ -285,26 +345,41 @@ class WalkieService : Service() {
         return PendingIntent.getActivity(this, 2002, intent, flags)
     }
 
+    private fun toggleConnectionPendingIntent(): PendingIntent {
+        val intent = Intent(this, WalkieService::class.java).apply {
+            action = ACTION_TOGGLE_CONNECTION
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        return PendingIntent.getService(this, 2003, intent, flags)
+    }
+
     private fun connectWebSocket(force: Boolean = false) {
         if (!desiredConnection.get()) return
-        if (!force && webSocket != null) return
-        if (force) {
-            runCatching { webSocket?.cancel() }
-            webSocket = null
+        synchronized(wsConnectLock) {
+            if (!force && (webSocket != null || wsOpening.get())) return
+            if (force) {
+                runCatching { webSocket?.cancel() }
+                webSocket = null
+                wsOpening.set(false)
+            }
+            wsOpening.set(true)
         }
         val wsUrl = wsUrl()
         if (wsUrl.isBlank()) {
             wsConnected.set(false)
+            wsOpening.set(false)
             broadcastStatus(currentSignalByte())
             return
         }
         val request = runCatching { Request.Builder().url(wsUrl).build() }.getOrElse {
             wsConnected.set(false)
+            wsOpening.set(false)
             broadcastStatus(currentSignalByte())
             return
         }
         webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                wsOpening.set(false)
                 wsConnected.set(true)
                 wsRetryAttempt.set(0)
                 packetMs = DEFAULT_PACKET_MS
@@ -318,6 +393,7 @@ class WalkieService : Service() {
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                wsOpening.set(false)
                 wsConnected.set(false)
                 channelBound = false
                 this@WalkieService.webSocket = null
@@ -329,6 +405,7 @@ class WalkieService : Service() {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                wsOpening.set(false)
                 wsConnected.set(false)
                 channelBound = false
                 this@WalkieService.webSocket = null
@@ -806,6 +883,7 @@ class WalkieService : Service() {
     }
 
     private fun broadcastStatus(signal: Int) {
+        updateForegroundNotification()
         val statusIntent = Intent(ACTION_STATUS).apply {
             setPackage(packageName)
             putExtra(EXTRA_SIGNAL, signal.coerceIn(0, 255))
@@ -972,14 +1050,41 @@ class WalkieService : Service() {
     }
 
     private fun cancelConnection() {
+        transmitting.set(false)
+        rogerStreaming.set(false)
+        callStreaming.set(false)
+        txJob?.cancel()
+        txJob = null
+        rogerJob?.cancel()
+        rogerJob = null
+        callSignalJob?.cancel()
+        callSignalJob = null
+        localRogerPlaybackJob?.cancel()
+        localRogerPlaybackJob = null
+        localCallPlaybackJob?.cancel()
+        localCallPlaybackJob = null
         desiredConnection.set(false)
         wsConnected.set(false)
+        wsOpening.set(false)
+        channelBound = false
+        protocolError = false
         wsReconnectJob?.cancel()
         wsReconnectJob = null
         runCatching { webSocket?.close(1000, "cancel requested") }
         runCatching { webSocket?.cancel() }
         webSocket = null
+        synchronized(udpSocketLock) {
+            runCatching { udpSocket?.close() }
+            udpSocket = null
+        }
+        restoreMediaAudioProfile()
         broadcastStatus(currentSignalByte())
+    }
+
+    private fun disconnectAndStopService() {
+        cancelConnection()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     private fun exitApp() {

@@ -109,5 +109,7 @@
     <string name="service_channel_name">Walkie Streaming</string>
     <string name="service_notification_title">O-Walkie running</string>
     <string name="service_notification_text">Audio relay service is active</string>
+    <string name="service_notification_action_connect">Connect</string>
+    <string name="service_notification_action_disconnect">Disconnect</string>
     <string name="service_notification_action_battery">Battery settings</string>
 </resources>

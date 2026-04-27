@@ -41,9 +41,10 @@ class MainActivity : ComponentActivity() {
     private var wsConnecting = false
     private var receiverRegistered = false
     private var repeaterModeEnabled = false
-    private var connectionDetailsExpanded = true
+    private var connectionDetailsExpanded = false
     private var lastSignalPercent = 0
     private var protocolIncompatible = false
+    private var userRequestedConnection = false
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -54,12 +55,15 @@ class MainActivity : ComponentActivity() {
             wsConnected = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTED, false)
             wsConnecting = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTING, false)
             val udpReady = intent.getBooleanExtra(WalkieService.EXTRA_UDP_READY, false)
+            val prevProtocolIncompatible = protocolIncompatible
             protocolIncompatible = intent.getBooleanExtra(WalkieService.EXTRA_PROTOCOL_ERROR, false)
             val signalPercent = ((signal / 255.0) * 100.0).toInt().coerceIn(0, 100)
             lastSignalPercent = signalPercent
 
             if (!prevConnected && wsConnected) {
                 uiSignalPlayer.playConnected()
+            } else if (!prevProtocolIncompatible && protocolIncompatible) {
+                uiSignalPlayer.playConnectionError()
             } else if (prevConnecting && !wsConnecting && !wsConnected) {
                 uiSignalPlayer.playConnectionError()
             }
@@ -441,9 +445,11 @@ class MainActivity : ComponentActivity() {
 
     private fun handleConnectAction() {
         if (wsConnecting || wsConnected) {
-            sendServiceAction(WalkieService.ACTION_CANCEL_CONNECT)
+            userRequestedConnection = false
+            sendServiceAction(WalkieService.ACTION_DISCONNECT_AND_STOP)
             wsConnecting = false
             wsConnected = false
+            protocolIncompatible = false
             updateConnectButtonLabel()
             updatePttAvailability()
             updateStatusChips()
@@ -454,9 +460,11 @@ class MainActivity : ComponentActivity() {
             requestRuntimePermissions()
             return
         }
+        userRequestedConnection = true
         startWalkieService(profile)
         wsConnecting = true
         wsConnected = false
+        protocolIncompatible = false
         updateConnectButtonLabel()
         updatePttAvailability()
         updateStatusChips()
@@ -575,6 +583,31 @@ class MainActivity : ComponentActivity() {
         if (targetIndex == selectedServerIndex) return
         applySelectedServerIndex(targetIndex, announce = true)
         uiSignalPlayer.playSwitch()
+        reconnectToSelectedServerIfRequested()
+    }
+
+    private fun reconnectToSelectedServerIfRequested() {
+        if (!userRequestedConnection) return
+        val profile = servers.getOrNull(selectedServerIndex) ?: return
+
+        // Explicit reconnect flow: disconnect current session first, then start selected one.
+        sendServiceAction(WalkieService.ACTION_CANCEL_CONNECT)
+        wsConnecting = false
+        wsConnected = false
+        protocolIncompatible = false
+        updateConnectButtonLabel()
+        updatePttAvailability()
+        updateStatusChips()
+
+        binding.root.postDelayed({
+            startWalkieService(profile)
+            wsConnecting = true
+            wsConnected = false
+            protocolIncompatible = false
+            updateConnectButtonLabel()
+            updatePttAvailability()
+            updateStatusChips()
+        }, 150L)
     }
 
     private fun applySelectedServerIndex(index: Int, announce: Boolean) {
