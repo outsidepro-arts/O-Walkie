@@ -27,6 +27,7 @@ import ru.outsidepro_arts.owalkie.audio.OpusCodecFactory
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
 import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
 import ru.outsidepro_arts.owalkie.model.RogerPatternStore
+import ru.outsidepro_arts.owalkie.model.RxVolumeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -65,6 +66,7 @@ class WalkieService : Service() {
         const val ACTION_EXIT_APP = "ru.outsidepro_arts.owalkie.action.EXIT_APP"
         const val ACTION_TOGGLE_CONNECTION = "ru.outsidepro_arts.owalkie.action.TOGGLE_CONNECTION"
         const val ACTION_STATUS = "ru.outsidepro_arts.owalkie.action.STATUS"
+        const val ACTION_SET_RX_VOLUME = "ru.outsidepro_arts.owalkie.action.SET_RX_VOLUME"
         const val EXTRA_SIGNAL = "signal"
         const val EXTRA_WS_CONNECTED = "wsConnected"
         const val EXTRA_WS_CONNECTING = "wsConnecting"
@@ -78,6 +80,7 @@ class WalkieService : Service() {
         const val EXTRA_UDP_PORT = "udpPort"
         const val EXTRA_CHANNEL = "channel"
         const val EXTRA_REPEATER_ENABLED = "repeaterEnabled"
+        const val EXTRA_RX_VOLUME_PERCENT = "rxVolumePercent"
 
         private const val NOTIFICATION_CHANNEL_ID = "owalkie_stream"
         private const val NOTIFICATION_ID = 101
@@ -166,9 +169,12 @@ class WalkieService : Service() {
     private lateinit var rogerPatternStore: RogerPatternStore
     private lateinit var callingPatternStore: CallingPatternStore
     private lateinit var microphoneConfigStore: MicrophoneConfigStore
+    private lateinit var rxVolumeStore: RxVolumeStore
     private var localPttReleasePcm: ShortArray = shortArrayOf()
     @Volatile
     private var voiceProfileActive: Boolean = false
+    @Volatile
+    private var rxVolumePercent: Int = RxVolumeStore.DEFAULT_RX_VOLUME_PERCENT
 
     override fun onCreate() {
         super.onCreate()
@@ -177,6 +183,8 @@ class WalkieService : Service() {
         rogerPatternStore = RogerPatternStore(this)
         callingPatternStore = CallingPatternStore(this)
         microphoneConfigStore = MicrophoneConfigStore(this)
+        rxVolumeStore = RxVolumeStore(this)
+        rxVolumePercent = rxVolumeStore.getPercent()
         val pttReleaseWav = loadWavPcmFromRaw(R.raw.selfttdown_002)
         localPttReleasePcm = resampleLinear(pttReleaseWav.samples, pttReleaseWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
     }
@@ -203,6 +211,9 @@ class WalkieService : Service() {
             ACTION_PTT_RELEASE -> onPttRelease()
             ACTION_SET_REPEATER -> setRepeaterMode(intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, false))
             ACTION_CALL_SIGNAL -> onCallSignal()
+            ACTION_SET_RX_VOLUME -> updateRxVolumePercent(
+                intent.getIntExtra(EXTRA_RX_VOLUME_PERCENT, rxVolumePercent),
+            )
             ACTION_EXIT_APP -> exitApp()
         }
         return START_STICKY
@@ -553,7 +564,7 @@ class WalkieService : Service() {
                         continue
                     }
                     val opus = packet.data.copyOfRange(9, packet.length)
-                    val pcm = codec.decode(opus, currentFrameSamples())
+                    val pcm = applyRxVolume(codec.decode(opus, currentFrameSamples()))
                     track.write(pcm, 0, pcm.size)
                 }
             } finally {
@@ -733,6 +744,18 @@ class WalkieService : Service() {
         for (i in pcm.indices) {
             val v = (pcm[i] * gain).toInt()
             out[i] = v.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+        }
+        return out
+    }
+
+    private fun applyRxVolume(pcm: ShortArray): ShortArray {
+        val percent = rxVolumePercent.coerceIn(RxVolumeStore.MIN_RX_VOLUME_PERCENT, RxVolumeStore.MAX_RX_VOLUME_PERCENT)
+        if (percent == RxVolumeStore.DEFAULT_RX_VOLUME_PERCENT) return pcm
+        val gain = percent / 100.0
+        val out = ShortArray(pcm.size)
+        for (i in pcm.indices) {
+            val sample = (pcm[i] * gain).toInt()
+            out[i] = sample.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
         }
         return out
     }
@@ -1024,6 +1047,7 @@ class WalkieService : Service() {
         val newUdpPort = intent.getIntExtra(EXTRA_UDP_PORT, -1)
         val newChannel = intent.getStringExtra(EXTRA_CHANNEL)?.trim().orEmpty()
         val newRepeaterEnabled = intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, repeaterEnabled)
+        val incomingRxVolume = intent.getIntExtra(EXTRA_RX_VOLUME_PERCENT, rxVolumePercent)
         val parsedEndpoint = parseServerEndpoint(newHost, newWsPort)
 
         if (parsedEndpoint == null || newUdpPort !in 1..65535 || newChannel.isBlank()) {
@@ -1031,6 +1055,7 @@ class WalkieService : Service() {
         }
 
         synchronized(configLock) {
+            updateRxVolumePercent(incomingRxVolume)
             val changed = serverHost != parsedEndpoint.host ||
                 wsPort != parsedEndpoint.wsPort ||
                 udpPort != newUdpPort ||
@@ -1051,6 +1076,12 @@ class WalkieService : Service() {
             wsConnected.set(false)
             return true
         }
+    }
+
+    private fun updateRxVolumePercent(percent: Int) {
+        val safe = percent.coerceIn(RxVolumeStore.MIN_RX_VOLUME_PERCENT, RxVolumeStore.MAX_RX_VOLUME_PERCENT)
+        rxVolumePercent = safe
+        rxVolumeStore.setPercent(safe)
     }
 
     private data class ParsedServerEndpoint(

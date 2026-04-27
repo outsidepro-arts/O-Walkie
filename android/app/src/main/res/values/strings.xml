@@ -95,6 +95,10 @@
     <string name="validation_channel">Enter channel</string>
     <string name="validation_port">Enter valid ports 1..65535</string>
     <string name="ptt_hold">Hold to Talk</string>
+    <string name="rx_volume_label">Incoming volume</string>
+    <string name="rx_volume_value_default">100%%</string>
+    <string name="rx_volume_value">%1$d%%</string>
+    <string name="rx_volume_accessibility">Incoming volume %1$d percent</string>
     <string name="ptt_hold_accessibility_hint">Press and hold to transmit.</string>
     <string name="ptt_start_talking">Start talking</string>
     <string name="ptt_stop_talking">Stop talking</string>

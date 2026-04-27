@@ -13,6 +13,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.widget.SeekBar
 import android.widget.PopupMenu
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -39,6 +40,7 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import ru.outsidepro_arts.owalkie.databinding.ActivityMainBinding
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
+import ru.outsidepro_arts.owalkie.model.RxVolumeStore
 import ru.outsidepro_arts.owalkie.model.ServerProfile
 import ru.outsidepro_arts.owalkie.model.ServerStore
 
@@ -52,6 +54,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var serverStore: ServerStore
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
+    private lateinit var rxVolumeStore: RxVolumeStore
     private lateinit var uiSignalPlayer: UiSignalPlayer
     private var transmitting = false
     private var selectedServerIndex = 0
@@ -112,6 +115,7 @@ class MainActivity : ComponentActivity() {
         setContentView(binding.root)
         serverStore = ServerStore(this)
         pttHardwareKeyStore = PttHardwareKeyStore(this)
+        rxVolumeStore = RxVolumeStore(this)
         uiSignalPlayer = UiSignalPlayer(this)
 
         initServerProfilesUi()
@@ -165,6 +169,7 @@ class MainActivity : ComponentActivity() {
         binding.moreButton.setOnClickListener {
             showMoreMenu()
         }
+        initRxVolumeUi()
 
         updateConnectionDetailsUi()
         updateConnectButtonLabel()
@@ -323,6 +328,7 @@ class MainActivity : ComponentActivity() {
             putExtra(WalkieService.EXTRA_UDP_PORT, profile.udpPort)
             putExtra(WalkieService.EXTRA_CHANNEL, profile.channel)
             putExtra(WalkieService.EXTRA_REPEATER_ENABLED, repeaterModeEnabled)
+            putExtra(WalkieService.EXTRA_RX_VOLUME_PERCENT, rxVolumeStore.getPercent())
         }
         ContextCompat.startForegroundService(this, intent)
     }
@@ -344,6 +350,48 @@ class MainActivity : ComponentActivity() {
             putExtra(WalkieService.EXTRA_REPEATER_ENABLED, enabled)
         }
         startService(intent)
+    }
+
+    private fun sendRxVolumeAction(percent: Int) {
+        if (!wsConnected && !wsConnecting) return
+        val intent = Intent(this, WalkieService::class.java).apply {
+            action = WalkieService.ACTION_SET_RX_VOLUME
+            putExtra(WalkieService.EXTRA_RX_VOLUME_PERCENT, percent)
+        }
+        startService(intent)
+    }
+
+    private fun initRxVolumeUi() {
+        val current = rxVolumeStore.getPercent()
+        applyRxVolumeUi(current)
+        binding.rxVolumeSeekBar.progress = current
+        binding.rxVolumeSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val safe = progress.coerceIn(RxVolumeStore.MIN_RX_VOLUME_PERCENT, RxVolumeStore.MAX_RX_VOLUME_PERCENT)
+                applyRxVolumeUi(safe)
+                if (fromUser) {
+                    rxVolumeStore.setPercent(safe)
+                    sendRxVolumeAction(safe)
+                }
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val safe = (seekBar?.progress ?: RxVolumeStore.DEFAULT_RX_VOLUME_PERCENT)
+                    .coerceIn(RxVolumeStore.MIN_RX_VOLUME_PERCENT, RxVolumeStore.MAX_RX_VOLUME_PERCENT)
+                binding.rxVolumeSeekBar.announceForAccessibility(getString(R.string.rx_volume_accessibility, safe))
+            }
+        })
+    }
+
+    private fun applyRxVolumeUi(percent: Int) {
+        binding.rxVolumeValueText.text = getString(R.string.rx_volume_value, percent)
+        val description = getString(R.string.rx_volume_accessibility, percent)
+        binding.rxVolumeSeekBar.contentDescription = description
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            binding.rxVolumeSeekBar.stateDescription = description
+        }
     }
 
     private fun requestAppExit() {

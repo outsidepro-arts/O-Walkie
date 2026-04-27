@@ -95,6 +95,10 @@
     <string name="validation_channel">Введите канал</string>
     <string name="validation_port">Введите корректные порты 1..65535</string>
     <string name="ptt_hold">Удерживайте для разговора</string>
+    <string name="rx_volume_label">Громкость входящего звука</string>
+    <string name="rx_volume_value_default">100%%</string>
+    <string name="rx_volume_value">%1$d%%</string>
+    <string name="rx_volume_accessibility">Громкость входящего звука %1$d процентов</string>
     <string name="ptt_hold_accessibility_hint">Нажмите и удерживайте для передачи.</string>
     <string name="ptt_start_talking">Начать передачу</string>
     <string name="ptt_stop_talking">Остановить передачу</string>
