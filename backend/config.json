@@ -2,10 +2,11 @@
   "server": {
     "ws_addr": ":5500",
     "udp_addr": ":5505",
-    "packet_ms": 60,
+    "packet_ms": 20,
     "hangover_ms": 180,
     "eof_timeout_ms": 420,
-    "conceal_decay": 0.90
+    "conceal_decay": 0.90,
+    "jitter_min_packets": 3
   },
   "modules": {
     "noise": {

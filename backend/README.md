@@ -16,6 +16,7 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 - `server.hangover_ms` keep TX alive briefly on packet gaps before considering stream ended
 - `server.eof_timeout_ms` hard timeout for implicit EOF if no packets arrive
 - `server.conceal_decay` frame-to-frame attenuation for concealment replay during hangover (`0..1`)
+- `server.jitter_min_packets` minimum packets to accumulate before server-side jitter playout (`1..12`, recommended `2..4`)
 - `modules.noise.*` white-noise + squelch behavior
 - `modules.click.click_db` click level at transmission start/end
 - `modules.click.glitch_interval_max_ms` random in-TX click interval ceiling (`0` disables)

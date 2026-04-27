@@ -21,6 +21,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hraban/opus"
+	"github.com/pion/interceptor/pkg/jitterbuffer"
+	"github.com/pion/rtp"
 )
 
 const (
@@ -44,12 +46,13 @@ type appConfig struct {
 }
 
 type serverConfig struct {
-	WSAddr        string `json:"ws_addr"`
-	UDPAddr       string `json:"udp_addr"`
-	PacketMs      int    `json:"packet_ms"`
-	HangoverMs    int    `json:"hangover_ms"`
-	EOFTimeoutMs  int    `json:"eof_timeout_ms"`
+	WSAddr        string  `json:"ws_addr"`
+	UDPAddr       string  `json:"udp_addr"`
+	PacketMs      int     `json:"packet_ms"`
+	HangoverMs    int     `json:"hangover_ms"`
+	EOFTimeoutMs  int     `json:"eof_timeout_ms"`
 	ConcealDecay  float64 `json:"conceal_decay"`
+	JitterMinPkts int     `json:"jitter_min_packets"`
 }
 
 type modulesConfig struct {
@@ -198,6 +201,7 @@ type relayHub struct {
 
 type speakerStreamState struct {
 	pending      *audioPacket
+	jitter       *jitterbuffer.JitterBuffer
 	lastPacketAt time.Time
 	lastSignal   float64
 	lastPCM      []int16
@@ -385,6 +389,7 @@ type channelMixer struct {
 	hangoverDur         time.Duration
 	eofTimeoutDur       time.Duration
 	concealDecay        float64
+	jitterMinPackets    uint16
 }
 
 type repeaterSession struct {
@@ -479,10 +484,51 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 			newCompressorModule(sampleRate, mcfg.Compressor),
 			newDistortionModule(mcfg.Distortion),
 		},
-		repeaterState: make(map[uint32]*repeaterSession),
-		hangoverDur:   time.Duration(hangoverMs) * time.Millisecond,
-		eofTimeoutDur: time.Duration(eofTimeoutMs) * time.Millisecond,
-		concealDecay:  cfg.Server.ConcealDecay,
+		repeaterState:    make(map[uint32]*repeaterSession),
+		hangoverDur:      time.Duration(hangoverMs) * time.Millisecond,
+		eofTimeoutDur:    time.Duration(eofTimeoutMs) * time.Millisecond,
+		concealDecay:     cfg.Server.ConcealDecay,
+		jitterMinPackets: uint16(normalizeJitterMinPackets(cfg.Server.JitterMinPkts)),
+	}
+}
+
+func newSpeakerStreamState(jitterMinPackets uint16) *speakerStreamState {
+	return &speakerStreamState{
+		jitter: jitterbuffer.New(jitterbuffer.WithMinimumPacketCount(jitterMinPackets)),
+	}
+}
+
+func buildJitterRTPPacket(pkt *audioPacket) *rtp.Packet {
+	payload := make([]byte, 1+len(pkt.opus))
+	payload[0] = pkt.signalStrength
+	copy(payload[1:], pkt.opus)
+	return &rtp.Packet{
+		Header: rtp.Header{
+			Version:        2,
+			PayloadType:    111,
+			SequenceNumber: uint16(pkt.seq & 0xFFFF),
+			Timestamp:      uint32(pkt.seq) * uint32(packetSamples),
+		},
+		Payload: payload,
+	}
+}
+
+func (m *channelMixer) pullNextPacket(sessionID uint32, st *speakerStreamState) *audioPacket {
+	rtpPkt, err := st.jitter.Pop()
+	if err != nil {
+		if errors.Is(err, jitterbuffer.ErrPopWhileBuffering) || errors.Is(err, jitterbuffer.ErrBufferUnderrun) {
+			return nil
+		}
+		return nil
+	}
+	if len(rtpPkt.Payload) == 0 {
+		return nil
+	}
+	return &audioPacket{
+		sessionID:      sessionID,
+		seq:            uint32(rtpPkt.SequenceNumber),
+		signalStrength: rtpPkt.Payload[0],
+		opus:           append([]byte(nil), rtpPkt.Payload[1:]...),
 	}
 }
 
@@ -553,10 +599,10 @@ func (m *channelMixer) run() {
 		case pkt := <-m.input:
 			st := states[pkt.sessionID]
 			if st == nil {
-				st = &speakerStreamState{}
+				st = newSpeakerStreamState(m.jitterMinPackets)
 				states[pkt.sessionID] = st
 			}
-			st.pending = pkt
+			st.jitter.Push(buildJitterRTPPacket(pkt))
 			st.lastPacketAt = time.Now()
 			st.lastSignal = float64(pkt.signalStrength)
 			eofMarked[pkt.sessionID] = false
@@ -565,6 +611,9 @@ func (m *channelMixer) run() {
 			if st := states[sid]; st != nil {
 				// Explicit EOF should cut ongoing concealment immediately.
 				st.pending = nil
+				if st.jitter != nil {
+					st.jitter.Clear(false)
+				}
 			}
 		case <-ticker.C:
 			m.mixAndBroadcast(states, eofMarked)
@@ -605,15 +654,11 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		if st == nil {
 			continue
 		}
-		pkt := st.pending
+		pkt := m.pullNextPacket(sessionID, st)
 		hasPacket := pkt != nil
 		speakerActive := false
 		speakerSignal := st.lastSignal
 		var pcmFrame []int16
-
-		if hasPacket {
-			st.pending = nil
-		}
 
 		var (
 			dec       *opus.Decoder
@@ -1121,6 +1166,16 @@ func isSupportedPacketMs(ms int) bool {
 	}
 }
 
+func normalizeJitterMinPackets(count int) int {
+	if count <= 0 {
+		return 3
+	}
+	if count > 12 {
+		return 12
+	}
+	return count
+}
+
 func applyPacketTiming(packetMs int) {
 	norm := normalizePacketMs(packetMs)
 	packetDur = time.Duration(norm) * time.Millisecond
@@ -1361,12 +1416,13 @@ type server struct {
 func defaultConfig() appConfig {
 	return appConfig{
 		Server: serverConfig{
-			WSAddr:       ":5500",
-			UDPAddr:      ":5505",
-			PacketMs:     defaultPacketMs,
-			HangoverMs:   180,
-			EOFTimeoutMs: 420,
-			ConcealDecay: 0.90,
+			WSAddr:        ":5500",
+			UDPAddr:       ":5505",
+			PacketMs:      defaultPacketMs,
+			HangoverMs:    180,
+			EOFTimeoutMs:  420,
+			ConcealDecay:  0.90,
+			JitterMinPkts: 3,
 		},
 		Modules: modulesConfig{
 			Noise: noiseConfig{
@@ -1417,6 +1473,7 @@ func loadConfig(path string) (appConfig, error) {
 		return appConfig{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	cfg.Server.PacketMs = normalizePacketMs(cfg.Server.PacketMs)
+	cfg.Server.JitterMinPkts = normalizeJitterMinPackets(cfg.Server.JitterMinPkts)
 	if err := validateConfig(cfg); err != nil {
 		return appConfig{}, err
 	}
@@ -1438,6 +1495,9 @@ func validateConfig(cfg appConfig) error {
 	}
 	if cfg.Server.ConcealDecay <= 0 || cfg.Server.ConcealDecay > 1 {
 		return errors.New("server.conceal_decay must be in (0..1]")
+	}
+	if cfg.Server.JitterMinPkts < 1 || cfg.Server.JitterMinPkts > 12 {
+		return errors.New("server.jitter_min_packets must be in [1..12]")
 	}
 	if cfg.Modules.Compressor.Ratio <= 0 {
 		return errors.New("modules.compressor.ratio must be > 0")
@@ -1640,11 +1700,12 @@ func main() {
 	})
 
 	log.Printf(
-		"relay started ws=%s udp=%s packet_ms=%d protocol_version=%d",
+		"relay started ws=%s udp=%s packet_ms=%d protocol_version=%d jitter_min_packets=%d",
 		cfg.Server.WSAddr,
 		cfg.Server.UDPAddr,
 		normalizePacketMs(cfg.Server.PacketMs),
 		protocolVersion,
+		cfg.Server.JitterMinPkts,
 	)
 	if err := http.ListenAndServe(cfg.Server.WSAddr, mux); err != nil {
 		log.Fatalf("ws server error: %v", err)
