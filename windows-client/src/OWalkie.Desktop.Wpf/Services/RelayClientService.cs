@@ -11,7 +11,7 @@ namespace OWalkie.Desktop.Wpf.Services;
 
 public sealed class RelayClientService
 {
-    private const int ProtocolVersion = 1;
+    private const int ProtocolVersion = 2;
     private ClientWebSocket? _webSocket;
     private UdpClient? _udpClient;
     private CancellationTokenSource? _connectionCts;
@@ -20,6 +20,7 @@ public sealed class RelayClientService
     private Task? _udpKeepaliveTask;
     private ConnectionProfile? _activeProfile;
     private uint _sessionId;
+    private int _sampleRate = 8000;
     private int _packetMs = 20;
     private int _seq;
     private int _connected;
@@ -33,8 +34,10 @@ public sealed class RelayClientService
     private Task? _busyMonitorTask;
 
     public bool IsConnected { get; private set; }
+    public int SampleRate => _sampleRate;
     public int PacketMs => _packetMs;
 
+    public event EventHandler<int>? SampleRateChanged;
     public event EventHandler<bool>? ConnectionStateChanged;
     public event EventHandler<int>? PacketMsChanged;
     public event EventHandler<byte[]>? OpusFrameReceived;
@@ -59,6 +62,7 @@ public sealed class RelayClientService
         _webSocket = new ClientWebSocket();
         _udpClient = new UdpClient(0);
         _sessionId = 0;
+        _sampleRate = 8000;
         _packetMs = 20;
         _seq = 0;
         _udpHost = wsHost;
@@ -183,10 +187,38 @@ public sealed class RelayClientService
 
     public Task SendTxEofAsync(CancellationToken cancellationToken = default)
     {
-        return SendWsJsonAsync(new
+        return SendUdpTxEofBurstAsync(cancellationToken);
+    }
+
+    private async Task SendUdpTxEofBurstAsync(CancellationToken cancellationToken)
+    {
+        var scheduleMs = new[] { 0, 20, 60 };
+        foreach (var delayMs in scheduleMs)
         {
-            type = "tx_eof",
-        }, cancellationToken);
+            if (delayMs > 0)
+            {
+                await Task.Delay(delayMs, cancellationToken);
+            }
+
+            await SendUdpTxEofPacketAsync(cancellationToken);
+        }
+    }
+
+    private async Task SendUdpTxEofPacketAsync(CancellationToken cancellationToken)
+    {
+        if (_udpClient == null || Interlocked.CompareExchange(ref _connected, 0, 0) == 0 || _sessionId == 0)
+        {
+            return;
+        }
+
+        var seq = Interlocked.Increment(ref _seq);
+        var payload = new byte[9];
+        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(0, 4), _sessionId);
+        BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(4, 4), seq);
+        payload[8] = 0; // signal=0 with empty payload marks UDP TX EOF on relay
+
+        cancellationToken.ThrowIfCancellationRequested();
+        await _udpClient.SendAsync(payload, payload.Length, _udpHost, _udpPort);
     }
 
     private static bool TryParseServerEndpoint(string rawHost, int fallbackWsPort, out string host, out int wsPort, out bool wsSecure)
@@ -387,6 +419,20 @@ public sealed class RelayClientService
                     _packetMs = packet is 10 or 20 or 40 or 60 ? packet : 20;
                     PacketMsChanged?.Invoke(this, _packetMs);
                 }
+                if (!root.TryGetProperty("sampleRate", out var sampleRateNode) || !sampleRateNode.TryGetInt32(out var sampleRate))
+                {
+                    StatusMessage?.Invoke(this, "Protocol incompatible: missing sampleRate in welcome.");
+                    await DisconnectAsync(CancellationToken.None);
+                    return;
+                }
+                if (sampleRate != NormalizeSampleRate(sampleRate))
+                {
+                    StatusMessage?.Invoke(this, "Protocol incompatible: unsupported sampleRate in welcome.");
+                    await DisconnectAsync(CancellationToken.None);
+                    return;
+                }
+                _sampleRate = sampleRate;
+                SampleRateChanged?.Invoke(this, _sampleRate);
                 _busyMode = root.TryGetProperty("busyMode", out var busyNode) && busyNode.ValueKind == JsonValueKind.True;
                 if (!_busyMode)
                 {
@@ -466,5 +512,10 @@ public sealed class RelayClientService
         }
         _busyRxActive = active;
         BusyTransmitBlockedChanged?.Invoke(this, _busyMode && _busyRxActive);
+    }
+
+    private static int NormalizeSampleRate(int value)
+    {
+        return value is 8000 or 12000 or 16000 or 24000 or 48000 ? value : 8000;
     }
 }

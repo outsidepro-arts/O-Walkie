@@ -12,6 +12,7 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 
 - `server.ws_addr` WebSocket control-plane address
 - `server.udp_addr` UDP data-plane address
+- `server.sample_rate` Opus sample rate (`8000`, `12000`, `16000`, `24000`, `48000`; default `8000`)
 - `server.packet_ms` Opus frame duration in milliseconds (`10`, `20`, `40`, `60`; default `20`)
 - `server.hangover_ms` keep TX alive briefly on packet gaps before considering stream ended
 - `server.eof_timeout_ms` hard timeout for implicit EOF if no packets arrive
@@ -36,7 +37,7 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 
 Server -> client:
 
-- `{"type":"welcome","sessionId":123,"packetMs":20,"protocolVersion":1}`
+- `{"type":"welcome","sessionId":123,"packetMs":20,"sampleRate":8000,"protocolVersion":1}`
   - includes `busyMode: true|false` so clients can lock PTT while channel is receiving
 - `{"type":"tx_stop","info":"transmit_timeout_reached"}` server-enforced stop for overlong TX
 - `{"type":"joined","channel":"teamA"}`
@@ -49,13 +50,12 @@ Client -> server:
 - runtime channel switch is disabled; reconnect with new channel instead
 - `{"type":"udp_hello","udpPort":7001}`
 - `{"type":"repeater_mode","enabled":true}`
-- `{"type":"tx_eof"}` legacy fallback EOF marker for compatibility with older clients/relays
 - `{"type":"heartbeat"}`
 
 If the first client message does not contain a valid channel bind, server replies with `error` and closes the WebSocket session.
 
 Protocol compatibility:
-- current protocol version is `1`
+- current protocol version is `2`
 - clients must validate `welcome.protocolVersion`
 - missing or mismatched protocol version must be treated as incompatible protocol
 

@@ -24,19 +24,20 @@ import (
 )
 
 const (
-	sampleRate         = 8000
+	defaultSampleRate  = 8000
 	audioChannels      = 1
 	maxUDPDatagram     = 1500
 	opusMaxFrameLen    = 512
 	configFilePath     = "config.json"
 	defaultPacketMs    = 20
-	protocolVersion    = 1
+	protocolVersion    = 2
 	scanActivityWindow = 10 * time.Second
 )
 
 var (
+	configuredSampleRate = defaultSampleRate
 	packetDur     = time.Duration(defaultPacketMs) * time.Millisecond
-	packetSamples = sampleRate * defaultPacketMs / 1000
+	packetSamples = configuredSampleRate * defaultPacketMs / 1000
 )
 
 type appConfig struct {
@@ -47,6 +48,7 @@ type appConfig struct {
 type serverConfig struct {
 	WSAddr             string  `json:"ws_addr"`
 	UDPAddr            string  `json:"udp_addr"`
+	SampleRate         int     `json:"sample_rate"`
 	PacketMs           int     `json:"packet_ms"`
 	HangoverMs         int     `json:"hangover_ms"`
 	EOFTimeoutMs       int     `json:"eof_timeout_ms"`
@@ -122,6 +124,7 @@ type wsServerMessage struct {
 	Channel         string `json:"channel,omitempty"`
 	Info            string `json:"info,omitempty"`
 	PacketMs        int    `json:"packetMs,omitempty"`
+	SampleRate      int    `json:"sampleRate,omitempty"`
 	ProtocolVersion int    `json:"protocolVersion,omitempty"`
 	BusyMode        *bool  `json:"busyMode,omitempty"`
 	Active          *bool  `json:"active,omitempty"`
@@ -545,7 +548,7 @@ func (p *audioProcessor) process(input []int16, signalByte float64, active bool)
 
 func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 	mcfg := cfg.Modules
-	enc, err := opus.NewEncoder(sampleRate, audioChannels, opus.AppVoIP)
+	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, opus.AppVoIP)
 	if err != nil {
 		panic(fmt.Sprintf("create encoder for channel %s: %v", name, err))
 	}
@@ -680,10 +683,10 @@ func buildAudioModules(mcfg modulesConfig) []audioModule {
 		mods = append(mods, newClickModule(packetDur, *mcfg.Click))
 	}
 	if mcfg.Filter != nil && mcfg.Filter.Enabled {
-		mods = append(mods, newBandPassModule(sampleRate, *mcfg.Filter))
+		mods = append(mods, newBandPassModule(configuredSampleRate, *mcfg.Filter))
 	}
 	if mcfg.Compressor != nil && mcfg.Compressor.Enabled {
-		mods = append(mods, newCompressorModule(sampleRate, *mcfg.Compressor))
+		mods = append(mods, newCompressorModule(configuredSampleRate, *mcfg.Compressor))
 	}
 	if mcfg.Distortion != nil && mcfg.Distortion.Enabled {
 		mods = append(mods, newDistortionModule(*mcfg.Distortion))
@@ -987,7 +990,7 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		m.decodersMu.Lock()
 		dec = m.decoders[sessionID]
 		if dec == nil {
-			dec, createErr = opus.NewDecoder(sampleRate, audioChannels)
+			dec, createErr = opus.NewDecoder(configuredSampleRate, audioChannels)
 			if createErr == nil {
 				m.decoders[sessionID] = dec
 			}
@@ -1188,7 +1191,7 @@ func (m *channelMixer) playbackRepeaterAfterDelay(sessionID uint32, pcm []int16,
 	}
 	time.Sleep(delayDur)
 
-	enc, err := opus.NewEncoder(sampleRate, audioChannels, opus.AppVoIP)
+	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, opus.AppVoIP)
 	if err != nil {
 		log.Printf("repeater encoder create failed: %v", err)
 		return
@@ -1274,7 +1277,7 @@ func newClickModule(frameDuration time.Duration, cfg clickConfig) *clickModule {
 	return &clickModule{
 		clickAmplitude: amp,
 		freqHz:         200.0,
-		burstSamples:   sampleRate / 80, // ~12.5 ms burst at 8 kHz.
+		burstSamples:   configuredSampleRate / 80, // ~12.5 ms at current sample rate.
 		frameDuration:  frameDuration,
 		glitchMaxMs:    maxInt(cfg.GlitchIntervalMaxMs, 0),
 		glitchFreqMin:  cfg.GlitchFreqMinHz,
@@ -1354,7 +1357,7 @@ func (m *clickModule) injectClickWithParams(ctx *audioProcessContext, sign float
 		phaseOffset = math.Pi
 	}
 	for i := 0; i < limit; i++ {
-		t := float64(i) / float64(sampleRate)
+		t := float64(i) / float64(configuredSampleRate)
 		env := math.Exp(-4.0 * float64(i) / float64(limit))
 		wave := math.Sin(2.0*math.Pi*freqHz*t + phaseOffset)
 		ctx.Mixed[i] += wave * amplitude * env
@@ -1484,6 +1487,19 @@ func normalizePacketMs(ms int) int {
 	return ms
 }
 
+func normalizeSampleRate(rate int) int {
+	switch rate {
+	case 8000, 12000, 16000, 24000, 48000:
+		return rate
+	default:
+		return defaultSampleRate
+	}
+}
+
+func isSupportedSampleRate(rate int) bool {
+	return rate == normalizeSampleRate(rate)
+}
+
 func isSupportedPacketMs(ms int) bool {
 	switch ms {
 	case 10, 20, 40, 60:
@@ -1503,10 +1519,11 @@ func normalizeJitterMinPackets(count int) int {
 	return count
 }
 
-func applyPacketTiming(packetMs int) {
+func applyAudioTiming(sampleRate int, packetMs int) {
+	configuredSampleRate = normalizeSampleRate(sampleRate)
 	norm := normalizePacketMs(packetMs)
 	packetDur = time.Duration(norm) * time.Millisecond
-	packetSamples = sampleRate * norm / 1000
+	packetSamples = configuredSampleRate * norm / 1000
 }
 
 type whiteNoise struct{}
@@ -1745,6 +1762,7 @@ func defaultConfig() appConfig {
 		Server: serverConfig{
 			WSAddr:             ":5500",
 			UDPAddr:            ":5505",
+			SampleRate:         defaultSampleRate,
 			PacketMs:           defaultPacketMs,
 			HangoverMs:         180,
 			EOFTimeoutMs:       420,
@@ -1812,6 +1830,7 @@ func loadConfig(path string) (appConfig, error) {
 	if err := validateConfig(cfg); err != nil {
 		return appConfig{}, err
 	}
+	cfg.Server.SampleRate = normalizeSampleRate(cfg.Server.SampleRate)
 	return cfg, nil
 }
 
@@ -1821,6 +1840,9 @@ func validateConfig(cfg appConfig) error {
 	}
 	if !isSupportedPacketMs(cfg.Server.PacketMs) {
 		return errors.New("server.packet_ms must be one of: 10, 20, 40, 60")
+	}
+	if !isSupportedSampleRate(cfg.Server.SampleRate) {
+		return errors.New("server.sample_rate must be one of: 8000, 12000, 16000, 24000, 48000")
 	}
 	if cfg.Server.HangoverMs < cfg.Server.PacketMs {
 		return errors.New("server.hangover_ms must be >= server.packet_ms")
@@ -1885,7 +1907,7 @@ func validateConfig(cfg appConfig) error {
 			math.IsNaN(cfg.Modules.Filter.HighCutHz) || math.IsInf(cfg.Modules.Filter.HighCutHz, 0) {
 			return errors.New("modules.filter cutoff range must be finite")
 		}
-		nyquist := float64(sampleRate) / 2.0
+		nyquist := float64(cfg.Server.SampleRate) / 2.0
 		if cfg.Modules.Filter.LowCutHz <= 0 || cfg.Modules.Filter.HighCutHz <= cfg.Modules.Filter.LowCutHz || cfg.Modules.Filter.HighCutHz >= nyquist {
 			return errors.New("modules.filter cutoff range is invalid")
 		}
@@ -1917,6 +1939,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		Type:            "welcome",
 		SessionID:       c.sessionID,
 		PacketMs:        normalizePacketMs(s.hub.cfg.Server.PacketMs),
+		SampleRate:      normalizeSampleRate(s.hub.cfg.Server.SampleRate),
 		ProtocolVersion: protocolVersion,
 		BusyMode:        boolPtr(s.hub.cfg.Server.BusyMode),
 	})
@@ -1994,8 +2017,6 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 				s.hub.getOrCreateChannel(c.getChannel()).clearRepeaterState(c.sessionID)
 			}
 			_ = c.writeJSON(wsServerMessage{Type: "repeater_mode", Info: strconv.FormatBool(enabled)})
-		case "tx_eof":
-			s.hub.markTxEOF(c.sessionID)
 		case "has_activity":
 			ch := strings.TrimSpace(msg.Channel)
 			active := s.hub.channelHasRecentActivity(ch)
@@ -2043,7 +2064,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("config error: %v", err)
 	}
-	applyPacketTiming(cfg.Server.PacketMs)
+	applyAudioTiming(cfg.Server.SampleRate, cfg.Server.PacketMs)
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -2067,9 +2088,10 @@ func main() {
 	})
 
 	log.Printf(
-		"relay started ws=%s udp=%s packet_ms=%d protocol_version=%d jitter_min_packets=%d busy_mode=%t transmit_timeout=%ds",
+		"relay started ws=%s udp=%s sample_rate=%d packet_ms=%d protocol_version=%d jitter_min_packets=%d busy_mode=%t transmit_timeout=%ds",
 		cfg.Server.WSAddr,
 		cfg.Server.UDPAddr,
+		normalizeSampleRate(cfg.Server.SampleRate),
 		normalizePacketMs(cfg.Server.PacketMs),
 		protocolVersion,
 		cfg.Server.JitterMinPkts,

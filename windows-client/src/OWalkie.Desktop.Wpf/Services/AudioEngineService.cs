@@ -9,7 +9,7 @@ namespace OWalkie.Desktop.Wpf.Services;
 
 public sealed class AudioEngineService
 {
-    private const int TargetSampleRate = 8000;
+    private const int DefaultSampleRate = 8000;
     private const int Channels = 1;
 
     private readonly object _codecLock = new();
@@ -25,6 +25,7 @@ public sealed class AudioEngineService
     private BufferedWaveProvider? _playbackBuffer;
     private OpusEncoder? _encoder;
     private OpusDecoder? _decoder;
+    private int _sampleRate = DefaultSampleRate;
     private int _frameSamples = 160;
     private double _captureReadPos;
     private CancellationTokenSource? _senderLoopCts;
@@ -39,6 +40,7 @@ public sealed class AudioEngineService
     public void Initialize(RelayClientService relayClientService)
     {
         _relayClientService = relayClientService;
+        _relayClientService.SampleRateChanged += OnSampleRateChanged;
         _relayClientService.PacketMsChanged += OnPacketMsChanged;
         _relayClientService.OpusFrameReceived += OnOpusFrameReceived;
         EnsurePlaybackPipeline();
@@ -76,30 +78,37 @@ public sealed class AudioEngineService
 
     private void OnPacketMsChanged(object? sender, int packetMs)
     {
-        _frameSamples = TargetSampleRate * packetMs / 1000;
+        _frameSamples = _sampleRate * packetMs / 1000;
         _packetIntervalMs = packetMs is 10 or 20 or 40 or 60 ? packetMs : 20;
         EnsureCodec();
+    }
+
+    private void OnSampleRateChanged(object? sender, int sampleRate)
+    {
+        _sampleRate = sampleRate is 8000 or 12000 or 16000 or 24000 or 48000 ? sampleRate : DefaultSampleRate;
+        _frameSamples = _sampleRate * _packetIntervalMs / 1000;
+        EnsureCodec();
+        EnsurePlaybackPipeline();
     }
 
     private void EnsureCodec()
     {
         lock (_codecLock)
         {
-            _encoder = new OpusEncoder(TargetSampleRate, Channels, OpusApplication.OPUS_APPLICATION_VOIP);
+            _encoder = new OpusEncoder(_sampleRate, Channels, OpusApplication.OPUS_APPLICATION_VOIP);
             _encoder.Bitrate = 12000;
             _encoder.SignalType = OpusSignal.OPUS_SIGNAL_VOICE;
-            _decoder = new OpusDecoder(TargetSampleRate, Channels);
+            _decoder = new OpusDecoder(_sampleRate, Channels);
         }
     }
 
     private void EnsurePlaybackPipeline()
     {
-        if (_playback != null && _playbackBuffer != null)
-        {
-            return;
-        }
+        _playback?.Dispose();
+        _playback = null;
+        _playbackBuffer = null;
 
-        _playbackBuffer = new BufferedWaveProvider(new WaveFormat(TargetSampleRate, 16, Channels))
+        _playbackBuffer = new BufferedWaveProvider(new WaveFormat(_sampleRate, 16, Channels))
         {
             DiscardOnBufferOverflow = true,
             BufferDuration = TimeSpan.FromSeconds(2),
@@ -193,7 +202,7 @@ public sealed class AudioEngineService
             return;
         }
 
-        var waveFormat = (sender as IWaveIn)?.WaveFormat ?? new WaveFormat(TargetSampleRate, 16, 1);
+        var waveFormat = (sender as IWaveIn)?.WaveFormat ?? new WaveFormat(_sampleRate, 16, 1);
         var mono = ConvertToMonoSamples(e.Buffer, e.BytesRecorded, waveFormat);
         if (mono.Count == 0)
         {
@@ -204,7 +213,7 @@ public sealed class AudioEngineService
         {
             _captureMonoBuffer.AddRange(mono);
             var sampleRate = Math.Max(1, waveFormat.SampleRate);
-            var step = sampleRate / (double)TargetSampleRate;
+            var step = sampleRate / (double)_sampleRate;
 
             while (CanBuildFrame(step))
             {

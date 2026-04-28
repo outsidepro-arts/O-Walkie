@@ -2,6 +2,7 @@
   "server": {
     "ws_addr": ":5500",
     "udp_addr": ":5505",
+    "sample_rate": 8000,
     "packet_ms": 20,
     "hangover_ms": 180,
     "eof_timeout_ms": 420,

@@ -95,12 +95,12 @@ class WalkieService : Service() {
         private const val DEFAULT_UDP_PORT = 5000
         private const val DEFAULT_CHANNEL = "global"
 
-        private const val SAMPLE_RATE = 8000
+        private const val DEFAULT_SAMPLE_RATE = 8000
         private const val LOCAL_PLAYBACK_SAMPLE_RATE = 44100
         private const val CHANNELS = 1
         private const val DEFAULT_PACKET_MS = 20
-        private const val PROTOCOL_VERSION = 1
-        private const val MAX_PACKET_SAMPLES = SAMPLE_RATE * 60 / 1000
+        private const val PROTOCOL_VERSION = 2
+        private const val MAX_PACKET_SAMPLES = 48000 * 60 / 1000
         private const val ROGER_TAIL_MS = 40
         private const val CALL_LOCAL_GAIN_DB = -10.0
     }
@@ -161,6 +161,8 @@ class WalkieService : Service() {
     @Volatile
     private var packetMs: Int = DEFAULT_PACKET_MS
     @Volatile
+    private var serverSampleRate: Int = DEFAULT_SAMPLE_RATE
+    @Volatile
     private var wsSecure: Boolean = false
     @Volatile
     private var channelBound: Boolean = false
@@ -188,7 +190,7 @@ class WalkieService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        codec = OpusCodecFactory().create(SAMPLE_RATE, CHANNELS)
+        codec = OpusCodecFactory().create(DEFAULT_SAMPLE_RATE, CHANNELS)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         rogerPatternStore = RogerPatternStore(this)
         callingPatternStore = CallingPatternStore(this)
@@ -475,8 +477,32 @@ class WalkieService : Service() {
                         broadcastStatus(currentSignalByte())
                         return@runCatching
                     }
+                    if (!obj.has("sampleRate")) {
+                        protocolError = true
+                        desiredConnection.set(false)
+                        wsConnected.set(false)
+                        ws.close(1002, "missing sampleRate in welcome")
+                        broadcastStatus(currentSignalByte())
+                        return@runCatching
+                    }
+                    val rawSampleRate = obj.optInt("sampleRate", -1)
+                    if (rawSampleRate != normalizeSampleRate(rawSampleRate)) {
+                        protocolError = true
+                        desiredConnection.set(false)
+                        wsConnected.set(false)
+                        ws.close(1002, "unsupported sampleRate in welcome")
+                        broadcastStatus(currentSignalByte())
+                        return@runCatching
+                    }
                     sessionId.set(obj.optLong("sessionId", 0L))
                     packetMs = normalizePacketMs(obj.optInt("packetMs", DEFAULT_PACKET_MS))
+                    val negotiatedSampleRate = rawSampleRate
+                    if (negotiatedSampleRate != serverSampleRate) {
+                        serverSampleRate = negotiatedSampleRate
+                        synchronized(encodeLock) {
+                            codec = OpusCodecFactory().create(serverSampleRate, CHANNELS)
+                        }
+                    }
                     busyMode = obj.optBoolean("busyMode", false)
                     busyRxActive.set(false)
                     if (!channelBound) {
@@ -541,13 +567,13 @@ class WalkieService : Service() {
         if (udpReceiveJob?.isActive == true) return
         udpReceiveJob = serviceScope.launch(Dispatchers.IO) {
             val minBuffer = AudioTrack.getMinBufferSize(
-                SAMPLE_RATE,
+                currentCodecSampleRate(),
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
             )
             val track = AudioTrack(
                 AudioManager.STREAM_MUSIC,
-                SAMPLE_RATE,
+                currentCodecSampleRate(),
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
                 minBuffer.coerceAtLeast(MAX_PACKET_SAMPLES * 4),
@@ -619,7 +645,7 @@ class WalkieService : Service() {
         localRogerPlaybackJob?.cancel()
         rogerJob = serviceScope.launch(Dispatchers.Default) {
             try {
-                val rogerPcm = generateRogerFromSelectedPattern(SAMPLE_RATE)
+                val rogerPcm = generateRogerFromSelectedPattern(currentCodecSampleRate())
                 val localRogerPcm = generateRogerFromSelectedPattern(LOCAL_PLAYBACK_SAMPLE_RATE)
                 val localPlaybackPcm = prependSignal(localPttReleasePcm, localRogerPcm)
                 localRogerPlaybackJob = serviceScope.launch(Dispatchers.IO) {
@@ -642,7 +668,7 @@ class WalkieService : Service() {
         localCallPlaybackJob?.cancel()
         callSignalJob = serviceScope.launch(Dispatchers.Default) {
             try {
-                val callPcm = generateCallFromSelectedPattern(SAMPLE_RATE)
+                val callPcm = generateCallFromSelectedPattern(currentCodecSampleRate())
                 val localCallPcm = generateCallFromSelectedPattern(LOCAL_PLAYBACK_SAMPLE_RATE)
                 localCallPlaybackJob = serviceScope.launch(Dispatchers.IO) {
                     playLocalSignalPcm(localCallPcm, LOCAL_PLAYBACK_SAMPLE_RATE, CALL_LOCAL_GAIN_DB)
@@ -660,7 +686,7 @@ class WalkieService : Service() {
     private suspend fun runCaptureLoop() = withContext(Dispatchers.IO) {
         val frameSamples = currentFrameSamples()
         val minBuffer = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE,
+            currentCodecSampleRate(),
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
@@ -812,12 +838,12 @@ class WalkieService : Service() {
         return runCatching {
             resources.openRawResource(resourceId).use { input ->
                 val bytes = input.readBytes()
-                if (bytes.size < 44) return WavPcm(shortArrayOf(), SAMPLE_RATE)
+                if (bytes.size < 44) return WavPcm(shortArrayOf(), DEFAULT_SAMPLE_RATE)
                 if (String(bytes, 0, 4) != "RIFF" || String(bytes, 8, 4) != "WAVE") {
-                    return WavPcm(shortArrayOf(), SAMPLE_RATE)
+                    return WavPcm(shortArrayOf(), DEFAULT_SAMPLE_RATE)
                 }
                 var offset = 12
-                var srcRate = SAMPLE_RATE
+                var srcRate = DEFAULT_SAMPLE_RATE
                 var dataStart = -1
                 var dataSize = 0
                 while (offset + 8 <= bytes.size) {
@@ -835,7 +861,7 @@ class WalkieService : Service() {
                     offset = payloadStart + chunkSize + (chunkSize and 1)
                 }
                 if (dataStart < 0 || dataSize <= 0 || dataStart + dataSize > bytes.size) {
-                    return WavPcm(shortArrayOf(), SAMPLE_RATE)
+                    return WavPcm(shortArrayOf(), DEFAULT_SAMPLE_RATE)
                 }
                 val sampleCount = dataSize / 2
                 val out = ShortArray(sampleCount)
@@ -844,10 +870,10 @@ class WalkieService : Service() {
                     out[i] = ByteBuffer.wrap(bytes, p, 2).order(ByteOrder.LITTLE_ENDIAN).short
                     p += 2
                 }
-                val safeRate = srcRate.takeIf { it in 4000..192000 } ?: SAMPLE_RATE
+                val safeRate = srcRate.takeIf { it in 4000..192000 } ?: DEFAULT_SAMPLE_RATE
                 WavPcm(out, safeRate)
             }
-        }.getOrDefault(WavPcm(shortArrayOf(), SAMPLE_RATE))
+        }.getOrDefault(WavPcm(shortArrayOf(), DEFAULT_SAMPLE_RATE))
     }
 
     private data class WavPcm(val samples: ShortArray, val sampleRate: Int)
@@ -1081,6 +1107,15 @@ class WalkieService : Service() {
         }
     }
 
+    private fun normalizeSampleRate(value: Int): Int {
+        return when (value) {
+            8000, 12000, 16000, 24000, 48000 -> value
+            else -> DEFAULT_SAMPLE_RATE
+        }
+    }
+
+    private fun currentCodecSampleRate(): Int = normalizeSampleRate(serverSampleRate)
+
     private fun currentPacketMs(): Int = normalizePacketMs(packetMs)
 
     private fun scheduleRxResumeHoldoff(multiplier: Int = 2) {
@@ -1090,7 +1125,7 @@ class WalkieService : Service() {
 
     private fun isRxHoldoffActive(): Boolean = System.nanoTime() < rxResumeAtNs.get()
 
-    private fun currentFrameSamples(): Int = (SAMPLE_RATE * currentPacketMs()) / 1000
+    private fun currentFrameSamples(): Int = (currentCodecSampleRate() * currentPacketMs()) / 1000
 
     private fun resolveHost(host: String): InetAddress? {
         return try {
@@ -1290,7 +1325,7 @@ class WalkieService : Service() {
         return runCatching {
             AudioRecord(
                 source,
-                SAMPLE_RATE,
+                currentCodecSampleRate(),
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
                 minBuffer.coerceAtLeast(frameSamples * 4),
