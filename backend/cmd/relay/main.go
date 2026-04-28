@@ -2278,11 +2278,18 @@ func isExpectedDisconnectError(err error) bool {
 }
 
 func main() {
-	if len(os.Args) > 1 {
-		log.Fatalf("startup flags are disabled: configure server via %s only", configFilePath)
+	if len(os.Args) > 2 {
+		log.Fatalf("usage: %s [config-path]", os.Args[0])
+	}
+	cfgPath := configFilePath
+	if len(os.Args) == 2 {
+		cfgPath = strings.TrimSpace(os.Args[1])
+		if cfgPath == "" {
+			log.Fatalf("usage: %s [config-path]", os.Args[0])
+		}
 	}
 
-	cfg, err := loadConfig(configFilePath)
+	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		log.Fatalf("config error: %v", err)
 	}

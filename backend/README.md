@@ -6,7 +6,11 @@
 go run ./cmd/relay
 ```
 
-Server startup flags are disabled. Configure all runtime values in `config.json`.
+By default server loads `./config.json`. You can pass another config path as the first argument:
+
+```powershell
+go run ./cmd/relay ./config.json
+```
 
 ### Config (`backend/config.json`)
 
