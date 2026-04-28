@@ -11,7 +11,8 @@
         android:layout_height="wrap_content"
         android:hint="@string/roger_name_hint"
         android:inputType="textCapWords"
-        android:maxLines="1" />
+        android:maxLines="1"
+        android:selectAllOnFocus="true" />
 
     <TextView
         android:id="@+id/pointsLabel"

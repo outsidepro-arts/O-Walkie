@@ -24,12 +24,14 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.telephony.TelephonyManager
+import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import ru.outsidepro_arts.owalkie.audio.OpusCodec
 import ru.outsidepro_arts.owalkie.audio.OpusCodecFactory
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
 import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
 import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
+import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
 import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 import ru.outsidepro_arts.owalkie.model.RxVolumeStore
 import kotlinx.coroutines.CoroutineScope
@@ -73,6 +75,7 @@ class WalkieService : Service() {
         const val ACTION_SET_RX_VOLUME = "ru.outsidepro_arts.owalkie.action.SET_RX_VOLUME"
         const val ACTION_SET_BLUETOOTH_HEADSET_MODE = "ru.outsidepro_arts.owalkie.action.SET_BLUETOOTH_HEADSET_MODE"
         const val ACTION_SET_ACTIVITY_FOCUS = "ru.outsidepro_arts.owalkie.action.SET_ACTIVITY_FOCUS"
+        const val ACTION_HARDWARE_PTT_KEY = "ru.outsidepro_arts.owalkie.action.HARDWARE_PTT_KEY"
         const val EXTRA_SIGNAL = "signal"
         const val EXTRA_WS_CONNECTED = "wsConnected"
         const val EXTRA_WS_CONNECTING = "wsConnecting"
@@ -89,6 +92,11 @@ class WalkieService : Service() {
         const val EXTRA_RX_VOLUME_PERCENT = "rxVolumePercent"
         const val EXTRA_USE_BLUETOOTH_HEADSET = "useBluetoothHeadset"
         const val EXTRA_ACTIVITY_FOCUSED = "activityFocused"
+        const val EXTRA_HW_KEY_ACTION = "hwKeyAction"
+        const val EXTRA_HW_KEY_REPEAT = "hwKeyRepeat"
+        const val EXTRA_HW_KEY_CODE = "hwKeyCode"
+        const val EXTRA_HW_SCAN_CODE = "hwScanCode"
+        const val EXTRA_HW_FROM_BACKGROUND = "hwFromBackground"
 
         private const val NOTIFICATION_CHANNEL_ID = "owalkie_stream"
         private const val NOTIFICATION_ID = 101
@@ -132,6 +140,7 @@ class WalkieService : Service() {
     private var callSignalJob: Job? = null
     private var localRogerPlaybackJob: Job? = null
     private var localCallPlaybackJob: Job? = null
+    private var localPttPressPlaybackJob: Job? = null
 
     private val transmitting = AtomicBoolean(false)
     private val rogerStreaming = AtomicBoolean(false)
@@ -183,6 +192,8 @@ class WalkieService : Service() {
     private lateinit var microphoneConfigStore: MicrophoneConfigStore
     private lateinit var bluetoothHeadsetRouteStore: BluetoothHeadsetRouteStore
     private lateinit var rxVolumeStore: RxVolumeStore
+    private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
+    private var localPttPressPcm: ShortArray = shortArrayOf()
     private var localPttReleasePcm: ShortArray = shortArrayOf()
     @Volatile
     private var voiceProfileActive: Boolean = false
@@ -202,8 +213,11 @@ class WalkieService : Service() {
         microphoneConfigStore = MicrophoneConfigStore(this)
         bluetoothHeadsetRouteStore = BluetoothHeadsetRouteStore(this)
         rxVolumeStore = RxVolumeStore(this)
+        pttHardwareKeyStore = PttHardwareKeyStore(this)
         useBluetoothHeadset = bluetoothHeadsetRouteStore.isEnabled()
         rxVolumePercent = rxVolumeStore.getPercent()
+        val pttPressWav = loadWavPcmFromRaw(R.raw.selfpttup_002)
+        localPttPressPcm = resampleLinear(pttPressWav.samples, pttPressWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
         val pttReleaseWav = loadWavPcmFromRaw(R.raw.selfttdown_002)
         localPttReleasePcm = resampleLinear(pttReleaseWav.samples, pttReleaseWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
     }
@@ -228,6 +242,15 @@ class WalkieService : Service() {
             }
             ACTION_PTT_PRESS -> onPttPress()
             ACTION_PTT_RELEASE -> onPttRelease()
+            ACTION_HARDWARE_PTT_KEY -> {
+                val action = intent.getIntExtra(EXTRA_HW_KEY_ACTION, KeyEvent.ACTION_DOWN)
+                val repeat = intent.getIntExtra(EXTRA_HW_KEY_REPEAT, 0)
+                val keyCode = intent.getIntExtra(EXTRA_HW_KEY_CODE, KeyEvent.KEYCODE_UNKNOWN)
+                val scanCode = intent.getIntExtra(EXTRA_HW_SCAN_CODE, 0)
+                val fromBackground = intent.getBooleanExtra(EXTRA_HW_FROM_BACKGROUND, false)
+                val evt = KeyEvent(0L, 0L, action, keyCode, repeat, 0, 0, scanCode)
+                handleHardwarePttKeyEvent(evt, fromBackground = fromBackground)
+            }
             ACTION_SET_REPEATER -> setRepeaterMode(intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, false))
             ACTION_CALL_SIGNAL -> onCallSignal()
             ACTION_SET_RX_VOLUME -> updateRxVolumePercent(
@@ -244,6 +267,31 @@ class WalkieService : Service() {
         return START_STICKY
     }
 
+    private fun handleHardwarePttKeyEvent(event: KeyEvent, fromBackground: Boolean): Boolean {
+        val binding = pttHardwareKeyStore.getBinding()
+        if (!binding.isAssigned()) return false
+        if (fromBackground && !binding.handleInBackground) return false
+        if (!pttHardwareKeyStore.matches(event)) return false
+
+        // Background handling expects the service to be alive (connected or connecting).
+        val shouldHandleNow = desiredConnection.get() || wsConnected.get()
+        if (fromBackground && !shouldHandleNow) return false
+
+        return when (event.action) {
+            KeyEvent.ACTION_DOWN -> {
+                if (event.repeatCount == 0) {
+                    onPttPress()
+                }
+                true
+            }
+            KeyEvent.ACTION_UP -> {
+                onPttRelease()
+                true
+            }
+            else -> false
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         transmitting.set(false)
@@ -252,6 +300,7 @@ class WalkieService : Service() {
         callSignalJob?.cancel()
         localRogerPlaybackJob?.cancel()
         localCallPlaybackJob?.cancel()
+        localPttPressPlaybackJob?.cancel()
         udpReceiveJob?.cancel()
         wsReconnectJob?.cancel()
         signalMonitorJob?.cancel()
@@ -499,6 +548,8 @@ class WalkieService : Service() {
                         broadcastStatus(currentSignalByte())
                         return@runCatching
                     }
+                    val previousSampleRate = serverSampleRate
+                    val previousPacketMs = packetMs
                     sessionId.set(obj.optLong("sessionId", 0L))
                     packetMs = normalizePacketMs(obj.optInt("packetMs", DEFAULT_PACKET_MS))
                     val negotiatedSampleRate = rawSampleRate
@@ -507,6 +558,9 @@ class WalkieService : Service() {
                         synchronized(encodeLock) {
                             codec = OpusCodecFactory().create(serverSampleRate, CHANNELS)
                         }
+                    }
+                    if (previousSampleRate != serverSampleRate || previousPacketMs != packetMs) {
+                        restartPlaybackLoop()
                     }
                     busyMode = obj.optBoolean("busyMode", false)
                     busyRxActive.set(false)
@@ -637,6 +691,12 @@ class WalkieService : Service() {
         }
     }
 
+    private fun restartPlaybackLoop() {
+        udpReceiveJob?.cancel()
+        udpReceiveJob = null
+        ensurePlaybackLoop()
+    }
+
     private fun vibrateTxCollision() {
         runCatching {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -670,6 +730,10 @@ class WalkieService : Service() {
         if (transmitting.getAndSet(true)) return
         val micOption = microphoneConfigStore.getSelectedOption()
         ensureVoiceAudioProfile(useBluetoothHeadset || micOption.preferBluetooth)
+        localPttPressPlaybackJob?.cancel()
+        localPttPressPlaybackJob = serviceScope.launch(Dispatchers.IO) {
+            playLocalSignalPcm(localPttPressPcm, LOCAL_PLAYBACK_SAMPLE_RATE, 0.0)
+        }
         if (txJob?.isActive == true) return
         txJob = serviceScope.launch(Dispatchers.Default) {
             runCaptureLoop()

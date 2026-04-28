@@ -9,6 +9,7 @@ class PttHardwareKeyStore(context: Context) {
     data class Binding(
         val keyCode: Int = KeyEvent.KEYCODE_UNKNOWN,
         val scanCode: Int = 0,
+        val handleInBackground: Boolean = false,
     ) {
         fun isAssigned(): Boolean = keyCode != KeyEvent.KEYCODE_UNKNOWN || scanCode > 0
     }
@@ -29,9 +30,11 @@ class PttHardwareKeyStore(context: Context) {
     fun getBinding(): Binding {
         val keyCode = prefs.getInt(KEY_ASSIGNED_KEY_CODE, KeyEvent.KEYCODE_UNKNOWN)
         val scanCode = prefs.getInt(KEY_ASSIGNED_SCAN_CODE, 0)
+        val background = prefs.getBoolean(KEY_HANDLE_IN_BACKGROUND, false)
         return Binding(
             keyCode = if (keyCode > KeyEvent.KEYCODE_UNKNOWN) keyCode else KeyEvent.KEYCODE_UNKNOWN,
             scanCode = scanCode.coerceAtLeast(0),
+            handleInBackground = background,
         )
     }
 
@@ -41,6 +44,7 @@ class PttHardwareKeyStore(context: Context) {
         prefs.edit()
             .putInt(KEY_ASSIGNED_KEY_CODE, safeKey)
             .putInt(KEY_ASSIGNED_SCAN_CODE, safeScan)
+            .putBoolean(KEY_HANDLE_IN_BACKGROUND, binding.handleInBackground)
             .apply()
     }
 
@@ -48,6 +52,7 @@ class PttHardwareKeyStore(context: Context) {
         prefs.edit()
             .putInt(KEY_ASSIGNED_KEY_CODE, KeyEvent.KEYCODE_UNKNOWN)
             .putInt(KEY_ASSIGNED_SCAN_CODE, 0)
+            .putBoolean(KEY_HANDLE_IN_BACKGROUND, false)
             .apply()
     }
 
@@ -63,5 +68,6 @@ class PttHardwareKeyStore(context: Context) {
         private const val PREF_NAME = "ptt_hardware_key_config"
         private const val KEY_ASSIGNED_KEY_CODE = "assigned_key_code"
         private const val KEY_ASSIGNED_SCAN_CODE = "assigned_scan_code"
+        private const val KEY_HANDLE_IN_BACKGROUND = "handle_in_background"
     }
 }

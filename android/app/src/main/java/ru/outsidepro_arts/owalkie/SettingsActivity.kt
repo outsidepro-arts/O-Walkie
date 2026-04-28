@@ -1,6 +1,9 @@
 package ru.outsidepro_arts.owalkie
 
 import android.app.AlertDialog
+import android.content.ComponentName
+import android.net.Uri
+import android.provider.Settings
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
@@ -135,12 +138,14 @@ class SettingsActivity : ComponentActivity() {
     private fun showHardwarePttAssignmentDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_ptt_hardware_key, null)
         val valueText = dialogView.findViewById<TextView>(R.id.pttKeyDialogValueText)
+        val backgroundCheckBox = dialogView.findViewById<CheckBox>(R.id.pttKeyDialogBackgroundCheckBox)
         var pendingBinding = pttHardwareKeyStore.getBinding()
         valueText.text = if (!pendingBinding.isAssigned()) {
             getString(R.string.hardware_ptt_dialog_waiting)
         } else {
             bindingToDisplayName(pendingBinding)
         }
+        backgroundCheckBox.isChecked = pendingBinding.handleInBackground
         AlertDialog.Builder(this)
             .setTitle(R.string.hardware_ptt_dialog_title)
             .setView(dialogView)
@@ -149,8 +154,12 @@ class SettingsActivity : ComponentActivity() {
                 refreshHardwarePttStatus()
             }
             .setPositiveButton(R.string.common_ok) { _, _ ->
-                pttHardwareKeyStore.setBinding(pendingBinding)
+                val bindingToSave = pendingBinding.copy(handleInBackground = backgroundCheckBox.isChecked)
+                pttHardwareKeyStore.setBinding(bindingToSave)
                 refreshHardwarePttStatus()
+                if (bindingToSave.handleInBackground && !isPttAccessibilityEnabled()) {
+                    showAccessibilityRequiredDialog()
+                }
             }
             .setNegativeButton(R.string.roger_cancel, null)
             .create()
@@ -161,12 +170,46 @@ class SettingsActivity : ComponentActivity() {
                     pendingBinding = PttHardwareKeyStore.Binding(
                         keyCode = if (keyCode > KeyEvent.KEYCODE_UNKNOWN) keyCode else KeyEvent.KEYCODE_UNKNOWN,
                         scanCode = event.scanCode.coerceAtLeast(0),
+                        handleInBackground = backgroundCheckBox.isChecked,
                     )
                     valueText.text = bindingToDisplayName(pendingBinding)
                     true
                 }
             }
             .show()
+    }
+
+    private fun isPttAccessibilityEnabled(): Boolean {
+        val enabledServices = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?: return false
+        val myService = ComponentName(this, PttAccessibilityService::class.java).flattenToString()
+        return enabledServices.split(':').any { it.equals(myService, ignoreCase = true) }
+    }
+
+    private fun showAccessibilityRequiredDialog() {
+        AlertDialog.Builder(this)
+            .setMessage(R.string.hardware_ptt_accessibility_required_question)
+            .setPositiveButton(R.string.hardware_ptt_open_accessibility_settings) { _, _ ->
+                openAccessibilityServiceSettings()
+            }
+            .setNegativeButton(R.string.roger_cancel, null)
+            .show()
+    }
+
+    private fun openAccessibilityServiceSettings() {
+        val component = ComponentName(this, PttAccessibilityService::class.java).flattenToString()
+        val detailsIntent = Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS).apply {
+            putExtra(Intent.EXTRA_COMPONENT_NAME, component)
+            putExtra("android.provider.extra.ACCESSIBILITY_SERVICE_COMPONENT_NAME", component)
+            data = Uri.parse("package:$packageName")
+        }
+        val opened = runCatching {
+            startActivity(detailsIntent)
+            true
+        }.getOrElse { false }
+        if (!opened) {
+            runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        }
     }
 
     private fun keyCodeToDisplayName(keyCode: Int): String {
@@ -179,13 +222,13 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun bindingToDisplayName(binding: PttHardwareKeyStore.Binding): String {
-        val keyLabel = if (binding.keyCode != KeyEvent.KEYCODE_UNKNOWN) {
-            keyCodeToDisplayName(binding.keyCode)
-        } else {
-            getString(R.string.hardware_ptt_unknown_key)
+        val keyLabel = when {
+            binding.keyCode != KeyEvent.KEYCODE_UNKNOWN -> keyCodeToDisplayName(binding.keyCode)
+            binding.scanCode > 0 -> getString(R.string.hardware_ptt_scan_only_format, binding.scanCode)
+            else -> getString(R.string.hardware_ptt_unknown_key)
         }
-        return if (binding.scanCode > 0) {
-            "$keyLabel (scan ${binding.scanCode})"
+        return if (binding.handleInBackground) {
+            "$keyLabel (${getString(R.string.hardware_ptt_background_suffix)})"
         } else {
             keyLabel
         }

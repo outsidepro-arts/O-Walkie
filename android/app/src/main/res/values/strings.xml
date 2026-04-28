@@ -41,6 +41,11 @@
     <string name="hardware_ptt_dialog_title">Assign hardware key</string>
     <string name="hardware_ptt_dialog_waiting">Press a hardware button</string>
     <string name="hardware_ptt_unknown_key">Unknown key</string>
+    <string name="hardware_ptt_handle_in_background">Handle key in background</string>
+    <string name="hardware_ptt_background_suffix">background</string>
+    <string name="hardware_ptt_scan_only_format">Scan %1$d</string>
+    <string name="hardware_ptt_accessibility_required_question">For correct background key handling, you need to enable the O-Walkie service in Accessibility settings. Do you want to open Accessibility settings now?</string>
+    <string name="hardware_ptt_open_accessibility_settings">Open accessibility settings</string>
     <string name="common_ok">OK</string>
     <string name="common_reset">Reset</string>
     <string name="play_signal_button">Play</string>
@@ -123,4 +128,5 @@
     <string name="service_notification_action_connect">Connect</string>
     <string name="service_notification_action_disconnect">Disconnect</string>
     <string name="service_notification_action_battery">Battery settings</string>
+    <string name="accessibility_ptt_service_description">Captures assigned hardware PTT key in background mode.</string>
 </resources>

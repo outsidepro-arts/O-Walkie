@@ -41,6 +41,11 @@
     <string name="hardware_ptt_dialog_title">Назначение аппаратной кнопки</string>
     <string name="hardware_ptt_dialog_waiting">Нажмите аппаратную кнопку</string>
     <string name="hardware_ptt_unknown_key">Неизвестная кнопка</string>
+    <string name="hardware_ptt_handle_in_background">Обрабатывать клавишу в фоне</string>
+    <string name="hardware_ptt_background_suffix">в фоне</string>
+    <string name="hardware_ptt_scan_only_format">Скан %1$d</string>
+    <string name="hardware_ptt_accessibility_required_question">Для корректной работы клавиши в фоне, необходимо включить сервис O-Walkie в специальных возможностях. Хотите перейти в настройки специальных возможностей, чтобы включить его?</string>
+    <string name="hardware_ptt_open_accessibility_settings">Открыть настройки специальных возможностей</string>
     <string name="common_ok">Ок</string>
     <string name="common_reset">Сбросить</string>
     <string name="play_signal_button">Проиграть</string>
@@ -123,4 +128,5 @@
     <string name="service_notification_action_connect">Подключиться</string>
     <string name="service_notification_action_disconnect">Отключиться</string>
     <string name="service_notification_action_battery">Батарея</string>
+    <string name="accessibility_ptt_service_description">Перехватывает назначенную аппаратную PTT-клавишу в фоновом режиме.</string>
 </resources>

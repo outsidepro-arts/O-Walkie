@@ -136,7 +136,8 @@
             android:hint="@string/server_name_hint"
             android:importantForAccessibility="yes"
             android:inputType="textCapWords"
-            android:maxLines="1" />
+            android:maxLines="1"
+            android:selectAllOnFocus="true" />
 
         <TextView
             android:layout_width="wrap_content"
@@ -151,7 +152,8 @@
             android:hint="@string/server_host_hint"
             android:importantForAccessibility="yes"
             android:inputType="textUri"
-            android:maxLines="1" />
+            android:maxLines="1"
+            android:selectAllOnFocus="true" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -177,7 +179,8 @@
                     android:hint="@string/ws_port_hint"
                     android:importantForAccessibility="yes"
                     android:inputType="number"
-                    android:maxLines="1" />
+                    android:maxLines="1"
+                    android:selectAllOnFocus="true" />
             </LinearLayout>
 
             <Space
@@ -203,7 +206,8 @@
                     android:hint="@string/udp_port_hint"
                     android:importantForAccessibility="yes"
                     android:inputType="number"
-                    android:maxLines="1" />
+                    android:maxLines="1"
+                    android:selectAllOnFocus="true" />
             </LinearLayout>
         </LinearLayout>
 
@@ -221,7 +225,8 @@
             android:hint="@string/channel_hint"
             android:importantForAccessibility="yes"
             android:inputType="textNoSuggestions"
-            android:maxLines="1" />
+            android:maxLines="1"
+            android:selectAllOnFocus="true" />
 
         <LinearLayout
             android:layout_width="match_parent"

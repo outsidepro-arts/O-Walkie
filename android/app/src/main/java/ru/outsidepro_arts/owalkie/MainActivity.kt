@@ -232,19 +232,29 @@ class MainActivity : ComponentActivity() {
         if (pttHardwareKeyStore.matches(event)) {
             when (event.action) {
                 KeyEvent.ACTION_DOWN -> {
-                    if (event.repeatCount == 0) {
-                        startTransmitUi()
-                    }
+                    sendHardwarePttKeyEventToService(event)
                     return true
                 }
 
                 KeyEvent.ACTION_UP -> {
-                    stopTransmitUi()
+                    sendHardwarePttKeyEventToService(event)
                     return true
                 }
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun sendHardwarePttKeyEventToService(event: KeyEvent) {
+        val intent = Intent(this, WalkieService::class.java).apply {
+            action = WalkieService.ACTION_HARDWARE_PTT_KEY
+            putExtra(WalkieService.EXTRA_HW_KEY_ACTION, event.action)
+            putExtra(WalkieService.EXTRA_HW_KEY_REPEAT, event.repeatCount)
+            putExtra(WalkieService.EXTRA_HW_KEY_CODE, event.keyCode)
+            putExtra(WalkieService.EXTRA_HW_SCAN_CODE, event.scanCode)
+            putExtra(WalkieService.EXTRA_HW_FROM_BACKGROUND, false)
+        }
+        startService(intent)
     }
 
     private fun handleMenuAction(itemId: Int): Boolean {
@@ -298,7 +308,6 @@ class MainActivity : ComponentActivity() {
         if (transmitting) return
         if (!wsConnected) return
         transmitting = true
-        uiSignalPlayer.playPttPress()
         sendServiceAction(WalkieService.ACTION_PTT_PRESS)
         binding.callButton.isEnabled = false
         updatePttLabel()
