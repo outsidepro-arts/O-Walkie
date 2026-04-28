@@ -21,6 +21,9 @@ android/keystore/
 *.apk
 *.aab
 
+# Release artifacts
+release/
+
 # Windows client (.NET/WPF)
 windows-client/**/bin/
 windows-client/**/obj/
