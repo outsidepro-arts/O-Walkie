@@ -1681,14 +1681,21 @@ func (f *onePoleLP) process(x float64) float64 {
 }
 
 type bandPass struct {
-	hp *onePoleHP
-	lp *onePoleLP
+	hp []*onePoleHP
+	lp []*onePoleLP
 }
 
 func newBandPass(sr int, lowCut float64, highCut float64) *bandPass {
+	const poles = 4 // 4 * 6 dB/oct = 24 dB/oct per side
+	hp := make([]*onePoleHP, 0, poles)
+	lp := make([]*onePoleLP, 0, poles)
+	for i := 0; i < poles; i++ {
+		hp = append(hp, newOnePoleHP(sr, lowCut))
+		lp = append(lp, newOnePoleLP(sr, highCut))
+	}
 	return &bandPass{
-		hp: newOnePoleHP(sr, lowCut),
-		lp: newOnePoleLP(sr, highCut),
+		hp: hp,
+		lp: lp,
 	}
 }
 
@@ -1701,8 +1708,14 @@ func (b *bandPass) process(frame []int16) {
 }
 
 func (b *bandPass) processSample(x float64) float64 {
-	y := b.hp.process(x)
-	return b.lp.process(y)
+	y := x
+	for _, hp := range b.hp {
+		y = hp.process(y)
+	}
+	for _, lp := range b.lp {
+		y = lp.process(y)
+	}
+	return y
 }
 
 func parseAudioPacket(buf []byte, n int, src *net.UDPAddr) (*audioPacket, error) {
