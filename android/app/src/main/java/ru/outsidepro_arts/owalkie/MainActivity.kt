@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var rxVolumeStore: RxVolumeStore
     private lateinit var uiSignalPlayer: UiSignalPlayer
     private var transmitting = false
+    private var pttToggleModeEnabled = false
     private var selectedServerIndex = 0
     private val servers = mutableListOf<ServerProfile>()
     private var wsConnected = false
@@ -129,19 +130,35 @@ class MainActivity : ComponentActivity() {
         }
 
         binding.pttButton.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    startTransmitUi()
-                    true
+            if (pttToggleModeEnabled) {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_UP -> {
+                        toggleTransmitUi()
+                        true
+                    }
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_CANCEL -> true
+                    else -> false
                 }
+            } else {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        startTransmitUi()
+                        true
+                    }
 
-                MotionEvent.ACTION_UP,
-                MotionEvent.ACTION_CANCEL -> {
-                    stopTransmitUi()
-                    true
+                    MotionEvent.ACTION_UP,
+                    MotionEvent.ACTION_CANCEL -> {
+                        stopTransmitUi()
+                        true
+                    }
+
+                    else -> false
                 }
-
-                else -> false
+            }
+        }
+        binding.pttButton.setOnClickListener {
+            if (pttToggleModeEnabled) {
+                toggleTransmitUi()
             }
         }
 
@@ -173,6 +190,7 @@ class MainActivity : ComponentActivity() {
             showMoreMenu()
         }
         initRxVolumeUi()
+        refreshPttToggleModeSetting()
 
         updateConnectionDetailsUi()
         updateConnectButtonLabel()
@@ -198,6 +216,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        refreshPttToggleModeSetting()
         updateBatteryOptimizationUi()
     }
 
@@ -317,6 +336,14 @@ class MainActivity : ComponentActivity() {
         updateStatusChips()
     }
 
+    private fun toggleTransmitUi() {
+        if (transmitting) {
+            stopTransmitUi()
+        } else {
+            startTransmitUi()
+        }
+    }
+
     private fun stopTransmitUi() {
         if (!transmitting) return
         transmitting = false
@@ -332,8 +359,23 @@ class MainActivity : ComponentActivity() {
             binding.pttButton.contentDescription = getString(R.string.ptt_unavailable)
             return
         }
-        binding.pttButton.text = getString(R.string.ptt_hold)
-        binding.pttButton.contentDescription = getString(R.string.ptt_hold_accessibility_hint)
+        if (pttToggleModeEnabled) {
+            binding.pttButton.text = getString(if (transmitting) R.string.ptt_stop_talking else R.string.ptt_start_talking)
+            binding.pttButton.contentDescription = getString(R.string.ptt_toggle_accessibility_hint)
+        } else {
+            binding.pttButton.text = getString(R.string.ptt_hold)
+            binding.pttButton.contentDescription = getString(R.string.ptt_hold_accessibility_hint)
+        }
+    }
+
+    private fun refreshPttToggleModeSetting() {
+        val enabled = pttHardwareKeyStore.isToggleModeEnabled()
+        if (pttToggleModeEnabled == enabled) return
+        pttToggleModeEnabled = enabled
+        if (!pttToggleModeEnabled && transmitting) {
+            stopTransmitUi()
+        }
+        updatePttLabel()
     }
 
     private fun startWalkieService(profile: ServerProfile) {

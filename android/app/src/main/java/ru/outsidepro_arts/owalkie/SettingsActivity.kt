@@ -33,6 +33,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var hardwarePttStatusText: TextView
     private lateinit var microphoneSpinner: Spinner
     private lateinit var useBluetoothHeadsetCheckBox: CheckBox
+    private lateinit var pttToggleModeCheckBox: CheckBox
     private lateinit var rogerSpinner: Spinner
     private lateinit var callingSpinner: Spinner
     private lateinit var customRogerButton: Button
@@ -64,6 +65,7 @@ class SettingsActivity : ComponentActivity() {
         hardwarePttStatusText = findViewById(R.id.hardwarePttStatusText)
         microphoneSpinner = findViewById(R.id.microphoneSpinner)
         useBluetoothHeadsetCheckBox = findViewById(R.id.useBluetoothHeadsetCheckBox)
+        pttToggleModeCheckBox = findViewById(R.id.pttToggleModeCheckBox)
         rogerSpinner = findViewById(R.id.rogerPatternSpinner)
         callingSpinner = findViewById(R.id.callingPatternSpinner)
         customRogerButton = findViewById(R.id.customRogerButton)
@@ -100,6 +102,9 @@ class SettingsActivity : ComponentActivity() {
             bluetoothHeadsetRouteStore.setEnabled(isChecked)
             sendBluetoothHeadsetModeToService(isChecked)
         }
+        pttToggleModeCheckBox.setOnCheckedChangeListener { _, isChecked ->
+            pttHardwareKeyStore.setToggleModeEnabled(isChecked)
+        }
 
         refreshPatterns()
     }
@@ -111,6 +116,7 @@ class SettingsActivity : ComponentActivity() {
 
     private fun refreshPatterns() {
         refreshHardwarePttStatus()
+        refreshPttToggleMode()
         refreshMicrophoneOptions()
         refreshBluetoothHeadsetToggle()
         refreshRogerPatterns()
@@ -133,6 +139,15 @@ class SettingsActivity : ComponentActivity() {
             getString(R.string.hardware_ptt_status_unassigned)
         } else {
             getString(R.string.hardware_ptt_status_assigned_format, bindingToDisplayName(binding))
+        }
+    }
+
+    private fun refreshPttToggleMode() {
+        val enabled = pttHardwareKeyStore.isToggleModeEnabled()
+        pttToggleModeCheckBox.setOnCheckedChangeListener(null)
+        pttToggleModeCheckBox.isChecked = enabled
+        pttToggleModeCheckBox.setOnCheckedChangeListener { _, isChecked ->
+            pttHardwareKeyStore.setToggleModeEnabled(isChecked)
         }
     }
 

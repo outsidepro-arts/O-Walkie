@@ -60,6 +60,13 @@
             android:text="@string/hardware_ptt_status_unassigned" />
     </LinearLayout>
 
+    <CheckBox
+        android:id="@+id/pttToggleModeCheckBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/hardware_ptt_toggle_mode_label" />
+
     <TextView
         android:id="@+id/rogerSignalLabel"
         android:layout_width="wrap_content"

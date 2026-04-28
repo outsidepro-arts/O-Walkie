@@ -46,6 +46,7 @@
     <string name="hardware_ptt_scan_only_format">Scan %1$d</string>
     <string name="hardware_ptt_accessibility_required_question">For correct background key handling, you need to enable the O-Walkie service in Accessibility settings. Do you want to open Accessibility settings now?</string>
     <string name="hardware_ptt_open_accessibility_settings">Open accessibility settings</string>
+    <string name="hardware_ptt_toggle_mode_label">PTT toggle mode</string>
     <string name="common_ok">OK</string>
     <string name="common_reset">Reset</string>
     <string name="play_signal_button">Play</string>
@@ -106,6 +107,7 @@
     <string name="rx_volume_value">%1$d%%</string>
     <string name="rx_volume_accessibility">Incoming volume %1$d percent</string>
     <string name="ptt_hold_accessibility_hint">Press and hold to transmit.</string>
+    <string name="ptt_toggle_accessibility_hint">Double tap to start or stop transmit.</string>
     <string name="ptt_start_talking">Start talking</string>
     <string name="ptt_stop_talking">Stop talking</string>
     <string name="ptt_unavailable">PTT unavailable: no connection</string>

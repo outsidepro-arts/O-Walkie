@@ -56,6 +56,14 @@ class PttHardwareKeyStore(context: Context) {
             .apply()
     }
 
+    fun isToggleModeEnabled(): Boolean = prefs.getBoolean(KEY_PTT_TOGGLE_MODE, false)
+
+    fun setToggleModeEnabled(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_PTT_TOGGLE_MODE, enabled)
+            .apply()
+    }
+
     fun matches(event: KeyEvent): Boolean {
         val binding = getBinding()
         if (!binding.isAssigned()) return false
@@ -69,5 +77,6 @@ class PttHardwareKeyStore(context: Context) {
         private const val KEY_ASSIGNED_KEY_CODE = "assigned_key_code"
         private const val KEY_ASSIGNED_SCAN_CODE = "assigned_scan_code"
         private const val KEY_HANDLE_IN_BACKGROUND = "handle_in_background"
+        private const val KEY_PTT_TOGGLE_MODE = "ptt_toggle_mode"
     }
 }

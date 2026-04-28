@@ -275,10 +275,28 @@ class WalkieService : Service() {
         if (!binding.isAssigned()) return false
         if (fromBackground && !binding.handleInBackground) return false
         if (!pttHardwareKeyStore.matches(event)) return false
+        val toggleMode = pttHardwareKeyStore.isToggleModeEnabled()
 
         // Background handling expects the service to be alive (connected or connecting).
         val shouldHandleNow = desiredConnection.get() || wsConnected.get()
         if (fromBackground && !shouldHandleNow) return false
+
+        if (toggleMode) {
+            return when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    if (event.repeatCount == 0) {
+                        if (transmitting.get()) {
+                            onPttRelease()
+                        } else {
+                            onPttPress()
+                        }
+                    }
+                    true
+                }
+                KeyEvent.ACTION_UP -> true
+                else -> false
+            }
+        }
 
         return when (event.action) {
             KeyEvent.ACTION_DOWN -> {
