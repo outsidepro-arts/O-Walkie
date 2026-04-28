@@ -15,6 +15,17 @@ This project follows a lightweight Keep a Changelog style and Semantic Versionin
 ### Fixed
 - _(add bug fixes here)_
 
+## [v0.1.4] - 2026-04-28
+
+### Changed
+- Relay server switched from external jitter library to an in-process jitter/reorder buffer implementation tuned for unstable networks.
+- Backend dependencies were cleaned up to remove no-longer-used `pion/interceptor` jitter components.
+
+### Fixed
+- Critical relay freeze issue where the server process stayed alive but audio flow stalled under packet loss/reordering.
+- End-of-transmission tail truncation reduced by allowing buffered packets to drain after explicit `tx_eof`.
+- Expected WebSocket disconnects (`unexpected EOF`/close `1006`) are no longer logged as server errors.
+
 ## [v0.1.3] - 2026-04-27
 
 ### Added
