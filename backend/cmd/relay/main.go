@@ -36,8 +36,15 @@ const (
 
 var (
 	configuredSampleRate = defaultSampleRate
-	packetDur     = time.Duration(defaultPacketMs) * time.Millisecond
-	packetSamples = configuredSampleRate * defaultPacketMs / 1000
+	packetDur            = time.Duration(defaultPacketMs) * time.Millisecond
+	packetSamples        = configuredSampleRate * defaultPacketMs / 1000
+	configuredOpus       = opusConfig{
+		Bitrate:     12000,
+		Complexity:  5,
+		FEC:         true,
+		DTX:         false,
+		Application: "voip",
+	}
 )
 
 type appConfig struct {
@@ -46,16 +53,25 @@ type appConfig struct {
 }
 
 type serverConfig struct {
-	WSAddr             string  `json:"ws_addr"`
-	UDPAddr            string  `json:"udp_addr"`
-	SampleRate         int     `json:"sample_rate"`
-	PacketMs           int     `json:"packet_ms"`
-	HangoverMs         int     `json:"hangover_ms"`
-	EOFTimeoutMs       int     `json:"eof_timeout_ms"`
-	ConcealDecay       float64 `json:"conceal_decay"`
-	JitterMinPkts      int     `json:"jitter_min_packets"`
-	BusyMode           bool    `json:"busy_mode"`
-	TransmitTimeoutSec int     `json:"transmit_timeout"`
+	WSAddr             string     `json:"ws_addr"`
+	UDPAddr            string     `json:"udp_addr"`
+	SampleRate         int        `json:"sample_rate"`
+	PacketMs           int        `json:"packet_ms"`
+	Opus               opusConfig `json:"opus"`
+	HangoverMs         int        `json:"hangover_ms"`
+	EOFTimeoutMs       int        `json:"eof_timeout_ms"`
+	ConcealDecay       float64    `json:"conceal_decay"`
+	JitterMinPkts      int        `json:"jitter_min_packets"`
+	BusyMode           bool       `json:"busy_mode"`
+	TransmitTimeoutSec int        `json:"transmit_timeout"`
+}
+
+type opusConfig struct {
+	Bitrate     int    `json:"bitrate"`
+	Complexity  int    `json:"complexity"`
+	FEC         bool   `json:"fec"`
+	DTX         bool   `json:"dtx"`
+	Application string `json:"application"`
 }
 
 type modulesConfig struct {
@@ -119,15 +135,24 @@ type wsMessage struct {
 }
 
 type wsServerMessage struct {
-	Type            string `json:"type"`
-	SessionID       uint32 `json:"sessionId,omitempty"`
-	Channel         string `json:"channel,omitempty"`
-	Info            string `json:"info,omitempty"`
-	PacketMs        int    `json:"packetMs,omitempty"`
-	SampleRate      int    `json:"sampleRate,omitempty"`
-	ProtocolVersion int    `json:"protocolVersion,omitempty"`
-	BusyMode        *bool  `json:"busyMode,omitempty"`
-	Active          *bool  `json:"active,omitempty"`
+	Type            string        `json:"type"`
+	SessionID       uint32        `json:"sessionId,omitempty"`
+	Channel         string        `json:"channel,omitempty"`
+	Info            string        `json:"info,omitempty"`
+	PacketMs        int           `json:"packetMs,omitempty"`
+	SampleRate      int           `json:"sampleRate,omitempty"`
+	Opus            *wsOpusConfig `json:"opus,omitempty"`
+	ProtocolVersion int           `json:"protocolVersion,omitempty"`
+	BusyMode        *bool         `json:"busyMode,omitempty"`
+	Active          *bool         `json:"active,omitempty"`
+}
+
+type wsOpusConfig struct {
+	Bitrate     int    `json:"bitrate"`
+	Complexity  int    `json:"complexity"`
+	FEC         bool   `json:"fec"`
+	DTX         bool   `json:"dtx"`
+	Application string `json:"application"`
 }
 
 type client struct {
@@ -548,10 +573,11 @@ func (p *audioProcessor) process(input []int16, signalByte float64, active bool)
 
 func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 	mcfg := cfg.Modules
-	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, opus.AppVoIP)
+	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, resolveOpusApplication(configuredOpus.Application))
 	if err != nil {
 		panic(fmt.Sprintf("create encoder for channel %s: %v", name, err))
 	}
+	applyOpusEncoderConfig(enc)
 	hangoverMs := maxInt(cfg.Server.HangoverMs, normalizePacketMs(cfg.Server.PacketMs)*2)
 	eofTimeoutMs := maxInt(cfg.Server.EOFTimeoutMs, hangoverMs+normalizePacketMs(cfg.Server.PacketMs))
 	return &channelMixer{
@@ -1191,11 +1217,12 @@ func (m *channelMixer) playbackRepeaterAfterDelay(sessionID uint32, pcm []int16,
 	}
 	time.Sleep(delayDur)
 
-	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, opus.AppVoIP)
+	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, resolveOpusApplication(configuredOpus.Application))
 	if err != nil {
 		log.Printf("repeater encoder create failed: %v", err)
 		return
 	}
+	applyOpusEncoderConfig(enc)
 
 	var seq uint32
 	for offset := 0; offset < len(pcm); offset += packetSamples {
@@ -1519,6 +1546,59 @@ func normalizeJitterMinPackets(count int) int {
 	return count
 }
 
+func normalizeOpusConfig(cfg opusConfig) opusConfig {
+	out := cfg
+	if out.Bitrate <= 0 {
+		out.Bitrate = 12000
+	}
+	if out.Bitrate < 6000 {
+		out.Bitrate = 6000
+	}
+	if out.Bitrate > 510000 {
+		out.Bitrate = 510000
+	}
+	if out.Complexity < 0 || out.Complexity > 10 {
+		out.Complexity = 5
+	}
+	switch strings.ToLower(strings.TrimSpace(out.Application)) {
+	case "voip", "audio", "lowdelay":
+		out.Application = strings.ToLower(strings.TrimSpace(out.Application))
+	default:
+		out.Application = "voip"
+	}
+	return out
+}
+
+func resolveOpusApplication(name string) opus.Application {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "audio":
+		return opus.AppAudio
+	case "lowdelay":
+		return opus.AppRestrictedLowdelay
+	default:
+		return opus.AppVoIP
+	}
+}
+
+func applyOpusEncoderConfig(enc *opus.Encoder) {
+	if enc == nil {
+		return
+	}
+	cfg := normalizeOpusConfig(configuredOpus)
+	if err := enc.SetBitrate(cfg.Bitrate); err != nil {
+		log.Printf("opus SetBitrate(%d) failed: %v", cfg.Bitrate, err)
+	}
+	if err := enc.SetComplexity(cfg.Complexity); err != nil {
+		log.Printf("opus SetComplexity(%d) failed: %v", cfg.Complexity, err)
+	}
+	if err := enc.SetInBandFEC(cfg.FEC); err != nil {
+		log.Printf("opus SetInBandFEC(%t) failed: %v", cfg.FEC, err)
+	}
+	if err := enc.SetDTX(cfg.DTX); err != nil {
+		log.Printf("opus SetDTX(%t) failed: %v", cfg.DTX, err)
+	}
+}
+
 func applyAudioTiming(sampleRate int, packetMs int) {
 	configuredSampleRate = normalizeSampleRate(sampleRate)
 	norm := normalizePacketMs(packetMs)
@@ -1773,10 +1853,17 @@ type server struct {
 func defaultConfig() appConfig {
 	return appConfig{
 		Server: serverConfig{
-			WSAddr:             ":5500",
-			UDPAddr:            ":5505",
-			SampleRate:         defaultSampleRate,
-			PacketMs:           defaultPacketMs,
+			WSAddr:     ":5500",
+			UDPAddr:    ":5505",
+			SampleRate: defaultSampleRate,
+			PacketMs:   defaultPacketMs,
+			Opus: opusConfig{
+				Bitrate:     12000,
+				Complexity:  5,
+				FEC:         true,
+				DTX:         false,
+				Application: "voip",
+			},
 			HangoverMs:         180,
 			EOFTimeoutMs:       420,
 			ConcealDecay:       0.90,
@@ -1840,6 +1927,7 @@ func loadConfig(path string) (appConfig, error) {
 	}
 	cfg.Server.PacketMs = normalizePacketMs(cfg.Server.PacketMs)
 	cfg.Server.JitterMinPkts = normalizeJitterMinPackets(cfg.Server.JitterMinPkts)
+	cfg.Server.Opus = normalizeOpusConfig(cfg.Server.Opus)
 	if err := validateConfig(cfg); err != nil {
 		return appConfig{}, err
 	}
@@ -1856,6 +1944,15 @@ func validateConfig(cfg appConfig) error {
 	}
 	if !isSupportedSampleRate(cfg.Server.SampleRate) {
 		return errors.New("server.sample_rate must be one of: 8000, 12000, 16000, 24000, 48000")
+	}
+	if cfg.Server.Opus.Bitrate < 6000 || cfg.Server.Opus.Bitrate > 510000 {
+		return errors.New("server.opus.bitrate must be in [6000..510000]")
+	}
+	if cfg.Server.Opus.Complexity < 0 || cfg.Server.Opus.Complexity > 10 {
+		return errors.New("server.opus.complexity must be in [0..10]")
+	}
+	if cfg.Server.Opus.Application != normalizeOpusConfig(cfg.Server.Opus).Application {
+		return errors.New("server.opus.application must be one of: voip, audio, lowdelay")
 	}
 	if cfg.Server.HangoverMs < cfg.Server.PacketMs {
 		return errors.New("server.hangover_ms must be >= server.packet_ms")
@@ -1949,10 +2046,17 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	defer s.hub.removeClient(c.sessionID)
 
 	_ = c.writeJSON(wsServerMessage{
-		Type:            "welcome",
-		SessionID:       c.sessionID,
-		PacketMs:        normalizePacketMs(s.hub.cfg.Server.PacketMs),
-		SampleRate:      normalizeSampleRate(s.hub.cfg.Server.SampleRate),
+		Type:       "welcome",
+		SessionID:  c.sessionID,
+		PacketMs:   normalizePacketMs(s.hub.cfg.Server.PacketMs),
+		SampleRate: normalizeSampleRate(s.hub.cfg.Server.SampleRate),
+		Opus: &wsOpusConfig{
+			Bitrate:     normalizeOpusConfig(s.hub.cfg.Server.Opus).Bitrate,
+			Complexity:  normalizeOpusConfig(s.hub.cfg.Server.Opus).Complexity,
+			FEC:         normalizeOpusConfig(s.hub.cfg.Server.Opus).FEC,
+			DTX:         normalizeOpusConfig(s.hub.cfg.Server.Opus).DTX,
+			Application: normalizeOpusConfig(s.hub.cfg.Server.Opus).Application,
+		},
 		ProtocolVersion: protocolVersion,
 		BusyMode:        boolPtr(s.hub.cfg.Server.BusyMode),
 	})
@@ -2078,6 +2182,7 @@ func main() {
 		log.Fatalf("config error: %v", err)
 	}
 	applyAudioTiming(cfg.Server.SampleRate, cfg.Server.PacketMs)
+	configuredOpus = normalizeOpusConfig(cfg.Server.Opus)
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -2101,11 +2206,16 @@ func main() {
 	})
 
 	log.Printf(
-		"relay started ws=%s udp=%s sample_rate=%d packet_ms=%d protocol_version=%d jitter_min_packets=%d busy_mode=%t transmit_timeout=%ds",
+		"relay started ws=%s udp=%s sample_rate=%d packet_ms=%d opus_bitrate=%d opus_complexity=%d opus_fec=%t opus_dtx=%t opus_application=%s protocol_version=%d jitter_min_packets=%d busy_mode=%t transmit_timeout=%ds",
 		cfg.Server.WSAddr,
 		cfg.Server.UDPAddr,
 		normalizeSampleRate(cfg.Server.SampleRate),
 		normalizePacketMs(cfg.Server.PacketMs),
+		configuredOpus.Bitrate,
+		configuredOpus.Complexity,
+		configuredOpus.FEC,
+		configuredOpus.DTX,
+		configuredOpus.Application,
 		protocolVersion,
 		cfg.Server.JitterMinPkts,
 		cfg.Server.BusyMode,

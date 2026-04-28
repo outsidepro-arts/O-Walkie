@@ -7,7 +7,7 @@ This folder contains a WPF desktop client scaffold for Windows.
 - Basic UI for relay connection profile (`host`, `wsPort`, `udpPort`, `channel`)
 - WebSocket control plane bootstrap (`join`, `udp_hello`, `repeater_mode`)
 - UDP data plane receive/send with existing relay packet format
-- Opus encode/decode using Concentus at `8 kHz mono`
+- Opus encode/decode using Concentus (`mono`, sample rate and encoder tunables negotiated from relay `welcome`)
 - Capture pipeline using `WASAPI` (with `WaveInEvent` fallback)
 - Playback pipeline using `WASAPI` output (with `WaveOutEvent` fallback)
 - App settings persisted to `%APPDATA%/OWalkie/WindowsClient/settings.json`

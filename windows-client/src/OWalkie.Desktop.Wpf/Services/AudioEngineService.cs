@@ -32,6 +32,7 @@ public sealed class AudioEngineService
     private Task? _senderLoopTask;
     private int _queuedPcmFrames;
     private int _packetIntervalMs = 20;
+    private RelayClientService.OpusConfig _opusConfig = RelayClientService.OpusConfig.Default;
     private long _rxResumeAtTicks;
 
     public bool IsTransmitting { get; private set; }
@@ -42,6 +43,7 @@ public sealed class AudioEngineService
         _relayClientService = relayClientService;
         _relayClientService.SampleRateChanged += OnSampleRateChanged;
         _relayClientService.PacketMsChanged += OnPacketMsChanged;
+        _relayClientService.OpusConfigChanged += OnOpusConfigChanged;
         _relayClientService.OpusFrameReceived += OnOpusFrameReceived;
         EnsurePlaybackPipeline();
         EnsureCodec();
@@ -91,15 +93,56 @@ public sealed class AudioEngineService
         EnsurePlaybackPipeline();
     }
 
+    private void OnOpusConfigChanged(object? sender, RelayClientService.OpusConfig opusConfig)
+    {
+        _opusConfig = opusConfig;
+        EnsureCodec();
+    }
+
     private void EnsureCodec()
     {
         lock (_codecLock)
         {
-            _encoder = new OpusEncoder(_sampleRate, Channels, OpusApplication.OPUS_APPLICATION_VOIP);
-            _encoder.Bitrate = 12000;
+            _encoder = new OpusEncoder(_sampleRate, Channels, ResolveApplication(_opusConfig.Application));
+            _encoder.Bitrate = _opusConfig.Bitrate;
             _encoder.SignalType = OpusSignal.OPUS_SIGNAL_VOICE;
+            TrySetEncoderProperty("Complexity", _opusConfig.Complexity);
+            TrySetEncoderProperty("UseInbandFEC", _opusConfig.Fec);
+            TrySetEncoderProperty("UseDTX", _opusConfig.Dtx);
             _decoder = new OpusDecoder(_sampleRate, Channels);
         }
+    }
+
+    private void TrySetEncoderProperty(string propertyName, object value)
+    {
+        if (_encoder == null)
+        {
+            return;
+        }
+        var prop = _encoder.GetType().GetProperty(propertyName);
+        if (prop == null || !prop.CanWrite)
+        {
+            return;
+        }
+        try
+        {
+            var safeValue = Convert.ChangeType(value, prop.PropertyType);
+            prop.SetValue(_encoder, safeValue);
+        }
+        catch
+        {
+            // Ignore unsupported tunables on current Concentus build.
+        }
+    }
+
+    private static OpusApplication ResolveApplication(string application)
+    {
+        return application switch
+        {
+            "audio" => OpusApplication.OPUS_APPLICATION_AUDIO,
+            "lowdelay" => OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY,
+            _ => OpusApplication.OPUS_APPLICATION_VOIP,
+        };
     }
 
     private void EnsurePlaybackPipeline()

@@ -2,6 +2,7 @@ package ru.outsidepro_arts.owalkie
 
 import android.app.AlertDialog
 import android.content.ComponentName
+import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.os.Bundle
@@ -198,7 +199,7 @@ class SettingsActivity : ComponentActivity() {
 
     private fun openAccessibilityServiceSettings() {
         val component = ComponentName(this, PttAccessibilityService::class.java).flattenToString()
-        val detailsIntent = Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS).apply {
+        val detailsIntent = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
             putExtra(Intent.EXTRA_COMPONENT_NAME, component)
             putExtra("android.provider.extra.ACCESSIBILITY_SERVICE_COMPONENT_NAME", component)
             data = Uri.parse("package:$packageName")

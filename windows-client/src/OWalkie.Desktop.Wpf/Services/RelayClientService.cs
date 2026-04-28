@@ -11,6 +11,11 @@ namespace OWalkie.Desktop.Wpf.Services;
 
 public sealed class RelayClientService
 {
+    public sealed record OpusConfig(int Bitrate, int Complexity, bool Fec, bool Dtx, string Application)
+    {
+        public static OpusConfig Default { get; } = new(12000, 5, true, false, "voip");
+    }
+
     private const int ProtocolVersion = 2;
     private ClientWebSocket? _webSocket;
     private UdpClient? _udpClient;
@@ -22,6 +27,7 @@ public sealed class RelayClientService
     private uint _sessionId;
     private int _sampleRate = 8000;
     private int _packetMs = 20;
+    private OpusConfig _opusConfig = OpusConfig.Default;
     private int _seq;
     private int _connected;
     private string _udpHost = string.Empty;
@@ -36,10 +42,12 @@ public sealed class RelayClientService
     public bool IsConnected { get; private set; }
     public int SampleRate => _sampleRate;
     public int PacketMs => _packetMs;
+    public OpusConfig CurrentOpusConfig => _opusConfig;
 
     public event EventHandler<int>? SampleRateChanged;
     public event EventHandler<bool>? ConnectionStateChanged;
     public event EventHandler<int>? PacketMsChanged;
+    public event EventHandler<OpusConfig>? OpusConfigChanged;
     public event EventHandler<byte[]>? OpusFrameReceived;
     public event EventHandler<string>? StatusMessage;
     public event EventHandler<bool>? BusyTransmitBlockedChanged;
@@ -64,6 +72,7 @@ public sealed class RelayClientService
         _sessionId = 0;
         _sampleRate = 8000;
         _packetMs = 20;
+        _opusConfig = OpusConfig.Default;
         _seq = 0;
         _udpHost = wsHost;
         _udpPort = profile.UdpPort;
@@ -433,6 +442,8 @@ public sealed class RelayClientService
                 }
                 _sampleRate = sampleRate;
                 SampleRateChanged?.Invoke(this, _sampleRate);
+                _opusConfig = ParseOpusConfig(root);
+                OpusConfigChanged?.Invoke(this, _opusConfig);
                 _busyMode = root.TryGetProperty("busyMode", out var busyNode) && busyNode.ValueKind == JsonValueKind.True;
                 if (!_busyMode)
                 {
@@ -517,5 +528,41 @@ public sealed class RelayClientService
     private static int NormalizeSampleRate(int value)
     {
         return value is 8000 or 12000 or 16000 or 24000 or 48000 ? value : 8000;
+    }
+
+    private static OpusConfig ParseOpusConfig(JsonElement root)
+    {
+        if (!root.TryGetProperty("opus", out var opusNode) || opusNode.ValueKind != JsonValueKind.Object)
+        {
+            return OpusConfig.Default;
+        }
+
+        var bitrate = opusNode.TryGetProperty("bitrate", out var bitrateNode) && bitrateNode.TryGetInt32(out var parsedBitrate)
+            ? Math.Clamp(parsedBitrate, 6000, 510000)
+            : OpusConfig.Default.Bitrate;
+        var complexity = opusNode.TryGetProperty("complexity", out var complexityNode) && complexityNode.TryGetInt32(out var parsedComplexity)
+            ? Math.Clamp(parsedComplexity, 0, 10)
+            : OpusConfig.Default.Complexity;
+        var fec = opusNode.TryGetProperty("fec", out var fecNode) && fecNode.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? fecNode.GetBoolean()
+            : OpusConfig.Default.Fec;
+        var dtx = opusNode.TryGetProperty("dtx", out var dtxNode) && dtxNode.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? dtxNode.GetBoolean()
+            : OpusConfig.Default.Dtx;
+        var application = opusNode.TryGetProperty("application", out var appNode) && appNode.ValueKind == JsonValueKind.String
+            ? NormalizeApplication(appNode.GetString())
+            : OpusConfig.Default.Application;
+        return new OpusConfig(bitrate, complexity, fec, dtx, application);
+    }
+
+    private static string NormalizeApplication(string? value)
+    {
+        return (value ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "voip" => "voip",
+            "audio" => "audio",
+            "lowdelay" => "lowdelay",
+            _ => OpusConfig.Default.Application,
+        };
     }
 }

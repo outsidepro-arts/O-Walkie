@@ -4,6 +4,13 @@
     "udp_addr": ":5505",
     "sample_rate": 8000,
     "packet_ms": 20,
+    "opus": {
+      "bitrate": 12000,
+      "complexity": 5,
+      "fec": true,
+      "dtx": false,
+      "application": "voip"
+    },
     "hangover_ms": 180,
     "eof_timeout_ms": 420,
     "conceal_decay": 0.90,
@@ -36,8 +43,8 @@
     },
     "filter": {
       "enabled": true,
-      "low_cut_hz": 150.0,
-      "high_cut_hz": 3000.0
+      "low_cut_hz": 300.0,
+      "high_cut_hz": 2000.0
     },
     "compressor": {
       "enabled": true,

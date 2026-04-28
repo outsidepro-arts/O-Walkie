@@ -14,6 +14,11 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 - `server.udp_addr` UDP data-plane address
 - `server.sample_rate` Opus sample rate (`8000`, `12000`, `16000`, `24000`, `48000`; default `8000`)
 - `server.packet_ms` Opus frame duration in milliseconds (`10`, `20`, `40`, `60`; default `20`)
+- `server.opus.bitrate` Opus target bitrate in bits/s (`6000..510000`; default `12000`)
+- `server.opus.complexity` Opus encoder complexity (`0..10`; default `5`)
+- `server.opus.fec` Opus in-band FEC (`true|false`; default `true`)
+- `server.opus.dtx` Opus DTX (`true|false`; default `false`)
+- `server.opus.application` Opus application mode (`voip`, `audio`, `lowdelay`; default `voip`)
 - `server.hangover_ms` keep TX alive briefly on packet gaps before considering stream ended
 - `server.eof_timeout_ms` hard timeout for implicit EOF if no packets arrive
 - `server.conceal_decay` frame-to-frame attenuation for concealment replay during hangover (`0..1`)
@@ -37,7 +42,7 @@ Server startup flags are disabled. Configure all runtime values in `config.json`
 
 Server -> client:
 
-- `{"type":"welcome","sessionId":123,"packetMs":20,"sampleRate":8000,"protocolVersion":1}`
+- `{"type":"welcome","sessionId":123,"packetMs":20,"sampleRate":8000,"opus":{"bitrate":12000,"complexity":5,"fec":true,"dtx":false,"application":"voip"},"protocolVersion":2}`
   - includes `busyMode: true|false` so clients can lock PTT while channel is receiving
 - `{"type":"tx_stop","info":"transmit_timeout_reached"}` server-enforced stop for overlong TX
 - `{"type":"joined","channel":"teamA"}`

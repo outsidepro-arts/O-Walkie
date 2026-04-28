@@ -27,6 +27,7 @@ import android.telephony.TelephonyManager
 import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import ru.outsidepro_arts.owalkie.audio.OpusCodec
+import ru.outsidepro_arts.owalkie.audio.OpusConfig
 import ru.outsidepro_arts.owalkie.audio.OpusCodecFactory
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
 import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
@@ -196,6 +197,8 @@ class WalkieService : Service() {
     private var localPttPressPcm: ShortArray = shortArrayOf()
     private var localPttReleasePcm: ShortArray = shortArrayOf()
     @Volatile
+    private var opusConfig: OpusConfig = OpusConfig()
+    @Volatile
     private var voiceProfileActive: Boolean = false
     @Volatile
     private var rxVolumePercent: Int = RxVolumeStore.DEFAULT_RX_VOLUME_PERCENT
@@ -206,7 +209,7 @@ class WalkieService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        codec = OpusCodecFactory().create(DEFAULT_SAMPLE_RATE, CHANNELS)
+        codec = OpusCodecFactory().create(DEFAULT_SAMPLE_RATE, CHANNELS, opusConfig)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         rogerPatternStore = RogerPatternStore(this)
         callingPatternStore = CallingPatternStore(this)
@@ -550,13 +553,19 @@ class WalkieService : Service() {
                     }
                     val previousSampleRate = serverSampleRate
                     val previousPacketMs = packetMs
+                    val previousOpusConfig = opusConfig
                     sessionId.set(obj.optLong("sessionId", 0L))
                     packetMs = normalizePacketMs(obj.optInt("packetMs", DEFAULT_PACKET_MS))
                     val negotiatedSampleRate = rawSampleRate
+                    opusConfig = parseOpusConfig(obj)
                     if (negotiatedSampleRate != serverSampleRate) {
                         serverSampleRate = negotiatedSampleRate
                         synchronized(encodeLock) {
-                            codec = OpusCodecFactory().create(serverSampleRate, CHANNELS)
+                            codec = OpusCodecFactory().create(serverSampleRate, CHANNELS, opusConfig)
+                        }
+                    } else if (previousOpusConfig != opusConfig) {
+                        synchronized(encodeLock) {
+                            codec = OpusCodecFactory().create(serverSampleRate, CHANNELS, opusConfig)
                         }
                     }
                     if (previousSampleRate != serverSampleRate || previousPacketMs != packetMs) {
@@ -1213,6 +1222,28 @@ class WalkieService : Service() {
         return when (value) {
             8000, 12000, 16000, 24000, 48000 -> value
             else -> DEFAULT_SAMPLE_RATE
+        }
+    }
+
+    private fun parseOpusConfig(obj: JSONObject): OpusConfig {
+        val opusObj = obj.optJSONObject("opus") ?: return OpusConfig()
+        return OpusConfig(
+            bitrate = normalizeOpusBitrate(opusObj.optInt("bitrate", 12000)),
+            complexity = normalizeOpusComplexity(opusObj.optInt("complexity", 5)),
+            fec = opusObj.optBoolean("fec", true),
+            dtx = opusObj.optBoolean("dtx", false),
+            application = normalizeOpusApplication(opusObj.optString("application", "voip")),
+        )
+    }
+
+    private fun normalizeOpusBitrate(value: Int): Int = value.coerceIn(6000, 510000)
+
+    private fun normalizeOpusComplexity(value: Int): Int = value.coerceIn(0, 10)
+
+    private fun normalizeOpusApplication(value: String): String {
+        return when (value.trim().lowercase()) {
+            "voip", "audio", "lowdelay" -> value.trim().lowercase()
+            else -> "voip"
         }
     }
 
