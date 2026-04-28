@@ -44,7 +44,7 @@
     "filter": {
       "enabled": true,
       "low_cut_hz": 300.0,
-      "high_cut_hz": 2000.0
+      "high_cut_hz": 0
     },
     "compressor": {
       "enabled": true,

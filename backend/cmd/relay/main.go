@@ -1767,11 +1767,20 @@ type bandPass struct {
 
 func newBandPass(sr int, lowCut float64, highCut float64) *bandPass {
 	const poles = 4 // 4 * 6 dB/oct = 24 dB/oct per side
+	if lowCut <= 0 && highCut <= 0 {
+		return nil
+	}
 	hp := make([]*onePoleHP, 0, poles)
 	lp := make([]*onePoleLP, 0, poles)
-	for i := 0; i < poles; i++ {
-		hp = append(hp, newOnePoleHP(sr, lowCut))
-		lp = append(lp, newOnePoleLP(sr, highCut))
+	if lowCut > 0 {
+		for i := 0; i < poles; i++ {
+			hp = append(hp, newOnePoleHP(sr, lowCut))
+		}
+	}
+	if highCut > 0 {
+		for i := 0; i < poles; i++ {
+			lp = append(lp, newOnePoleLP(sr, highCut))
+		}
 	}
 	return &bandPass{
 		hp: hp,
@@ -2017,8 +2026,11 @@ func validateConfig(cfg appConfig) error {
 			math.IsNaN(cfg.Modules.Filter.HighCutHz) || math.IsInf(cfg.Modules.Filter.HighCutHz, 0) {
 			return errors.New("modules.filter cutoff range must be finite")
 		}
-		nyquist := float64(cfg.Server.SampleRate) / 2.0
-		if cfg.Modules.Filter.LowCutHz <= 0 || cfg.Modules.Filter.HighCutHz <= cfg.Modules.Filter.LowCutHz || cfg.Modules.Filter.HighCutHz >= nyquist {
+		if cfg.Modules.Filter.LowCutHz < 0 || cfg.Modules.Filter.HighCutHz < 0 {
+			return errors.New("modules.filter cutoff range is invalid")
+		}
+		if cfg.Modules.Filter.LowCutHz > 0 && cfg.Modules.Filter.HighCutHz > 0 &&
+			cfg.Modules.Filter.HighCutHz <= cfg.Modules.Filter.LowCutHz {
 			return errors.New("modules.filter cutoff range is invalid")
 		}
 	}
