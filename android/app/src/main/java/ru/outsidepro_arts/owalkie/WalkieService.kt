@@ -97,7 +97,6 @@ class WalkieService : Service() {
         const val EXTRA_HW_KEY_REPEAT = "hwKeyRepeat"
         const val EXTRA_HW_KEY_CODE = "hwKeyCode"
         const val EXTRA_HW_SCAN_CODE = "hwScanCode"
-        const val EXTRA_HW_FROM_BACKGROUND = "hwFromBackground"
 
         private const val NOTIFICATION_CHANNEL_ID = "owalkie_stream"
         private const val NOTIFICATION_ID = 101
@@ -250,9 +249,8 @@ class WalkieService : Service() {
                 val repeat = intent.getIntExtra(EXTRA_HW_KEY_REPEAT, 0)
                 val keyCode = intent.getIntExtra(EXTRA_HW_KEY_CODE, KeyEvent.KEYCODE_UNKNOWN)
                 val scanCode = intent.getIntExtra(EXTRA_HW_SCAN_CODE, 0)
-                val fromBackground = intent.getBooleanExtra(EXTRA_HW_FROM_BACKGROUND, false)
                 val evt = KeyEvent(0L, 0L, action, keyCode, repeat, 0, 0, scanCode)
-                handleHardwarePttKeyEvent(evt, fromBackground = fromBackground)
+                handleHardwarePttKeyEvent(evt)
             }
             ACTION_SET_REPEATER -> setRepeaterMode(intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, false))
             ACTION_CALL_SIGNAL -> onCallSignal()
@@ -270,16 +268,11 @@ class WalkieService : Service() {
         return START_STICKY
     }
 
-    private fun handleHardwarePttKeyEvent(event: KeyEvent, fromBackground: Boolean): Boolean {
+    private fun handleHardwarePttKeyEvent(event: KeyEvent): Boolean {
         val binding = pttHardwareKeyStore.getBinding()
         if (!binding.isAssigned()) return false
-        if (fromBackground && !binding.handleInBackground) return false
         if (!pttHardwareKeyStore.matches(event)) return false
         val toggleMode = pttHardwareKeyStore.isToggleModeEnabled()
-
-        // Background handling expects the service to be alive (connected or connecting).
-        val shouldHandleNow = desiredConnection.get() || wsConnected.get()
-        if (fromBackground && !shouldHandleNow) return false
 
         if (toggleMode) {
             return when (event.action) {

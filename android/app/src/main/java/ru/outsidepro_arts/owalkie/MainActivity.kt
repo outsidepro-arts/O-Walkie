@@ -274,7 +274,6 @@ class MainActivity : ComponentActivity() {
             putExtra(WalkieService.EXTRA_HW_KEY_REPEAT, event.repeatCount)
             putExtra(WalkieService.EXTRA_HW_KEY_CODE, event.keyCode)
             putExtra(WalkieService.EXTRA_HW_SCAN_CODE, event.scanCode)
-            putExtra(WalkieService.EXTRA_HW_FROM_BACKGROUND, false)
         }
         startService(intent)
     }
