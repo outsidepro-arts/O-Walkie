@@ -203,6 +203,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        // If touch sequence is interrupted (app backgrounded/system overlay), ACTION_UP may never arrive.
+        // Force TX release to prevent stuck PTT state.
+        stopTransmitUi()
         sendActivityFocusState(false)
         if (receiverRegistered) {
             unregisterReceiver(statusReceiver)
