@@ -1417,32 +1417,33 @@ const (
 func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 	now := time.Now()
 	if ctx.ActiveSpeakers <= 0 {
-		if m.cfg.SquelchShots > 0 {
-			m.lastActive = false
-			m.squelchBurstRemain = 0
-			m.squelchLatched = false
-			m.processIdleShots(ctx, now)
-			return
-		}
 		// End-of-transmission tail burst: jump to 0 dB and emit white hiss briefly.
 		if m.lastActive && m.squelchBurstRemain <= 0 {
 			m.squelchBurstRemain = randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs)
 		}
 		m.lastActive = false
-		if m.squelchBurstRemain <= 0 {
-			m.squelchLatched = false
-			ctx.EmitFrame = false
+		if m.squelchBurstRemain > 0 {
+			noiseAmplitude := m.cfg.NoiseGain * dbToLinear(m.cfg.TailNoiseDB)
+			for i := range ctx.Mixed {
+				ctx.Mixed[i] += m.white.next() * noiseAmplitude
+			}
+			ctx.EmitFrame = true
+			m.squelchBurstRemain -= m.frameDuration
+			if m.squelchBurstRemain <= 0 {
+				m.squelchBurstRemain = 0
+				if m.cfg.SquelchShots > 0 {
+					m.shotNextAt = now.Add(randomDurationSec(10, m.cfg.SquelchShots))
+				}
+			}
 			return
 		}
-		noiseAmplitude := m.cfg.NoiseGain * dbToLinear(m.cfg.TailNoiseDB)
-		for i := range ctx.Mixed {
-			ctx.Mixed[i] += m.white.next() * noiseAmplitude
+		if m.cfg.SquelchShots > 0 {
+			m.squelchLatched = false
+			m.processIdleShots(ctx, now)
+			return
 		}
-		ctx.EmitFrame = true
-		m.squelchBurstRemain -= m.frameDuration
-		if m.squelchBurstRemain <= 0 {
-			m.squelchBurstRemain = 0
-		}
+		m.squelchLatched = false
+		ctx.EmitFrame = false
 		return
 	}
 	m.lastActive = true
