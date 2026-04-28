@@ -10,11 +10,32 @@ android {
     namespace = "ru.outsidepro_arts.owalkie"
     compileSdk = 35
 
-    val releaseKeystoreFile = rootProject.file("keystore/release-keystore.properties")
-    val releaseKeystoreProps = Properties().apply {
-        if (releaseKeystoreFile.exists()) {
-            releaseKeystoreFile.inputStream().use { load(it) }
+    val keystoreFile = rootProject.file("keystore/release-keystore.properties")
+
+    fun Properties.require(key: String): String =
+        getProperty(key)?.takeIf { it.isNotBlank() }
+            ?: throw GradleException("Missing or empty '$key' in ${keystoreFile.path}")
+
+    val releaseSigningConfig = if (keystoreFile.exists()) {
+        val props = Properties().apply {
+            keystoreFile.inputStream().use { load(it) }
         }
+
+        signingConfigs.create("release").apply {
+            val storeFilePath = props.require("storeFile")
+            storeFile = rootProject.file(storeFilePath).also {
+                if (!it.exists()) {
+                    throw GradleException("Keystore file not found: ${it.path}")
+                }
+            }
+
+            storePassword = props.require("storePassword")
+            keyAlias = props.require("keyAlias")
+            keyPassword = props.require("keyPassword")
+        }
+    } else {
+        logger.lifecycle("No release keystore config found, building unsigned release")
+        null
     }
 
     defaultConfig {
@@ -25,24 +46,14 @@ android {
         versionName = "0.1.0"
     }
 
-    signingConfigs {
-        create("release") {
-            val storeFilePath = releaseKeystoreProps.getProperty("storeFile")
-                ?: error("Missing 'storeFile' in keystore/release-keystore.properties")
-            storeFile = rootProject.file(storeFilePath)
-            storePassword = releaseKeystoreProps.getProperty("storePassword")
-                ?: error("Missing 'storePassword' in keystore/release-keystore.properties")
-            keyAlias = releaseKeystoreProps.getProperty("keyAlias")
-                ?: error("Missing 'keyAlias' in keystore/release-keystore.properties")
-            keyPassword = releaseKeystoreProps.getProperty("keyPassword")
-                ?: error("Missing 'keyPassword' in keystore/release-keystore.properties")
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+
+            releaseSigningConfig?.let {
+                signingConfig = it
+            }
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
