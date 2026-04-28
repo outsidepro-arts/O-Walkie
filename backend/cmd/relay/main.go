@@ -194,6 +194,17 @@ type audioPacket struct {
 	srcAddr        *net.UDPAddr
 }
 
+func (p *audioPacket) isUDPEOFMarker() bool {
+	if p == nil {
+		return false
+	}
+	// UDP EOF marker (protocol extension):
+	// - empty opus payload
+	// - signal byte = 0
+	// - seq > 0 to avoid clashing with legacy keepalive(seq=0)
+	return len(p.opus) == 0 && p.signalStrength == 0 && p.seq > 0
+}
+
 // audioProcessContext is the pluggable processing contract for channel audio modules.
 // New DSP modules can be injected by implementing audioModule and appending it to channelMixer.modules.
 type audioProcessContext struct {
@@ -368,6 +379,10 @@ func (h *relayHub) routePacket(pkt *audioPacket) {
 		return
 	}
 	c.setUDPAddr(pkt.srcAddr)
+	if pkt.isUDPEOFMarker() {
+		h.markTxEOF(pkt.sessionID)
+		return
+	}
 	if len(pkt.opus) == 0 {
 		// Empty-opus datagrams are treated as UDP keepalive punches.
 		return

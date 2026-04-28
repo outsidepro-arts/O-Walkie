@@ -49,7 +49,7 @@ Client -> server:
 - runtime channel switch is disabled; reconnect with new channel instead
 - `{"type":"udp_hello","udpPort":7001}`
 - `{"type":"repeater_mode","enabled":true}`
-- `{"type":"tx_eof"}` marks end-of-transmission explicitly (after PTT/roger tail)
+- `{"type":"tx_eof"}` legacy fallback EOF marker for compatibility with older clients/relays
 - `{"type":"heartbeat"}`
 
 If the first client message does not contain a valid channel bind, server replies with `error` and closes the WebSocket session.
@@ -67,6 +67,13 @@ Inbound client packet:
 - `4 bytes` Sequence (`uint32`, big-endian)
 - `1 byte` SignalStrength (`0..255`)
 - `N bytes` Opus frame payload
+
+UDP EOF marker (preferred over WS for low-latency sync):
+
+- same 9-byte header, with **empty Opus payload**
+- `SignalStrength = 0`
+- `Sequence > 0`
+- client sends marker burst (`~3 packets`) to improve delivery probability on lossy links
 
 Outbound mixed packet:
 

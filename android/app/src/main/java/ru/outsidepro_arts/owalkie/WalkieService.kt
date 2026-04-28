@@ -503,7 +503,7 @@ class WalkieService : Service() {
         if (wasTx) {
             txJob?.cancel()
             txJob = null
-            sendTxEofCommand()
+            sendTxEof()
         }
         if (rogerStreaming.getAndSet(false)) {
             rogerJob?.cancel()
@@ -626,7 +626,7 @@ class WalkieService : Service() {
                     playLocalRogerPcm(localPlaybackPcm, LOCAL_PLAYBACK_SAMPLE_RATE)
                 }
                 streamRogerBeep(rogerPcm)
-                sendTxEofCommand()
+                sendTxEof()
             } finally {
                 scheduleRxResumeHoldoff()
                 rogerStreaming.set(false)
@@ -648,7 +648,7 @@ class WalkieService : Service() {
                     playLocalSignalPcm(localCallPcm, LOCAL_PLAYBACK_SAMPLE_RATE, CALL_LOCAL_GAIN_DB)
                 }
                 streamGeneratedSignal(callPcm)
-                sendTxEofCommand()
+                sendTxEof()
             } finally {
                 scheduleRxResumeHoldoff()
                 callStreaming.set(false)
@@ -1027,8 +1027,43 @@ class WalkieService : Service() {
         ws.send("""{"type":"repeater_mode","enabled":$repeaterEnabled}""")
     }
 
-    private fun sendTxEofCommand() {
-        webSocket?.send("""{"type":"tx_eof"}""")
+    private fun sendTxEof() {
+        sendUdpEofBurst()
+    }
+
+    private fun sendUdpEofBurst() {
+        serviceScope.launch(Dispatchers.IO) {
+            val scheduleMs = intArrayOf(0, 20, 60)
+            for (waitMs in scheduleMs) {
+                if (waitMs > 0) {
+                    delay(waitMs.toLong())
+                }
+                sendUdpEofPacket()
+            }
+        }
+    }
+
+    private fun sendUdpEofPacket() {
+        val socket = udpSocket ?: run {
+            ensureUdpSocket()
+            udpSocket ?: return
+        }
+        val address = targetUdpAddress ?: run {
+            targetUdpAddress = resolveHost(serverHost)
+            targetUdpAddress ?: return
+        }
+        val sid = sessionId.get().toInt()
+        if (sid == 0) return
+
+        val seqNum = seq.incrementAndGet()
+        val payload = ByteArray(9)
+        val bb = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
+        bb.putInt(sid)
+        bb.putInt(seqNum)
+        bb.put(0) // signal=0 with empty payload marks UDP TX EOF on relay
+        val packet = DatagramPacket(payload, payload.size, address, udpPort)
+        runCatching { socket.send(packet) }
+            .onFailure { recreateUdpSocket() }
     }
 
     private fun wsUrl(): String {
