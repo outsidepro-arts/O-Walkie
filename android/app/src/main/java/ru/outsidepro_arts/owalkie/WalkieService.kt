@@ -20,6 +20,9 @@ import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
 import ru.outsidepro_arts.owalkie.audio.OpusCodec
@@ -139,6 +142,8 @@ class WalkieService : Service() {
     private val rxResumeAtNs = AtomicLong(0L)
     private val busyRxActive = AtomicBoolean(false)
     private val busyLastRxAtNs = AtomicLong(0L)
+    private val lastInboundUdpAtNs = AtomicLong(0L)
+    private val lastTxCollisionVibrateAtNs = AtomicLong(0L)
 
     @Volatile
     private var serverHost: String = DEFAULT_WS_HOST
@@ -604,6 +609,18 @@ class WalkieService : Service() {
                             broadcastStatus(currentSignalByte())
                         }
                     }
+                    val nowNs = System.nanoTime()
+                    val txActive = transmitting.get() || rogerStreaming.get() || callStreaming.get()
+                    if (txActive) {
+                        val lastAt = lastInboundUdpAtNs.getAndSet(nowNs)
+                        val isNewBurst = lastAt == 0L || (nowNs - lastAt) > 600_000_000L // 600 ms
+                        val lastBuzz = lastTxCollisionVibrateAtNs.get()
+                        val cooldownOk = lastBuzz == 0L || (nowNs - lastBuzz) > 1_500_000_000L // 1.5 s
+                        if (isNewBurst && cooldownOk) {
+                            lastTxCollisionVibrateAtNs.set(nowNs)
+                            vibrateTxCollision()
+                        }
+                    }
                     if (transmitting.get() || rogerStreaming.get() || callStreaming.get() || isRxHoldoffActive()) {
                         // During local TX we intentionally drop inbound audio
                         // to avoid hearing server stream in parallel with speaking.
@@ -616,6 +633,27 @@ class WalkieService : Service() {
             } finally {
                 track.stop()
                 track.release()
+            }
+        }
+    }
+
+    private fun vibrateTxCollision() {
+        runCatching {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                getSystemService(VibratorManager::class.java)?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(VIBRATOR_SERVICE) as? Vibrator
+            }
+            if (vibrator == null || !vibrator.hasVibrator()) return
+
+            // Three short pulses: on/off/on/off/on
+            val pattern = longArrayOf(0, 35, 55, 35, 55, 35)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(pattern, -1)
             }
         }
     }
