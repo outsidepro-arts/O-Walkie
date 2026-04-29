@@ -179,6 +179,10 @@ func (c *client) getChannel() string {
 	return c.channel
 }
 
+func normalizeChannelName(ch string) string {
+	return strings.ToLower(strings.TrimSpace(ch))
+}
+
 func (c *client) setUDPAddr(addr *net.UDPAddr) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -294,7 +298,7 @@ func newRelayHub(udpConn *net.UDPConn, cfg appConfig) *relayHub {
 }
 
 func (h *relayHub) markChannelActivity(channel string) {
-	channel = strings.TrimSpace(channel)
+	channel = normalizeChannelName(channel)
 	if channel == "" {
 		return
 	}
@@ -304,7 +308,7 @@ func (h *relayHub) markChannelActivity(channel string) {
 }
 
 func (h *relayHub) channelHasRecentActivity(channel string) bool {
-	channel = strings.TrimSpace(channel)
+	channel = normalizeChannelName(channel)
 	if channel == "" {
 		return false
 	}
@@ -355,6 +359,7 @@ func (h *relayHub) getClient(sessionID uint32) *client {
 }
 
 func (h *relayHub) switchChannel(c *client, newChannel string) {
+	newChannel = normalizeChannelName(newChannel)
 	oldChannel := c.getChannel()
 	if oldChannel == newChannel {
 		// Ensure participant registration even when channel value is unchanged.
@@ -372,6 +377,10 @@ func (h *relayHub) switchChannel(c *client, newChannel string) {
 }
 
 func (h *relayHub) getOrCreateChannel(name string) *channelMixer {
+	name = normalizeChannelName(name)
+	if name == "" {
+		return h.getOrCreateChannel("default")
+	}
 	h.channelMu.RLock()
 	ch, ok := h.channels[name]
 	h.channelMu.RUnlock()
@@ -416,7 +425,7 @@ func (h *relayHub) routePacket(pkt *audioPacket) {
 		// Empty-opus datagrams are treated as UDP keepalive punches.
 		return
 	}
-	channelName := c.getChannel()
+	channelName := normalizeChannelName(c.getChannel())
 	if channelName == "" {
 		return
 	}
@@ -2175,7 +2184,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	initialType := strings.ToLower(strings.TrimSpace(initial.Type))
 	if initialType == "has_activity" {
-		initialChannel := strings.TrimSpace(initial.Channel)
+		initialChannel := normalizeChannelName(initial.Channel)
 		active := s.hub.channelHasRecentActivity(initialChannel)
 		_ = c.writeJSON(wsServerMessage{
 			Type:    "has_activity",
@@ -2193,7 +2202,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
-	initialChannel := strings.TrimSpace(initial.Channel)
+	initialChannel := normalizeChannelName(initial.Channel)
 	if initialChannel == "" {
 		_ = c.writeJSON(wsServerMessage{Type: "error", Info: "channel is required in first message"})
 		_ = c.writeControl(
@@ -2240,7 +2249,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = c.writeJSON(wsServerMessage{Type: "repeater_mode", Info: strconv.FormatBool(enabled)})
 		case "has_activity":
-			ch := strings.TrimSpace(msg.Channel)
+			ch := normalizeChannelName(msg.Channel)
 			active := s.hub.channelHasRecentActivity(ch)
 			_ = c.writeJSON(wsServerMessage{
 				Type:    "has_activity",
