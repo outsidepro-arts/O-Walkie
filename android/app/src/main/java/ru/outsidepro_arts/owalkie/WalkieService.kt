@@ -152,15 +152,20 @@ class WalkieService : Service() {
     private var networkCallbackRegistered = false
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            onNetworkChangedForRecovery()
+            val fingerprint = network.hashCode().toLong()
+            val previous = lastNetworkFingerprint.getAndSet(fingerprint)
+            if (previous != fingerprint) {
+                onNetworkChangedForRecovery()
+            }
         }
 
         override fun onLost(network: Network) {
-            onNetworkChangedForRecovery()
-        }
-
-        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-            onNetworkChangedForRecovery()
+            val fingerprint = network.hashCode().toLong()
+            val previous = lastNetworkFingerprint.get()
+            if (previous == fingerprint || previous == 0L) {
+                lastNetworkFingerprint.set(0L)
+                onNetworkChangedForRecovery()
+            }
         }
     }
 
@@ -194,6 +199,7 @@ class WalkieService : Service() {
     private val udpRecoveryCount = AtomicLong(0L)
     private val lastObservedUdpGapMs = AtomicLong(0L)
     private val lastNetworkRecoveryAtNs = AtomicLong(0L)
+    private val lastNetworkFingerprint = AtomicLong(0L)
 
     @Volatile
     private var serverHost: String = DEFAULT_WS_HOST
@@ -938,6 +944,8 @@ class WalkieService : Service() {
     private suspend fun streamGeneratedSignal(pcmSignal: ShortArray) {
         var offset = 0
         val frameSamples = currentFrameSamples()
+        val frameNs = currentPacketMs().toLong() * 1_000_000L
+        var nextFrameAtNs = System.nanoTime()
         while (offset < pcmSignal.size) {
             val frame = ShortArray(frameSamples)
             val end = (offset + frameSamples).coerceAtMost(pcmSignal.size)
@@ -948,7 +956,14 @@ class WalkieService : Service() {
             val opus = encodePcm(frame)
             sendUdpFrame(opus, currentSignalByte())
             offset = end
-            delay(currentPacketMs().toLong())
+            nextFrameAtNs += frameNs
+            val sleepNs = nextFrameAtNs - System.nanoTime()
+            if (sleepNs > 0L) {
+                delay((sleepNs / 1_000_000L).coerceAtLeast(1L))
+            } else if (sleepNs < -frameNs * 2) {
+                // If scheduler/CPU lag caused severe drift, restart pacing from now.
+                nextFrameAtNs = System.nanoTime()
+            }
         }
     }
 
@@ -1226,6 +1241,8 @@ class WalkieService : Service() {
 
     private fun onNetworkChangedForRecovery() {
         if (!desiredConnection.get()) return
+        // Do not rotate UDP socket during active TX/call/roger generation.
+        if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) return
         val nowNs = System.nanoTime()
         val lastNs = lastNetworkRecoveryAtNs.get()
         if (lastNs != 0L && (nowNs - lastNs) < (NETWORK_RECOVERY_MIN_INTERVAL_MS * 1_000_000L)) {
