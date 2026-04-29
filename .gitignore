@@ -8,6 +8,7 @@ local.properties
 backend/bin/
 backend/.cache/
 backend/*.exe
+backend/relay.exe
 backend/*.exe~
 backend/*.test
 backend/*.out
