@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var rxVolumeStore: RxVolumeStore
     private lateinit var uiSignalPlayer: UiSignalPlayer
     private var transmitting = false
+    private var callActive = false
     private var pttToggleModeEnabled = false
     private var selectedServerIndex = 0
     private val servers = mutableListOf<ServerProfile>()
@@ -85,6 +86,7 @@ class MainActivity : ComponentActivity() {
             wsConnected = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTED, false)
             wsConnecting = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTING, false)
             transmitting = intent.getBooleanExtra(WalkieService.EXTRA_TX_ACTIVE, transmitting)
+            callActive = intent.getBooleanExtra(WalkieService.EXTRA_CALL_ACTIVE, callActive)
             val udpReady = intent.getBooleanExtra(WalkieService.EXTRA_UDP_READY, false)
             val prevProtocolIncompatible = protocolIncompatible
             protocolIncompatible = intent.getBooleanExtra(WalkieService.EXTRA_PROTOCOL_ERROR, false)
@@ -881,10 +883,11 @@ class MainActivity : ComponentActivity() {
     private fun updateStatusChips(udpReady: Boolean = false) {
         val connectionState = when {
             protocolIncompatible -> getString(R.string.connection_state_protocol_incompatible)
+            callActive -> getString(R.string.connection_state_calling)
             transmitting -> getString(R.string.connection_state_transmitting)
             scanJob?.isActive == true -> getString(R.string.connection_state_scanning)
             wsConnecting -> getString(R.string.connection_state_connecting)
-            wsConnected && udpReady -> getString(R.string.connection_state_connected)
+            wsConnected && udpReady -> getString(R.string.connection_state_receiving)
             wsConnected -> getString(R.string.connection_state_partial)
             else -> getString(R.string.connection_state_disconnected)
         }

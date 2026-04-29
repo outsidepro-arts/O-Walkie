@@ -86,6 +86,7 @@ class WalkieService : Service() {
         const val EXTRA_BUSY_MODE = "busyMode"
         const val EXTRA_BUSY_RX_ACTIVE = "busyRxActive"
         const val EXTRA_TX_ACTIVE = "txActive"
+        const val EXTRA_CALL_ACTIVE = "callActive"
         const val EXTRA_SERVER_HOST = "serverHost"
         const val EXTRA_WS_PORT = "wsPort"
         const val EXTRA_UDP_PORT = "udpPort"
@@ -474,6 +475,16 @@ class WalkieService : Service() {
         synchronized(wsConnectLock) {
             if (!force && (webSocket != null || wsOpening.get())) return
             if (force) {
+                // Force reconnect can otherwise overlap with stale callbacks
+                // and lead to double audio frames (server has two active sessions).
+                // Stop UDP keepalive tied to the old session and close the WS cleanly.
+                stopUdpKeepaliveLoop()
+                wsConnected.set(false)
+                channelBound = false
+                busyMode = false
+                busyRxActive.set(false)
+
+                runCatching { webSocket?.close(1001, "reconnect") }
                 runCatching { webSocket?.cancel() }
                 webSocket = null
                 wsOpening.set(false)
@@ -495,6 +506,7 @@ class WalkieService : Service() {
         }
         webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (this@WalkieService.webSocket !== webSocket) return
                 wsOpening.set(false)
                 wsConnected.set(true)
                 wsRetryAttempt.set(0)
@@ -507,10 +519,12 @@ class WalkieService : Service() {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (this@WalkieService.webSocket !== webSocket) return
                 handleWsMessage(webSocket, text)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (this@WalkieService.webSocket !== webSocket) return
                 wsOpening.set(false)
                 wsConnected.set(false)
                 channelBound = false
@@ -526,6 +540,7 @@ class WalkieService : Service() {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (this@WalkieService.webSocket !== webSocket) return
                 wsOpening.set(false)
                 wsConnected.set(false)
                 channelBound = false
@@ -544,6 +559,7 @@ class WalkieService : Service() {
 
     private fun handleWsMessage(ws: WebSocket, text: String) {
         runCatching {
+            if (this@WalkieService.webSocket !== ws) return@runCatching
             val obj = JSONObject(text)
             when (obj.optString("type")) {
                 "welcome" -> {
@@ -604,6 +620,8 @@ class WalkieService : Service() {
                             sendUdpHello()
                             startUdpKeepaliveLoop()
                             enterUdpKeepaliveRecoveryWindow()
+                            // Immediate UDP punch so server can start sending right away after reconnect.
+                            sendUdpKeepalivePacket()
                         }
                     }
                 }
@@ -654,6 +672,8 @@ class WalkieService : Service() {
         ensureUdpSocket()
         sendUdpHello()
         enterUdpKeepaliveRecoveryWindow()
+        // Also punch immediately to reduce "no UDP until next TX" on reconnects.
+        sendUdpKeepalivePacket()
     }
 
     private fun ensurePlaybackLoop() {
@@ -1160,6 +1180,7 @@ class WalkieService : Service() {
             putExtra(EXTRA_BUSY_MODE, busyMode)
             putExtra(EXTRA_BUSY_RX_ACTIVE, busyRxActive.get())
             putExtra(EXTRA_TX_ACTIVE, transmitting.get() || rogerStreaming.get() || callStreaming.get())
+            putExtra(EXTRA_CALL_ACTIVE, callStreaming.get())
         }
         sendBroadcast(statusIntent)
     }

@@ -85,6 +85,8 @@
     <string name="connection_state_connecting">Connecting...</string>
     <string name="connection_state_scanning">Scanning...</string>
     <string name="connection_state_transmitting">Transmitting</string>
+    <string name="connection_state_calling">Calling</string>
+    <string name="connection_state_receiving">Receiving</string>
     <string name="saved_server_announcement">Server saved</string>
     <string name="deleted_server_announcement">Server deleted</string>
     <string name="connected_server_announcement">Connecting to selected server</string>
