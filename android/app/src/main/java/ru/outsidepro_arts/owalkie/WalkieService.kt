@@ -16,6 +16,10 @@ import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
@@ -87,6 +91,9 @@ class WalkieService : Service() {
         const val EXTRA_BUSY_RX_ACTIVE = "busyRxActive"
         const val EXTRA_TX_ACTIVE = "txActive"
         const val EXTRA_CALL_ACTIVE = "callActive"
+        const val EXTRA_DEBUG_WS_RECONNECT_COUNT = "debugWsReconnectCount"
+        const val EXTRA_DEBUG_UDP_RECOVERY_COUNT = "debugUdpRecoveryCount"
+        const val EXTRA_DEBUG_LAST_UDP_GAP_MS = "debugLastUdpGapMs"
         const val EXTRA_SERVER_HOST = "serverHost"
         const val EXTRA_WS_PORT = "wsPort"
         const val EXTRA_UDP_PORT = "udpPort"
@@ -120,6 +127,8 @@ class WalkieService : Service() {
         private const val UDP_KEEPALIVE_RECOVERY_INTERVAL_SEC = 6L
         private const val UDP_KEEPALIVE_RECOVERY_WINDOW_SEC = 90L
         private const val UDP_KEEPALIVE_JITTER_PERCENT = 15L
+        private const val WS_RECONNECT_JITTER_PERCENT = 20L
+        private const val NETWORK_RECOVERY_MIN_INTERVAL_MS = 3000L
     }
 
     private val binder = Binder()
@@ -136,6 +145,23 @@ class WalkieService : Service() {
     private val desiredConnection = AtomicBoolean(false)
     private val configLock = Any()
     private val wsConnectLock = Any()
+    private val connectivityManager by lazy {
+        getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    }
+    private var networkCallbackRegistered = false
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            onNetworkChangedForRecovery()
+        }
+
+        override fun onLost(network: Network) {
+            onNetworkChangedForRecovery()
+        }
+
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            onNetworkChangedForRecovery()
+        }
+    }
 
     @Volatile
     private var udpSocket: DatagramSocket? = null
@@ -162,6 +188,10 @@ class WalkieService : Service() {
     private val lastTxCollisionVibrateAtNs = AtomicLong(0L)
     private val lastOutboundUdpAtNs = AtomicLong(0L)
     private val udpKeepaliveRecoveryUntilNs = AtomicLong(0L)
+    private val wsReconnectCount = AtomicLong(0L)
+    private val udpRecoveryCount = AtomicLong(0L)
+    private val lastObservedUdpGapMs = AtomicLong(0L)
+    private val lastNetworkRecoveryAtNs = AtomicLong(0L)
 
     @Volatile
     private var serverHost: String = DEFAULT_WS_HOST
@@ -231,6 +261,7 @@ class WalkieService : Service() {
         localPttPressPcm = resampleLinear(pttPressWav.samples, pttPressWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
         val pttReleaseWav = loadWavPcmFromRaw(R.raw.selfttdown_002)
         localPttReleasePcm = resampleLinear(pttReleaseWav.samples, pttReleaseWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
+        registerNetworkCallback()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -328,6 +359,7 @@ class WalkieService : Service() {
         wsReconnectJob?.cancel()
         signalMonitorJob?.cancel()
         udpKeepaliveJob?.cancel()
+        unregisterNetworkCallback()
         webSocket?.close(1000, "service destroyed")
         synchronized(udpSocketLock) {
             udpSocket?.close()
@@ -665,6 +697,7 @@ class WalkieService : Service() {
     }
 
     private fun recreateUdpSocket() {
+        udpRecoveryCount.incrementAndGet()
         synchronized(udpSocketLock) {
             runCatching { udpSocket?.close() }
             udpSocket = null
@@ -725,10 +758,13 @@ class WalkieService : Service() {
                         }
                     }
                     val nowNs = System.nanoTime()
+                    val previousInboundNs = lastInboundUdpAtNs.getAndSet(nowNs)
+                    if (previousInboundNs > 0L && nowNs > previousInboundNs) {
+                        lastObservedUdpGapMs.set((nowNs - previousInboundNs) / 1_000_000L)
+                    }
                     val txActive = transmitting.get() || rogerStreaming.get() || callStreaming.get()
                     if (txActive) {
-                        val lastAt = lastInboundUdpAtNs.getAndSet(nowNs)
-                        val isNewBurst = lastAt == 0L || (nowNs - lastAt) > 600_000_000L // 600 ms
+                        val isNewBurst = previousInboundNs == 0L || (nowNs - previousInboundNs) > 600_000_000L // 600 ms
                         val lastBuzz = lastTxCollisionVibrateAtNs.get()
                         val cooldownOk = lastBuzz == 0L || (nowNs - lastBuzz) > 1_500_000_000L // 1.5 s
                         if (isNewBurst && cooldownOk) {
@@ -1165,6 +1201,39 @@ class WalkieService : Service() {
         }
     }
 
+    private fun registerNetworkCallback() {
+        if (networkCallbackRegistered) return
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        runCatching {
+            connectivityManager.registerNetworkCallback(request, networkCallback)
+            networkCallbackRegistered = true
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        if (!networkCallbackRegistered) return
+        runCatching {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+        }
+        networkCallbackRegistered = false
+    }
+
+    private fun onNetworkChangedForRecovery() {
+        if (!desiredConnection.get()) return
+        val nowNs = System.nanoTime()
+        val lastNs = lastNetworkRecoveryAtNs.get()
+        if (lastNs != 0L && (nowNs - lastNs) < (NETWORK_RECOVERY_MIN_INTERVAL_MS * 1_000_000L)) {
+            return
+        }
+        lastNetworkRecoveryAtNs.set(nowNs)
+        serviceScope.launch(Dispatchers.IO) {
+            if (!desiredConnection.get()) return@launch
+            recreateUdpSocket()
+        }
+    }
+
     private fun updateBusyRxState() {
         if (!busyMode) {
             busyRxActive.set(false)
@@ -1188,6 +1257,9 @@ class WalkieService : Service() {
             putExtra(EXTRA_BUSY_RX_ACTIVE, busyRxActive.get())
             putExtra(EXTRA_TX_ACTIVE, transmitting.get() || rogerStreaming.get() || callStreaming.get())
             putExtra(EXTRA_CALL_ACTIVE, callStreaming.get())
+            putExtra(EXTRA_DEBUG_WS_RECONNECT_COUNT, wsReconnectCount.get())
+            putExtra(EXTRA_DEBUG_UDP_RECOVERY_COUNT, udpRecoveryCount.get())
+            putExtra(EXTRA_DEBUG_LAST_UDP_GAP_MS, lastObservedUdpGapMs.get())
         }
         sendBroadcast(statusIntent)
     }
@@ -1196,9 +1268,15 @@ class WalkieService : Service() {
         if (wsReconnectJob?.isActive == true) return
         wsReconnectJob = serviceScope.launch {
             val attempt = wsRetryAttempt.incrementAndGet()
-            val delayMs = (1000L * (1 shl (attempt - 1).coerceIn(0, 5))).coerceAtMost(30000L)
+            var delayMs = (1000L * (1 shl (attempt - 1).coerceIn(0, 5))).coerceAtMost(30000L)
+            val jitterRange = (delayMs * WS_RECONNECT_JITTER_PERCENT) / 100L
+            if (jitterRange > 0L) {
+                delayMs += Random.nextLong(-jitterRange, jitterRange + 1L)
+                if (delayMs < 250L) delayMs = 250L
+            }
             delay(delayMs)
             if (desiredConnection.get() && !wsConnected.get()) {
+                wsReconnectCount.incrementAndGet()
                 connectWebSocket(force = true)
             }
         }
@@ -1543,7 +1621,11 @@ class WalkieService : Service() {
         busyLastRxAtNs.set(0L)
         lastInboundUdpAtNs.set(0L)
         lastOutboundUdpAtNs.set(0L)
+        lastObservedUdpGapMs.set(0L)
+        lastNetworkRecoveryAtNs.set(0L)
         udpKeepaliveRecoveryUntilNs.set(0L)
+        wsReconnectCount.set(0L)
+        udpRecoveryCount.set(0L)
         wsReconnectJob?.cancel()
         wsReconnectJob = null
         stopUdpKeepaliveLoop()
