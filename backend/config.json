@@ -28,7 +28,8 @@
       "squelch_threshold_db": -3.0,
       "squelch_min_ms": 10,
       "squelch_max_ms": 20,
-      "squelch_shots": 120,
+      "squelch_shots_min_s": 60,
+      "squelch_shots_max_s": 600,
       "tail_noise_db": 10.0,
       "tail_min_ms": 5,
       "tail_max_ms": 10

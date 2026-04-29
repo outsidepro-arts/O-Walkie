@@ -91,7 +91,8 @@ type noiseConfig struct {
 	SquelchThresholdDB float64 `json:"squelch_threshold_db"`
 	SquelchMinMs       int     `json:"squelch_min_ms"`
 	SquelchMaxMs       int     `json:"squelch_max_ms"`
-	SquelchShots       int     `json:"squelch_shots"`
+	SquelchShotsMinS   int     `json:"squelch_shots_min_s"`
+	SquelchShotsMaxS   int     `json:"squelch_shots_max_s"`
 	TailNoiseDB        float64 `json:"tail_noise_db"`
 	TailMinMs          int     `json:"tail_min_ms"`
 	TailMaxMs          int     `json:"tail_max_ms"`
@@ -1546,13 +1547,13 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 			m.squelchBurstRemain -= m.frameDuration
 			if m.squelchBurstRemain <= 0 {
 				m.squelchBurstRemain = 0
-				if m.cfg.SquelchShots > 0 {
-					m.shotNextAt = now.Add(randomDurationSec(10, m.cfg.SquelchShots))
+				if m.cfg.SquelchShotsMaxS > 0 {
+					m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
 				}
 			}
 			return
 		}
-		if m.cfg.SquelchShots > 0 {
+		if m.cfg.SquelchShotsMaxS > 0 {
 			m.squelchLatched = false
 			m.processIdleShots(ctx, now)
 			return
@@ -1603,7 +1604,7 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 func (m *whiteNoiseSquelchModule) processIdleShots(ctx *audioProcessContext, now time.Time) {
 	if m.shotPhase == shotPhaseNone {
 		if m.shotNextAt.IsZero() {
-			m.shotNextAt = now.Add(randomDurationSec(10, m.cfg.SquelchShots))
+			m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
 			ctx.EmitFrame = false
 			return
 		}
@@ -1650,7 +1651,7 @@ func (m *whiteNoiseSquelchModule) advanceShotPhase(now time.Time, nextPhaseDurat
 	case shotPhasePostSilence:
 		m.shotPhase = shotPhaseNone
 		m.shotPhaseRemain = 0
-		m.shotNextAt = now.Add(randomDurationSec(10, m.cfg.SquelchShots))
+		m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
 	default:
 		m.shotPhase = shotPhaseNone
 		m.shotPhaseRemain = 0
@@ -2092,7 +2093,8 @@ func defaultConfig() appConfig {
 				SquelchThresholdDB: -3.0,
 				SquelchMinMs:       50,
 				SquelchMaxMs:       150,
-				SquelchShots:       0,
+				SquelchShotsMinS:   10,
+				SquelchShotsMaxS:   0,
 				TailNoiseDB:        0.0,
 				TailMinMs:          15,
 				TailMaxMs:          60,
@@ -2190,11 +2192,19 @@ func validateConfig(cfg appConfig) error {
 		if cfg.Modules.Noise.NoiseGain <= 0 {
 			return errors.New("modules.noise.noise_gain must be > 0")
 		}
-		if cfg.Modules.Noise.SquelchShots < 0 {
-			return errors.New("modules.noise.squelch_shots must be >= 0")
+		if cfg.Modules.Noise.SquelchShotsMinS < 0 {
+			return errors.New("modules.noise.squelch_shots_min_s must be >= 0")
 		}
-		if cfg.Modules.Noise.SquelchShots > 0 && cfg.Modules.Noise.SquelchShots < 10 {
-			return errors.New("modules.noise.squelch_shots must be 0 or >= 10 (seconds)")
+		if cfg.Modules.Noise.SquelchShotsMaxS < 0 {
+			return errors.New("modules.noise.squelch_shots_max_s must be >= 0")
+		}
+		if cfg.Modules.Noise.SquelchShotsMaxS > 0 {
+			if cfg.Modules.Noise.SquelchShotsMinS <= 0 {
+				return errors.New("modules.noise.squelch_shots_min_s must be > 0 when squelch shots are enabled")
+			}
+			if cfg.Modules.Noise.SquelchShotsMaxS < cfg.Modules.Noise.SquelchShotsMinS {
+				return errors.New("modules.noise.squelch_shots_max_s must be >= squelch_shots_min_s")
+			}
 		}
 		if cfg.Modules.Noise.SquelchMinMs <= 0 || cfg.Modules.Noise.SquelchMaxMs < cfg.Modules.Noise.SquelchMinMs {
 			return errors.New("modules.noise squelch range is invalid")

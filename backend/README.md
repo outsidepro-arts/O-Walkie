@@ -34,7 +34,9 @@ go run ./cmd/relay ./config.json
   - if the block exists, `enabled: true|false` controls activation
 - `modules.noise.signal_dependent` controls whether noise level follows signal strength (`true`) or stays fixed at `min_noise_db` (`false`)
 - `modules.noise.*` white-noise + squelch behavior
-- `modules.noise.squelch_shots` idle-shot timer max in seconds (`0` disables): when no TX is active, next shot is scheduled in random `10..squelch_shots` seconds; shot duration is random `tail_min_ms..tail_max_ms` and shot level uses `max_noise_db`
+- `modules.noise.squelch_shots_min_s` idle-shot timer minimum in seconds (`> 0` when enabled)
+- `modules.noise.squelch_shots_max_s` idle-shot timer maximum in seconds (`0` disables shots; when enabled must be `>= squelch_shots_min_s`)
+- when no TX is active, next shot is scheduled in random `squelch_shots_min_s..squelch_shots_max_s` seconds; shot duration is random `tail_min_ms..tail_max_ms`
 - each idle shot includes `1s` silence before and `1s` silence after (for reliable short-shot playback on clients)
 - `modules.click.click_db` click level at transmission start/end
 - `modules.click.glitch_interval_max_ms` random in-TX click interval ceiling (`0` disables)
