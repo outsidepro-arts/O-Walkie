@@ -113,9 +113,9 @@ class WalkieService : Service() {
         private const val CHANNELS = 1
         private const val DEFAULT_PACKET_MS = 20
         private const val PROTOCOL_VERSION = 2
-        private const val MAX_PACKET_SAMPLES = 48000 * 60 / 1000
         private const val ROGER_TAIL_MS = 40
         private const val CALL_LOCAL_GAIN_DB = -10.0
+        private const val PLAYBACK_BUFFER_FRAMES = 2
         private const val UDP_KEEPALIVE_IDLE_INTERVAL_SEC = 12L
         private const val UDP_KEEPALIVE_RECOVERY_INTERVAL_SEC = 6L
         private const val UDP_KEEPALIVE_RECOVERY_WINDOW_SEC = 90L
@@ -684,12 +684,19 @@ class WalkieService : Service() {
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
             )
+            val frameBytes = currentFrameSamples() * 2 // mono 16-bit PCM
+            val targetBuffer = (frameBytes * PLAYBACK_BUFFER_FRAMES).coerceAtLeast(frameBytes)
+            val playbackBufferBytes = if (minBuffer > 0) {
+                minBuffer.coerceAtLeast(targetBuffer)
+            } else {
+                targetBuffer
+            }
             val track = AudioTrack(
                 AudioManager.STREAM_MUSIC,
                 currentCodecSampleRate(),
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                minBuffer.coerceAtLeast(MAX_PACKET_SAMPLES * 4),
+                playbackBufferBytes,
                 AudioTrack.MODE_STREAM,
             )
             track.play()

@@ -527,6 +527,7 @@ type repeaterSession struct {
 	lastPacket time.Time
 	collecting bool
 	lastSignal float64
+	eofMarked  bool
 }
 
 type audioProcessor struct {
@@ -864,6 +865,32 @@ func (b *speakerJitterBuffer) pop() *audioPacket {
 	return nil
 }
 
+func (b *speakerJitterBuffer) isStarted() bool {
+	if b == nil {
+		return false
+	}
+	return b.started
+}
+
+func (b *speakerJitterBuffer) pendingCount() int {
+	if b == nil {
+		return 0
+	}
+	return len(b.packets)
+}
+
+func (b *speakerJitterBuffer) forceStartFromMinSeq() {
+	if b == nil || len(b.packets) == 0 {
+		return
+	}
+	minSeq, ok := b.minSeq()
+	if !ok {
+		return
+	}
+	b.head = minSeq
+	b.started = true
+}
+
 func (m *channelMixer) pullNextPacket(sessionID uint32, st *speakerStreamState) *audioPacket {
 	pkt := st.jitter.pop()
 	if pkt == nil {
@@ -985,8 +1012,20 @@ func (m *channelMixer) run() {
 				states[pkt.sessionID] = st
 			}
 			prevLastPacketAt := st.lastPacketAt
+			now := time.Now()
+			// If a new burst starts after a gap and the previous short burst never reached
+			// jitter start threshold (e.g. lost UDP EOF), drop stale buffered leftovers.
+			// Otherwise those packets can be emitted at the start of the next long TX.
+			if !prevLastPacketAt.IsZero() &&
+				now.Sub(prevLastPacketAt) > (3*packetDur) &&
+				!st.jitter.isStarted() &&
+				st.jitter.pendingCount() > 0 {
+				st.jitter.reset()
+				st.lastPCM = nil
+				st.missCount = 0
+			}
 			st.jitter.push(pkt)
-			st.lastPacketAt = time.Now()
+			st.lastPacketAt = now
 			st.lastSignal = float64(pkt.signalStrength)
 			if eofMarked[pkt.sessionID] {
 				// Do not immediately clear explicit EOF on trailing packets that are still
@@ -1000,6 +1039,13 @@ func (m *channelMixer) run() {
 			}
 		case sid := <-m.eof:
 			eofMarked[sid] = true
+			if st, ok := states[sid]; ok && st != nil {
+				// Short bursts can end before reaching jitter_min_packets.
+				// Force jitter start on EOF so buffered short TX drains now,
+				// instead of sticking until the next long transmission.
+				st.jitter.forceStartFromMinSeq()
+			}
+			m.markRepeaterEOF(sid)
 			// Keep already buffered packets for a short natural drain, but disable
 			// concealment via eofMarked in mix logic. This avoids truncating the tail
 			// of TX when tx_eof arrives slightly before the last UDP frames.
@@ -1049,6 +1095,11 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	for sessionID, st := range states {
 		if st == nil {
 			continue
+		}
+		// If a short burst did not reach jitter start threshold and then paused,
+		// force-start queued packets so they are drained now (even without explicit EOF).
+		if st.jitter.pendingCount() > 0 && !st.jitter.isStarted() && now.Sub(st.lastPacketAt) > packetDur {
+			st.jitter.forceStartFromMinSeq()
 		}
 		pkt := m.pullNextPacket(sessionID, st)
 		hasPacket := pkt != nil
@@ -1228,9 +1279,20 @@ func (m *channelMixer) processRepeaterCapture(sessionID uint32, pcm []int16, sig
 	if emit {
 		st.bufferPCM = append(st.bufferPCM, out...)
 	}
+	st.eofMarked = false
 	st.collecting = true
 	st.lastPacket = now
 	st.lastSignal = signalByte
+}
+
+func (m *channelMixer) markRepeaterEOF(sessionID uint32) {
+	m.repeaterMu.Lock()
+	defer m.repeaterMu.Unlock()
+	st := m.repeaterState[sessionID]
+	if st == nil {
+		return
+	}
+	st.eofMarked = true
 }
 
 func (m *channelMixer) processRepeaterFinalization(now time.Time) {
@@ -1245,7 +1307,7 @@ func (m *channelMixer) processRepeaterFinalization(now time.Time) {
 		if !st.collecting {
 			continue
 		}
-		if now.Sub(st.lastPacket) < (2 * packetDur) {
+		if !st.eofMarked && now.Sub(st.lastPacket) < (2*packetDur) {
 			continue
 		}
 
@@ -1260,7 +1322,8 @@ func (m *channelMixer) processRepeaterFinalization(now time.Time) {
 		bufferCopy := append([]int16(nil), st.bufferPCM...)
 		st.bufferPCM = st.bufferPCM[:0]
 		st.collecting = false
-		go m.playbackRepeaterAfterDelay(sessionID, bufferCopy, 500*time.Millisecond)
+		st.eofMarked = false
+		go m.playbackRepeaterAfterDelay(sessionID, bufferCopy, packetDur)
 	}
 }
 
@@ -1557,7 +1620,7 @@ func (m *whiteNoiseSquelchModule) processIdleShots(ctx *audioProcessContext, now
 		ctx.EmitFrame = true
 		m.advanceShotPhase(now, randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs))
 	case shotPhaseNoise:
-		noiseAmplitude := m.cfg.NoiseGain * dbToLinear(m.cfg.MaxNoiseDB)
+		noiseAmplitude := m.cfg.NoiseGain
 		for i := range ctx.Mixed {
 			ctx.Mixed[i] += m.white.next() * noiseAmplitude
 		}
