@@ -1,0 +1,36 @@
+---
+description: Current project context, completed modules, and next steps
+alwaysApply: true
+---
+
+# O-Walkie Development Context
+
+## Current Stage
+- Project is in late stabilization/integration stage before broader tester rollout.
+- Core relay and client protocol are already implemented; recent work focuses on reliability, deployment safety, and UX edge cases.
+- Accessibility-based background PTT path has been removed from `master` to reduce Play Protect friction.
+
+## Current Structure
+- `backend/`: Go relay server (`cmd/relay/main.go`), runtime config via `backend/config.json`.
+- `android/`: Kotlin Android client with foreground `WalkieService`, hardware/UI PTT flow, release signing pipeline.
+- `windows-client/`: WPF desktop client (Concentus + NAudio), protocol-aligned with relay handshake.
+- `.cursor/rules/`: project memory and context rules for persistent assistant guidance.
+
+## Modules Ready
+- Relay transport: WebSocket control + UDP audio routing/mixing.
+- Opus negotiation: sample rate + encoder profile fields exchanged in welcome handshake.
+- Server DSP chain: noise/squelch, clicks, filter, compressor, distortion.
+- Idle squelch shot scheduler: configurable random interval + bounded impulse duration.
+- Android PTT: hold and toggle modes, hardware key handling in foreground.
+- Build/release flow: signed Android release assembly from keystore config.
+
+## Recent Key Changes (from latest git history)
+- Removed Accessibility service and all background hardware PTT logic (`54380be`).
+- Added relay startup config fallback: default `./config.json`, optional path override via argument (`0126846`).
+- Stabilized squelch behavior with idle-shot scheduling and restored TX-end squelch tail (`d98bb46`, `180a4de`).
+- Added optional PTT toggle mode and fixed stuck-transmit edge case in Android UI (`971fe35`, `22c90ab`).
+
+## Next Step
+- Validate tester release behavior without Accessibility service (installability + Play Protect).
+- If needed, tune relay noise/shot defaults (`squelch_shots`, tail ranges) based on field feedback.
+- Keep protocol compatibility across Android/Windows when further relay audio settings are added.
