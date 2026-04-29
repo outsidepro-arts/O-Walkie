@@ -89,6 +89,7 @@ class WalkieService : Service() {
         const val EXTRA_PROTOCOL_ERROR = "protocolError"
         const val EXTRA_BUSY_MODE = "busyMode"
         const val EXTRA_BUSY_RX_ACTIVE = "busyRxActive"
+        const val EXTRA_RX_ACTIVE = "rxActive"
         const val EXTRA_TX_ACTIVE = "txActive"
         const val EXTRA_CALL_ACTIVE = "callActive"
         const val EXTRA_DEBUG_WS_RECONNECT_COUNT = "debugWsReconnectCount"
@@ -183,6 +184,7 @@ class WalkieService : Service() {
     private val encodeLock = Any()
     private val rxResumeAtNs = AtomicLong(0L)
     private val busyRxActive = AtomicBoolean(false)
+    private val rxActive = AtomicBoolean(false)
     private val busyLastRxAtNs = AtomicLong(0L)
     private val lastInboundUdpAtNs = AtomicLong(0L)
     private val lastTxCollisionVibrateAtNs = AtomicLong(0L)
@@ -1100,7 +1102,8 @@ class WalkieService : Service() {
         var phase = 0.0
         for (seg in segments) {
             val n = ((sampleRate * seg.durationMs) / 1000).coerceAtLeast(1)
-            val phaseStep = 2.0 * PI * seg.freqHz / sampleRate
+            val isPause = seg.freqHz <= 0.0
+            val phaseStep = if (isPause) 0.0 else 2.0 * PI * seg.freqHz / sampleRate
             for (i in 0 until n) {
                 val envPos = i.toDouble() / n
                 val env = when {
@@ -1108,7 +1111,7 @@ class WalkieService : Service() {
                     envPos > 0.92 -> (1.0 - envPos) / 0.08
                     else -> 1.0
                 }
-                val sample = sin(phase) * env * 0.26
+                val sample = if (isPause) 0.0 else sin(phase) * env * 0.26
                 if (idx < out.size) {
                     out[idx] = (sample * Short.MAX_VALUE).toInt().toShort()
                     idx++
@@ -1195,6 +1198,7 @@ class WalkieService : Service() {
                 enforceAudioRoutePolicy()
                 val signal = currentSignalByte()
                 updateBusyRxState()
+                updateRxActiveState()
                 broadcastStatus(signal)
                 delay(1000L)
             }
@@ -1244,6 +1248,12 @@ class WalkieService : Service() {
         busyRxActive.set(active)
     }
 
+    private fun updateRxActiveState() {
+        val holdNs = (currentPacketMs().coerceAtLeast(DEFAULT_PACKET_MS) * 2L) * 1_000_000L
+        val active = (System.nanoTime() - lastInboundUdpAtNs.get()) <= holdNs
+        rxActive.set(active)
+    }
+
     private fun broadcastStatus(signal: Int) {
         updateForegroundNotification()
         val statusIntent = Intent(ACTION_STATUS).apply {
@@ -1255,6 +1265,7 @@ class WalkieService : Service() {
             putExtra(EXTRA_PROTOCOL_ERROR, protocolError)
             putExtra(EXTRA_BUSY_MODE, busyMode)
             putExtra(EXTRA_BUSY_RX_ACTIVE, busyRxActive.get())
+            putExtra(EXTRA_RX_ACTIVE, rxActive.get())
             putExtra(EXTRA_TX_ACTIVE, transmitting.get() || rogerStreaming.get() || callStreaming.get())
             putExtra(EXTRA_CALL_ACTIVE, callStreaming.get())
             putExtra(EXTRA_DEBUG_WS_RECONNECT_COUNT, wsReconnectCount.get())
@@ -1618,6 +1629,7 @@ class WalkieService : Service() {
         protocolError = false
         busyMode = false
         busyRxActive.set(false)
+        rxActive.set(false)
         busyLastRxAtNs.set(0L)
         lastInboundUdpAtNs.set(0L)
         lastOutboundUdpAtNs.set(0L)

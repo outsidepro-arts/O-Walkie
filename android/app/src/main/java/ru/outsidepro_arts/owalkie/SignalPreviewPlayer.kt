@@ -50,7 +50,8 @@ object SignalPreviewPlayer {
         var phase = 0.0
         for (point in points) {
             val n = ((SAMPLE_RATE * point.durationMs) / 1000).coerceAtLeast(1)
-            val phaseStep = 2.0 * PI * point.freqHz / SAMPLE_RATE
+            val isPause = point.freqHz <= 0.0
+            val phaseStep = if (isPause) 0.0 else 2.0 * PI * point.freqHz / SAMPLE_RATE
             for (i in 0 until n) {
                 if (idx >= out.size) break
                 val envPos = i.toDouble() / n
@@ -59,7 +60,8 @@ object SignalPreviewPlayer {
                     envPos > 0.92 -> (1.0 - envPos) / 0.08
                     else -> 1.0
                 }
-                out[idx++] = (sin(phase) * env * 0.26 * Short.MAX_VALUE).toInt().toShort()
+                val sample = if (isPause) 0.0 else sin(phase) * env * 0.26
+                out[idx++] = (sample * Short.MAX_VALUE).toInt().toShort()
                 phase += phaseStep
             }
         }

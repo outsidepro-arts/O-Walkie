@@ -61,6 +61,14 @@
     <string name="roger_new_point_title">Новая точка</string>
     <string name="roger_point_frequency_hint">Частота (Гц)</string>
     <string name="roger_point_duration_hint">Длительность (мс)</string>
+    <string name="roger_point_invalid">Введите корректные значения точки (частота >= 0, длительность > 0)</string>
+    <string name="roger_points_total_too_long">Суммарная длина сигнала слишком большая для выбранного режима</string>
+    <string name="roger_point_pause">Пауза</string>
+    <string name="roger_point_hz_format">%1$d Гц</string>
+    <string name="delete_point_button">Удалить</string>
+    <string name="calling_repeat_count_label">Количество повторов</string>
+    <string name="calling_repeat_count_hint">Количество повторов</string>
+    <string name="calling_repeat_count_invalid">Введите количество повторов больше нуля</string>
     <string name="roger_save">Сохранить</string>
     <string name="roger_cancel">Отмена</string>
     <string name="roger_points_empty">Точки пока не добавлены</string>
@@ -78,6 +86,8 @@
     <string name="expand_connection_details">Развернуть данные подключения</string>
     <string name="previous_server">Назад</string>
     <string name="next_server">Вперед</string>
+    <string name="move_server_up">Выше</string>
+    <string name="move_server_down">Ниже</string>
     <string name="connection_state_connected">Подключен</string>
     <string name="connection_state_partial">Подключен (иниц. UDP)</string>
     <string name="connection_state_disconnected">Отключен</string>

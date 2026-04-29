@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
     private val servers = mutableListOf<ServerProfile>()
     private var wsConnected = false
     private var wsConnecting = false
+    private var udpReady = false
     private var receiverRegistered = false
     private var repeaterModeEnabled = false
     private var connectionDetailsExpanded = false
@@ -72,7 +73,9 @@ class MainActivity : ComponentActivity() {
     private var protocolIncompatible = false
     private var busyModeEnabled = false
     private var busyRxActive = false
+    private var rxActive = false
     private var userRequestedConnection = false
+    private var suppressSpinnerReconnect = false
     private var scanJob: Job? = null
     private val scanScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val scanClient = OkHttpClient.Builder().retryOnConnectionFailure(true).build()
@@ -87,11 +90,12 @@ class MainActivity : ComponentActivity() {
             wsConnecting = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTING, false)
             transmitting = intent.getBooleanExtra(WalkieService.EXTRA_TX_ACTIVE, transmitting)
             callActive = intent.getBooleanExtra(WalkieService.EXTRA_CALL_ACTIVE, callActive)
-            val udpReady = intent.getBooleanExtra(WalkieService.EXTRA_UDP_READY, false)
+            udpReady = intent.getBooleanExtra(WalkieService.EXTRA_UDP_READY, false)
             val prevProtocolIncompatible = protocolIncompatible
             protocolIncompatible = intent.getBooleanExtra(WalkieService.EXTRA_PROTOCOL_ERROR, false)
             busyModeEnabled = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_MODE, false)
             busyRxActive = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_RX_ACTIVE, false)
+            rxActive = intent.getBooleanExtra(WalkieService.EXTRA_RX_ACTIVE, false)
             val signalPercent = ((signal / 255.0) * 100.0).toInt().coerceIn(0, 100)
             lastSignalPercent = signalPercent
 
@@ -103,7 +107,7 @@ class MainActivity : ComponentActivity() {
                 uiSignalPlayer.playConnectionError()
             }
 
-            updateStatusChips(udpReady)
+            updateStatusChips()
             updateConnectButtonLabel()
             updatePttAvailability()
         }
@@ -180,6 +184,12 @@ class MainActivity : ComponentActivity() {
 
         binding.nextServerButton.setOnClickListener {
             moveSelectedServer(1)
+        }
+        binding.moveServerUpButton.setOnClickListener {
+            moveServerInList(-1)
+        }
+        binding.moveServerDownButton.setOnClickListener {
+            moveServerInList(1)
         }
 
         binding.compactConnectButton.setOnClickListener {
@@ -547,7 +557,11 @@ class MainActivity : ComponentActivity() {
         binding.serverSpinner.adapter = adapter
         binding.serverSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                val previousIndex = selectedServerIndex
                 applySelectedServerIndex(position, announce = false)
+                if (!suppressSpinnerReconnect && position != previousIndex) {
+                    reconnectToSelectedServerIfRequested()
+                }
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -880,14 +894,15 @@ class MainActivity : ComponentActivity() {
         updateServerNavigationButtons()
     }
 
-    private fun updateStatusChips(udpReady: Boolean = false) {
+    private fun updateStatusChips() {
         val connectionState = when {
             protocolIncompatible -> getString(R.string.connection_state_protocol_incompatible)
             callActive -> getString(R.string.connection_state_calling)
             transmitting -> getString(R.string.connection_state_transmitting)
+            wsConnected && rxActive -> getString(R.string.connection_state_receiving)
             scanJob?.isActive == true -> getString(R.string.connection_state_scanning)
             wsConnecting -> getString(R.string.connection_state_connecting)
-            wsConnected && udpReady -> getString(R.string.connection_state_receiving)
+            wsConnected && udpReady -> getString(R.string.connection_state_connected)
             wsConnected -> getString(R.string.connection_state_partial)
             else -> getString(R.string.connection_state_disconnected)
         }
@@ -912,6 +927,14 @@ class MainActivity : ComponentActivity() {
         binding.nextServerButton.isEnabled = hasNext
         binding.previousServerButton.alpha = if (hasPrevious) 1.0f else 0.5f
         binding.nextServerButton.alpha = if (hasNext) 1.0f else 0.5f
+
+        val canReorder = connectionDetailsExpanded && servers.isNotEmpty()
+        val canMoveUp = canReorder && selectedServerIndex > 0
+        val canMoveDown = canReorder && selectedServerIndex < servers.lastIndex
+        binding.moveServerUpButton.isEnabled = canMoveUp
+        binding.moveServerDownButton.isEnabled = canMoveDown
+        binding.moveServerUpButton.alpha = if (canMoveUp) 1.0f else 0.5f
+        binding.moveServerDownButton.alpha = if (canMoveDown) 1.0f else 0.5f
     }
 
     private fun moveSelectedServer(offset: Int) {
@@ -920,6 +943,20 @@ class MainActivity : ComponentActivity() {
         if (targetIndex == selectedServerIndex) return
         applySelectedServerIndex(targetIndex, announce = true)
         uiSignalPlayer.playSwitch()
+        reconnectToSelectedServerIfRequested()
+    }
+
+    private fun moveServerInList(offset: Int) {
+        if (servers.isEmpty()) return
+        val from = selectedServerIndex.coerceIn(0, servers.lastIndex)
+        val to = (from + offset).coerceIn(0, servers.lastIndex)
+        if (from == to) return
+        val item = servers.removeAt(from)
+        servers.add(to, item)
+        selectedServerIndex = to
+        serverStore.save(servers)
+        refreshServerSpinner()
+        applySelectedServerIndex(selectedServerIndex, announce = true)
         reconnectToSelectedServerIfRequested()
     }
 
@@ -953,7 +990,9 @@ class MainActivity : ComponentActivity() {
         selectedServerIndex = safeIndex
         val profile = servers[safeIndex]
         if (binding.serverSpinner.selectedItemPosition != safeIndex) {
+            suppressSpinnerReconnect = true
             binding.serverSpinner.setSelection(safeIndex, false)
+            suppressSpinnerReconnect = false
         }
         loadServerToInputs(profile)
         serverStore.setLastSelectedName(profile.name)

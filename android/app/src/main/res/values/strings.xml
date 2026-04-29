@@ -61,6 +61,14 @@
     <string name="roger_new_point_title">New point</string>
     <string name="roger_point_frequency_hint">Frequency (Hz)</string>
     <string name="roger_point_duration_hint">Duration (ms)</string>
+    <string name="roger_point_invalid">Enter valid point values (frequency >= 0, duration > 0)</string>
+    <string name="roger_points_total_too_long">Total signal length is too long for this mode</string>
+    <string name="roger_point_pause">Pause</string>
+    <string name="roger_point_hz_format">%1$d Hz</string>
+    <string name="delete_point_button">Delete</string>
+    <string name="calling_repeat_count_label">Repeat count</string>
+    <string name="calling_repeat_count_hint">Repeat count</string>
+    <string name="calling_repeat_count_invalid">Enter repeat count greater than zero</string>
     <string name="roger_save">Save</string>
     <string name="roger_cancel">Cancel</string>
     <string name="roger_points_empty">No points yet</string>
@@ -78,6 +86,8 @@
     <string name="expand_connection_details">Expand connection details</string>
     <string name="previous_server">Back</string>
     <string name="next_server">Forward</string>
+    <string name="move_server_up">Up</string>
+    <string name="move_server_down">Down</string>
     <string name="connection_state_connected">Connected</string>
     <string name="connection_state_partial">Connected (UDP init)</string>
     <string name="connection_state_disconnected">Disconnected</string>

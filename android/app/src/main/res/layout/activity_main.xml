@@ -250,6 +250,28 @@
                 android:text="@string/delete_server" />
         </LinearLayout>
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/moveServerUpButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/move_server_up" />
+
+            <Button
+                android:id="@+id/moveServerDownButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="@string/move_server_down" />
+        </LinearLayout>
+
         <Button
             android:id="@+id/connectServerButton"
             android:layout_width="match_parent"
