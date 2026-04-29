@@ -515,6 +515,10 @@ type channelMixer struct {
 	txStartedAt         map[uint32]time.Time
 	txForceStopped      map[uint32]bool
 	txLastStopNoticeAt  map[uint32]time.Time
+
+	lastFrameMu      sync.RWMutex
+	lastFramePayload []byte
+	lastFrameAt      time.Time
 }
 
 type repeaterSession struct {
@@ -872,6 +876,7 @@ func (m *channelMixer) addParticipant(sessionID uint32) {
 	m.participantsMu.Lock()
 	defer m.participantsMu.Unlock()
 	m.participants[sessionID] = struct{}{}
+	go m.sendLatestFrameToParticipant(sessionID)
 }
 
 func (m *channelMixer) removeParticipant(sessionID uint32) {
@@ -890,6 +895,38 @@ func (m *channelMixer) clearRepeaterState(sessionID uint32) {
 	m.repeaterMu.Lock()
 	defer m.repeaterMu.Unlock()
 	delete(m.repeaterState, sessionID)
+}
+
+func (m *channelMixer) rememberLatestFrame(payload []byte) {
+	if len(payload) == 0 {
+		return
+	}
+	m.lastFrameMu.Lock()
+	m.lastFramePayload = append(m.lastFramePayload[:0], payload...)
+	m.lastFrameAt = time.Now()
+	m.lastFrameMu.Unlock()
+}
+
+func (m *channelMixer) latestFramePayload(maxAge time.Duration) []byte {
+	m.lastFrameMu.RLock()
+	defer m.lastFrameMu.RUnlock()
+	if len(m.lastFramePayload) == 0 {
+		return nil
+	}
+	if maxAge > 0 && time.Since(m.lastFrameAt) > maxAge {
+		return nil
+	}
+	out := make([]byte, len(m.lastFramePayload))
+	copy(out, m.lastFramePayload)
+	return out
+}
+
+func (m *channelMixer) sendLatestFrameToParticipant(sessionID uint32) {
+	payload := m.latestFramePayload(2 * packetDur)
+	if len(payload) == 0 {
+		return
+	}
+	m.hub.sendToClient(sessionID, payload)
 }
 
 func (m *channelMixer) push(pkt *audioPacket) {
@@ -1152,6 +1189,12 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		return
 	}
 	m.seq++
+	header := make([]byte, 9)
+	binary.BigEndian.PutUint32(header[0:4], 0)
+	binary.BigEndian.PutUint32(header[4:8], m.seq)
+	header[8] = uint8(ctx.AvgSignalByte)
+	payload := append(header, opusBuf[:n]...)
+	m.rememberLatestFrame(payload)
 	exclude := uint32(0)
 	if len(activeSpeakers) == 1 {
 		exclude = activeSpeakers[0]
@@ -2237,6 +2280,10 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 					IP:   net.ParseIP(host),
 					Port: port,
 				})
+				chName := normalizeChannelName(c.getChannel())
+				if chName != "" {
+					s.hub.getOrCreateChannel(chName).sendLatestFrameToParticipant(c.sessionID)
+				}
 				_ = c.writeJSON(wsServerMessage{Type: "udp_registered", Info: host + ":" + strconv.Itoa(port)})
 			}
 		case "ping", "heartbeat":
