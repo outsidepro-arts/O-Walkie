@@ -1,0 +1,32 @@
+---
+description: Project memory: stack, current task, recent changes
+alwaysApply: true
+---
+
+# O-Walkie Project Memory
+
+## Tech Stack
+- Backend: Go relay server (`backend/cmd/relay/main.go`), WebSocket control + UDP audio data.
+- Android client: Kotlin, foreground `WalkieService`, Opus via `kopus`, Gradle Kotlin DSL.
+- Windows client: C# WPF, Concentus Opus, NAudio.
+- Audio protocol: Opus mono, server handshake with protocol/version/audio params.
+
+## Current Task
+- We are stabilizing release installation and background-key functionality tradeoffs.
+- Current decision: fully remove Accessibility service and background hardware PTT handling from Android app.
+- Keep hardware PTT for foreground app usage and preserve core PTT/toggle behavior.
+
+## Recent Key Changes
+- Implemented server-side configurable Opus parameters (bitrate/complexity/FEC/DTX/application) and handshake propagation.
+- Added and refined idle squelch shot scheduler on server:
+  - timer random `10..squelch_shots` seconds (when idle),
+  - shot duration random `tail_min_ms..tail_max_ms`,
+  - 1s silence before and after shot.
+- Changed relay startup config behavior:
+  - default uses `./config.json`,
+  - optional config path via first CLI argument.
+- Removed Android Accessibility service path and background hardware PTT flow:
+  - deleted `PttAccessibilityService`,
+  - removed manifest/xml declarations and related strings/UI/settings logic.
+
+После завершения каждой крупной подзадачи ты обязан обновлять этот файл, актуализируя статус проекта.
