@@ -1620,7 +1620,8 @@ func (m *whiteNoiseSquelchModule) processIdleShots(ctx *audioProcessContext, now
 		ctx.EmitFrame = true
 		m.advanceShotPhase(now, randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs))
 	case shotPhaseNoise:
-		noiseAmplitude := m.cfg.NoiseGain
+		// Use the same hiss profile as TX-end tail to keep squelch shots consistent.
+		noiseAmplitude := m.cfg.NoiseGain * dbToLinear(m.cfg.TailNoiseDB)
 		for i := range ctx.Mixed {
 			ctx.Mixed[i] += m.white.next() * noiseAmplitude
 		}
