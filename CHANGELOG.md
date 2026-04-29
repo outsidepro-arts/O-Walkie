@@ -15,6 +15,15 @@ This project follows a lightweight Keep a Changelog style and Semantic Versionin
 ### Fixed
 - _(add bug fixes here)_
 
+## [v0.1.5] - 2026-04-29
+
+### Changed
+- Android network recovery now reacts only to actual network switches and avoids unnecessary UDP socket rotation.
+
+### Fixed
+- Outgoing generated signal pacing (call/roger stream path) was stabilized with monotonic frame scheduling to prevent audible stream breakup on receiving clients.
+- UDP recovery no longer interrupts active TX/call/roger signal streaming.
+
 ## [v0.1.4] - 2026-04-28
 
 ### Changed
