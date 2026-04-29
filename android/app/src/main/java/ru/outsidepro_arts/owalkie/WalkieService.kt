@@ -60,6 +60,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.PI
 import kotlin.math.sin
+import kotlin.random.Random
 
 class WalkieService : Service() {
     companion object {
@@ -114,6 +115,10 @@ class WalkieService : Service() {
         private const val MAX_PACKET_SAMPLES = 48000 * 60 / 1000
         private const val ROGER_TAIL_MS = 40
         private const val CALL_LOCAL_GAIN_DB = -10.0
+        private const val UDP_KEEPALIVE_IDLE_INTERVAL_SEC = 12L
+        private const val UDP_KEEPALIVE_RECOVERY_INTERVAL_SEC = 6L
+        private const val UDP_KEEPALIVE_RECOVERY_WINDOW_SEC = 90L
+        private const val UDP_KEEPALIVE_JITTER_PERCENT = 15L
     }
 
     private val binder = Binder()
@@ -123,6 +128,7 @@ class WalkieService : Service() {
     private var webSocket: WebSocket? = null
     private var wsReconnectJob: Job? = null
     private var signalMonitorJob: Job? = null
+    private var udpKeepaliveJob: Job? = null
     private val wsConnected = AtomicBoolean(false)
     private val wsOpening = AtomicBoolean(false)
     private val wsRetryAttempt = AtomicInteger(0)
@@ -153,6 +159,8 @@ class WalkieService : Service() {
     private val busyLastRxAtNs = AtomicLong(0L)
     private val lastInboundUdpAtNs = AtomicLong(0L)
     private val lastTxCollisionVibrateAtNs = AtomicLong(0L)
+    private val lastOutboundUdpAtNs = AtomicLong(0L)
+    private val udpKeepaliveRecoveryUntilNs = AtomicLong(0L)
 
     @Volatile
     private var serverHost: String = DEFAULT_WS_HOST
@@ -318,6 +326,7 @@ class WalkieService : Service() {
         udpReceiveJob?.cancel()
         wsReconnectJob?.cancel()
         signalMonitorJob?.cancel()
+        udpKeepaliveJob?.cancel()
         webSocket?.close(1000, "service destroyed")
         synchronized(udpSocketLock) {
             udpSocket?.close()
@@ -507,6 +516,7 @@ class WalkieService : Service() {
                 channelBound = false
                 busyMode = false
                 busyRxActive.set(false)
+                stopUdpKeepaliveLoop()
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get()) {
                     scheduleWsReconnect()
@@ -521,6 +531,7 @@ class WalkieService : Service() {
                 channelBound = false
                 busyMode = false
                 busyRxActive.set(false)
+                stopUdpKeepaliveLoop()
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get()) {
                     scheduleWsReconnect()
@@ -591,6 +602,8 @@ class WalkieService : Service() {
                             channelBound = true
                             sendRepeaterModeCommand(ws)
                             sendUdpHello()
+                            startUdpKeepaliveLoop()
+                            enterUdpKeepaliveRecoveryWindow()
                         }
                     }
                 }
@@ -640,6 +653,7 @@ class WalkieService : Service() {
         }
         ensureUdpSocket()
         sendUdpHello()
+        enterUdpKeepaliveRecoveryWindow()
     }
 
     private fun ensurePlaybackLoop() {
@@ -1066,6 +1080,7 @@ class WalkieService : Service() {
 
         val packet = DatagramPacket(payload, payload.size, address, udpPort)
         runCatching { socket.send(packet) }
+            .onSuccess { lastOutboundUdpAtNs.set(System.nanoTime()) }
             .onFailure {
                 recreateUdpSocket()
             }
@@ -1211,7 +1226,72 @@ class WalkieService : Service() {
         bb.put(0) // signal=0 with empty payload marks UDP TX EOF on relay
         val packet = DatagramPacket(payload, payload.size, address, udpPort)
         runCatching { socket.send(packet) }
+            .onSuccess { lastOutboundUdpAtNs.set(System.nanoTime()) }
             .onFailure { recreateUdpSocket() }
+    }
+
+    private fun sendUdpKeepalivePacket() {
+        val socket = udpSocket ?: run {
+            ensureUdpSocket()
+            udpSocket ?: return
+        }
+        val address = targetUdpAddress ?: run {
+            targetUdpAddress = resolveHost(serverHost)
+            targetUdpAddress ?: return
+        }
+        val sid = sessionId.get().toInt()
+        if (sid == 0) return
+
+        val payload = ByteArray(9)
+        val bb = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
+        bb.putInt(sid)
+        bb.putInt(0)
+        bb.put(255.toByte())
+
+        val packet = DatagramPacket(payload, payload.size, address, udpPort)
+        runCatching { socket.send(packet) }
+            .onSuccess { lastOutboundUdpAtNs.set(System.nanoTime()) }
+            .onFailure { recreateUdpSocket() }
+    }
+
+    private fun startUdpKeepaliveLoop() {
+        if (udpKeepaliveJob?.isActive == true) return
+        udpKeepaliveJob = serviceScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                if (!desiredConnection.get() || !wsConnected.get() || sessionId.get() == 0L) {
+                    delay(1000L)
+                    continue
+                }
+                val nowNs = System.nanoTime()
+                val inRecovery = nowNs < udpKeepaliveRecoveryUntilNs.get()
+                val intervalSec = if (inRecovery) UDP_KEEPALIVE_RECOVERY_INTERVAL_SEC else UDP_KEEPALIVE_IDLE_INTERVAL_SEC
+                val intervalNs = intervalSec * 1_000_000_000L
+                val lastTrafficNs = maxOf(lastInboundUdpAtNs.get(), lastOutboundUdpAtNs.get())
+                if (lastTrafficNs == 0L || (nowNs - lastTrafficNs) >= intervalNs) {
+                    sendUdpKeepalivePacket()
+                }
+                delay(jitteredKeepaliveDelayMs(intervalSec))
+            }
+        }
+    }
+
+    private fun stopUdpKeepaliveLoop() {
+        udpKeepaliveJob?.cancel()
+        udpKeepaliveJob = null
+    }
+
+    private fun enterUdpKeepaliveRecoveryWindow() {
+        udpKeepaliveRecoveryUntilNs.set(
+            System.nanoTime() + UDP_KEEPALIVE_RECOVERY_WINDOW_SEC * 1_000_000_000L,
+        )
+    }
+
+    private fun jitteredKeepaliveDelayMs(baseIntervalSec: Long): Long {
+        val baseMs = baseIntervalSec * 1000L
+        val deltaMs = (baseMs * UDP_KEEPALIVE_JITTER_PERCENT) / 100L
+        val minMs = (baseMs - deltaMs).coerceAtLeast(1000L)
+        val maxMs = baseMs + deltaMs
+        return if (maxMs <= minMs) minMs else Random.nextLong(minMs, maxMs + 1L)
     }
 
     private fun wsUrl(): String {
@@ -1433,8 +1513,12 @@ class WalkieService : Service() {
         busyMode = false
         busyRxActive.set(false)
         busyLastRxAtNs.set(0L)
+        lastInboundUdpAtNs.set(0L)
+        lastOutboundUdpAtNs.set(0L)
+        udpKeepaliveRecoveryUntilNs.set(0L)
         wsReconnectJob?.cancel()
         wsReconnectJob = null
+        stopUdpKeepaliveLoop()
         runCatching { webSocket?.close(1000, "cancel requested") }
         runCatching { webSocket?.cancel() }
         webSocket = null
