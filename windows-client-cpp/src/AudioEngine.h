@@ -13,6 +13,11 @@ struct OpusEncoder;
 struct OpusDecoder;
 struct WelcomeConfig;
 
+struct NamedAudioDevice {
+    int index = -1;
+    std::string name;
+};
+
 class AudioEngine {
 public:
     using EncodedFrameCallback = std::function<void(const uint8_t* data, size_t size, uint8_t signal)>;
@@ -25,6 +30,12 @@ public:
     bool Initialize();
     void Shutdown();
     void Reconfigure(const WelcomeConfig& cfg);
+
+    static std::vector<NamedAudioDevice> ListInputDevices();
+    static std::vector<NamedAudioDevice> ListOutputDevices();
+
+    void SetPreferredInputDevice(int indexOrMinusOneForDefault);
+    void SetPreferredOutputDevice(int indexOrMinusOneForDefault);
 
     bool StartTransmit();
     void StopTransmit();
@@ -39,9 +50,12 @@ public:
 private:
     void RecreateCodec();
     int FrameSamples() const;
+    int ResolveInputDevice() const;
+    int ResolveOutputDevice() const;
+    void CloseOutputStreamLocked();
 
 private:
-    std::mutex mu_;
+    mutable std::mutex mu_;
     PaStream* inputStream_ = nullptr;
     PaStream* outputStream_ = nullptr;
     OpusEncoder* encoder_ = nullptr;
@@ -53,6 +67,9 @@ private:
     int complexity_ = 5;
     bool fec_ = true;
     bool dtx_ = false;
+
+    int preferredInputDevice_ = -1;
+    int preferredOutputDevice_ = -1;
 
     std::atomic<bool> transmitting_{false};
 

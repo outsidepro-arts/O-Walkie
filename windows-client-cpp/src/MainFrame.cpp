@@ -7,6 +7,7 @@
 
 #include <wx/button.h>
 #include <wx/checkbox.h>
+#include <wx/choice.h>
 #include <wx/filename.h>
 #include <wx/gauge.h>
 #include <wx/sizer.h>
@@ -49,7 +50,9 @@ MainFrame::MainFrame()
         this->CallAfter([this, percent] { signalGauge_->SetValue(percent); });
     });
     audio_->Initialize();
+    PopulateAudioDeviceChoices();
     LoadConnectionSettings();
+    ApplySelectedAudioDevicesToEngine();
 }
 
 MainFrame::~MainFrame() {
@@ -79,7 +82,20 @@ void MainFrame::BuildUi() {
     channelCtrl_ = new wxTextCtrl(this, wxID_ANY, "global");
     grid->Add(channelCtrl_, 1, wxEXPAND);
 
+    grid->Add(new wxStaticText(this, wxID_ANY, "Microphone"), 0, wxALIGN_CENTER_VERTICAL);
+    inputDeviceChoice_ = new wxChoice(this, wxID_ANY);
+    grid->Add(inputDeviceChoice_, 1, wxEXPAND);
+
+    grid->Add(new wxStaticText(this, wxID_ANY, "Speaker"), 0, wxALIGN_CENTER_VERTICAL);
+    outputDeviceChoice_ = new wxChoice(this, wxID_ANY);
+    grid->Add(outputDeviceChoice_, 1, wxEXPAND);
+
     root->Add(grid, 0, wxEXPAND | wxALL, 12);
+
+    auto* audioBar = new wxBoxSizer(wxHORIZONTAL);
+    refreshAudioBtn_ = new wxButton(this, wxID_ANY, "Refresh audio devices");
+    audioBar->Add(refreshAudioBtn_, 0, wxRIGHT, 10);
+    root->Add(audioBar, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     repeaterCheck_ = new wxCheckBox(this, wxID_ANY, "Repeater mode");
     root->Add(repeaterCheck_, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
@@ -103,6 +119,9 @@ void MainFrame::BuildUi() {
 
 void MainFrame::BindUi() {
     connectBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnConnectClicked, this);
+    refreshAudioBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnRefreshAudioDevices, this);
+    inputDeviceChoice_->Bind(wxEVT_CHOICE, &MainFrame::OnAudioDeviceChanged, this);
+    outputDeviceChoice_->Bind(wxEVT_CHOICE, &MainFrame::OnAudioDeviceChanged, this);
     pttBtn_->Bind(wxEVT_LEFT_DOWN, &MainFrame::OnPttDown, this);
     pttBtn_->Bind(wxEVT_LEFT_UP, &MainFrame::OnPttUp, this);
     pttBtn_->Bind(wxEVT_LEAVE_WINDOW, &MainFrame::OnPttUp, this);
@@ -202,6 +221,9 @@ void MainFrame::LoadConnectionSettings() {
         if (j.contains("repeater") && j["repeater"].is_boolean()) {
             repeaterCheck_->SetValue(j["repeater"].get<bool>());
         }
+        const int inDev = j.value("audio_input_device", -1);
+        const int outDev = j.value("audio_output_device", -1);
+        SelectAudioDevicesInUi(inDev, outDev);
     } catch (...) {
     }
 }
@@ -217,10 +239,88 @@ void MainFrame::SaveConnectionSettings() {
     j["udp_port"] = static_cast<int>(udpPort);
     j["channel"] = std::string(channelCtrl_->GetValue().utf8_string());
     j["repeater"] = repeaterCheck_->GetValue();
+    j["audio_input_device"] = SelectedInputDeviceId();
+    j["audio_output_device"] = SelectedOutputDeviceId();
     const std::string outPath = ConnectionConfigPath().utf8_string();
     std::ofstream out(outPath);
     if (!out) {
         return;
     }
     out << j.dump(2);
+}
+
+void MainFrame::PopulateAudioDeviceChoices() {
+    inputDeviceChoice_->Clear();
+    inputDevIds_.clear();
+    inputDeviceChoice_->Append("System default");
+    inputDevIds_.push_back(-1);
+    for (const auto& d : AudioEngine::ListInputDevices()) {
+        inputDeviceChoice_->Append(wxString::FromUTF8(d.name));
+        inputDevIds_.push_back(d.index);
+    }
+    inputDeviceChoice_->SetSelection(0);
+
+    outputDeviceChoice_->Clear();
+    outputDevIds_.clear();
+    outputDeviceChoice_->Append("System default");
+    outputDevIds_.push_back(-1);
+    for (const auto& d : AudioEngine::ListOutputDevices()) {
+        outputDeviceChoice_->Append(wxString::FromUTF8(d.name));
+        outputDevIds_.push_back(d.index);
+    }
+    outputDeviceChoice_->SetSelection(0);
+}
+
+void MainFrame::SelectAudioDevicesInUi(int inputDeviceId, int outputDeviceId) {
+    int inSel = 0;
+    for (size_t i = 0; i < inputDevIds_.size(); ++i) {
+        if (inputDevIds_[i] == inputDeviceId) {
+            inSel = static_cast<int>(i);
+            break;
+        }
+    }
+    inputDeviceChoice_->SetSelection(inSel);
+
+    int outSel = 0;
+    for (size_t i = 0; i < outputDevIds_.size(); ++i) {
+        if (outputDevIds_[i] == outputDeviceId) {
+            outSel = static_cast<int>(i);
+            break;
+        }
+    }
+    outputDeviceChoice_->SetSelection(outSel);
+}
+
+void MainFrame::ApplySelectedAudioDevicesToEngine() {
+    audio_->SetPreferredInputDevice(SelectedInputDeviceId());
+    audio_->SetPreferredOutputDevice(SelectedOutputDeviceId());
+}
+
+void MainFrame::OnRefreshAudioDevices(wxCommandEvent&) {
+    const int inId = SelectedInputDeviceId();
+    const int outId = SelectedOutputDeviceId();
+    PopulateAudioDeviceChoices();
+    SelectAudioDevicesInUi(inId, outId);
+    ApplySelectedAudioDevicesToEngine();
+    SetStatus("Audio device list refreshed");
+}
+
+void MainFrame::OnAudioDeviceChanged(wxCommandEvent&) {
+    ApplySelectedAudioDevicesToEngine();
+}
+
+int MainFrame::SelectedInputDeviceId() const {
+    const int i = inputDeviceChoice_->GetSelection();
+    if (i == wxNOT_FOUND || i < 0 || static_cast<size_t>(i) >= inputDevIds_.size()) {
+        return -1;
+    }
+    return inputDevIds_[static_cast<size_t>(i)];
+}
+
+int MainFrame::SelectedOutputDeviceId() const {
+    const int i = outputDeviceChoice_->GetSelection();
+    if (i == wxNOT_FOUND || i < 0 || static_cast<size_t>(i) >= outputDevIds_.size()) {
+        return -1;
+    }
+    return outputDevIds_[static_cast<size_t>(i)];
 }

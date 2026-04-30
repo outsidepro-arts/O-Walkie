@@ -19,6 +19,7 @@ alwaysApply: true
 ## Recent Key Changes
 - Android: fixed potential Activity resume ANR by moving UDP socket timeout policy update (`soTimeout`) off the service main thread to `Dispatchers.IO`.
 - Windows: C++ wxWidgets client persists last connection fields to `%AppData%`-style user data dir as `connection.json` (host/ports/channel/repeater); app/vendor display names set for stable config path.
+- Windows: `windows-client-cpp` — выбор устройств ввода/вывода PortAudio в главном окне, сохранение `audio_input_device` / `audio_output_device` (-1 = системный default), кнопка обновления списка; при смене sample rate из welcome закрывается output stream для пересоздания.
 - Windows client: reduced UDP keepalive aggressiveness to `5s` with ±15% jitter to lower synchronized keepalive bursts while preserving simple desktop networking behavior.
 - Android: tuned background idle battery mode further — `UDP_BG_KEEPALIVE_IDLE_INTERVAL_SEC=50`, `UDP_RECV_TIMEOUT_BACKGROUND_MS=10000`, cached signal-strength polling in background (max once per 50s), immediate keepalive mode switch on app focus change.
 - Android: reduce background battery use (softer UDP keepalive when app not in focus, longer RX socket timeout in background), bind UDP `DatagramSocket` to `ConnectivityManager` active `Network` after handoffs, queue UDP socket recreation until end of TX/call/roger, reset Opus on new `sessionId` and fix playback loop race on reconnect.

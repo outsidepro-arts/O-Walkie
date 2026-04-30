@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <thread>
 
 #include <opus/opus.h>
 #include <portaudio.h>
@@ -28,11 +29,7 @@ void AudioEngine::Shutdown() {
     StopTransmit();
 
     std::lock_guard<std::mutex> lg(mu_);
-    if (outputStream_) {
-        Pa_StopStream(outputStream_);
-        Pa_CloseStream(outputStream_);
-        outputStream_ = nullptr;
-    }
+    CloseOutputStreamLocked();
     if (encoder_) {
         opus_encoder_destroy(encoder_);
         encoder_ = nullptr;
@@ -46,13 +43,98 @@ void AudioEngine::Shutdown() {
 
 void AudioEngine::Reconfigure(const WelcomeConfig& cfg) {
     std::lock_guard<std::mutex> lg(mu_);
+    const bool timingChanged = cfg.sampleRate != sampleRate_ || cfg.packetMs != packetMs_;
     sampleRate_ = cfg.sampleRate;
     packetMs_ = cfg.packetMs;
     bitrate_ = cfg.bitrate;
     complexity_ = cfg.complexity;
     fec_ = cfg.fec;
     dtx_ = cfg.dtx;
+    if (timingChanged) {
+        CloseOutputStreamLocked();
+    }
     RecreateCodec();
+}
+
+std::vector<NamedAudioDevice> AudioEngine::ListInputDevices() {
+    std::vector<NamedAudioDevice> out;
+    int n = Pa_GetDeviceCount();
+    if (n < 0) {
+        return out;
+    }
+    for (int i = 0; i < n; ++i) {
+        const PaDeviceInfo* info = Pa_GetDeviceInfo(i);
+        if (!info || info->maxInputChannels < 1) {
+            continue;
+        }
+        out.push_back({i, info->name ? std::string(info->name) : std::string("Input ") + std::to_string(i)});
+    }
+    return out;
+}
+
+std::vector<NamedAudioDevice> AudioEngine::ListOutputDevices() {
+    std::vector<NamedAudioDevice> out;
+    int n = Pa_GetDeviceCount();
+    if (n < 0) {
+        return out;
+    }
+    for (int i = 0; i < n; ++i) {
+        const PaDeviceInfo* info = Pa_GetDeviceInfo(i);
+        if (!info || info->maxOutputChannels < 1) {
+            continue;
+        }
+        out.push_back({i, info->name ? std::string(info->name) : std::string("Output ") + std::to_string(i)});
+    }
+    return out;
+}
+
+void AudioEngine::SetPreferredInputDevice(int indexOrMinusOneForDefault) {
+    std::lock_guard<std::mutex> lg(mu_);
+    preferredInputDevice_ = indexOrMinusOneForDefault;
+}
+
+void AudioEngine::SetPreferredOutputDevice(int indexOrMinusOneForDefault) {
+    std::lock_guard<std::mutex> lg(mu_);
+    if (preferredOutputDevice_ != indexOrMinusOneForDefault) {
+        preferredOutputDevice_ = indexOrMinusOneForDefault;
+        CloseOutputStreamLocked();
+    }
+}
+
+int AudioEngine::ResolveInputDevice() const {
+    if (preferredInputDevice_ < 0) {
+        return Pa_GetDefaultInputDevice();
+    }
+    if (preferredInputDevice_ >= Pa_GetDeviceCount()) {
+        return Pa_GetDefaultInputDevice();
+    }
+    const PaDeviceInfo* info = Pa_GetDeviceInfo(preferredInputDevice_);
+    if (!info || info->maxInputChannels < 1) {
+        return Pa_GetDefaultInputDevice();
+    }
+    return preferredInputDevice_;
+}
+
+int AudioEngine::ResolveOutputDevice() const {
+    if (preferredOutputDevice_ < 0) {
+        return Pa_GetDefaultOutputDevice();
+    }
+    if (preferredOutputDevice_ >= Pa_GetDeviceCount()) {
+        return Pa_GetDefaultOutputDevice();
+    }
+    const PaDeviceInfo* info = Pa_GetDeviceInfo(preferredOutputDevice_);
+    if (!info || info->maxOutputChannels < 1) {
+        return Pa_GetDefaultOutputDevice();
+    }
+    return preferredOutputDevice_;
+}
+
+void AudioEngine::CloseOutputStreamLocked() {
+    if (outputStream_) {
+        Pa_StopStream(outputStream_);
+        Pa_CloseStream(outputStream_);
+        outputStream_ = nullptr;
+    }
 }
 
 int AudioEngine::FrameSamples() const {
@@ -85,7 +167,7 @@ bool AudioEngine::StartTransmit() {
     if (transmitting_.load() || !encoder_) return false;
 
     PaStreamParameters inParams{};
-    inParams.device = Pa_GetDefaultInputDevice();
+    inParams.device = ResolveInputDevice();
     if (inParams.device == paNoDevice) return false;
     inParams.channelCount = 1;
     inParams.sampleFormat = paInt16;
@@ -141,7 +223,7 @@ void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
 
     if (!outputStream_) {
         PaStreamParameters outParams{};
-        outParams.device = Pa_GetDefaultOutputDevice();
+        outParams.device = ResolveOutputDevice();
         if (outParams.device == paNoDevice) return;
         outParams.channelCount = 1;
         outParams.sampleFormat = paInt16;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include <wx/frame.h>
 
@@ -8,6 +9,7 @@
 #include "RelayClient.h"
 
 class wxButton;
+class wxChoice;
 class wxGauge;
 class wxStaticText;
 class wxTextCtrl;
@@ -30,12 +32,22 @@ private:
     void LoadConnectionSettings();
     void SaveConnectionSettings();
     static wxString ConnectionConfigPath();
+    void PopulateAudioDeviceChoices();
+    void SelectAudioDevicesInUi(int inputDeviceId, int outputDeviceId);
+    void ApplySelectedAudioDevicesToEngine();
+    void OnRefreshAudioDevices(wxCommandEvent& event);
+    void OnAudioDeviceChanged(wxCommandEvent& event);
+    int SelectedInputDeviceId() const;
+    int SelectedOutputDeviceId() const;
 
 private:
     wxTextCtrl* hostCtrl_ = nullptr;
     wxTextCtrl* wsPortCtrl_ = nullptr;
     wxTextCtrl* udpPortCtrl_ = nullptr;
     wxTextCtrl* channelCtrl_ = nullptr;
+    wxChoice* inputDeviceChoice_ = nullptr;
+    wxChoice* outputDeviceChoice_ = nullptr;
+    wxButton* refreshAudioBtn_ = nullptr;
     wxCheckBox* repeaterCheck_ = nullptr;
     wxButton* connectBtn_ = nullptr;
     wxButton* pttBtn_ = nullptr;
@@ -45,4 +57,6 @@ private:
     std::unique_ptr<RelayClient> relay_;
     std::unique_ptr<AudioEngine> audio_;
     bool connected_ = false;
+    std::vector<int> inputDevIds_;
+    std::vector<int> outputDevIds_;
 };
