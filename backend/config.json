@@ -32,7 +32,7 @@
       "squelch_shots_max_s": 600,
       "tail_noise_db": 10.0,
       "tail_min_ms": 5,
-      "tail_max_ms": 10
+      "tail_max_ms": 60
     },
     "click": {
       "enabled": true,
