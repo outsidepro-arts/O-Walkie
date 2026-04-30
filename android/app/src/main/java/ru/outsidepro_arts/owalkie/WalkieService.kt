@@ -127,14 +127,18 @@ class WalkieService : Service() {
         private const val UDP_KEEPALIVE_IDLE_INTERVAL_SEC = 12L
         private const val UDP_KEEPALIVE_RECOVERY_INTERVAL_SEC = 6L
         // Softer keepalive in background: foreground call signal / TX already punches NAT often.
-        private const val UDP_BG_KEEPALIVE_IDLE_INTERVAL_SEC = 28L
+        private const val UDP_BG_KEEPALIVE_IDLE_INTERVAL_SEC = 50L
         private const val UDP_BG_KEEPALIVE_RECOVERY_INTERVAL_SEC = 12L
         private const val UDP_KEEPALIVE_RECOVERY_WINDOW_SEC = 90L
         private const val UDP_KEEPALIVE_JITTER_PERCENT = 15L
         private const val WS_RECONNECT_JITTER_PERCENT = 20L
         private const val NETWORK_RECOVERY_MIN_INTERVAL_MS = 3000L
         private const val UDP_RECV_TIMEOUT_FOREGROUND_MS = 300
-        private const val UDP_RECV_TIMEOUT_BACKGROUND_MS = 2000
+        private const val UDP_RECV_TIMEOUT_BACKGROUND_MS = 10000
+        private const val SIGNAL_POLL_INTERVAL_FOREGROUND_MS = 1000L
+        private const val SIGNAL_POLL_INTERVAL_BACKGROUND_MS = 5000L
+        private const val SIGNAL_REFRESH_INTERVAL_FOREGROUND_MS = 1000L
+        private const val SIGNAL_REFRESH_INTERVAL_BACKGROUND_MS = 50000L
     }
 
     private val binder = Binder()
@@ -219,6 +223,8 @@ class WalkieService : Service() {
     private val lastObservedUdpGapMs = AtomicLong(0L)
     private val lastNetworkRecoveryAtNs = AtomicLong(0L)
     private val lastNetworkFingerprint = AtomicLong(0L)
+    private val cachedSignalByte = AtomicInteger(0)
+    private val lastSignalRefreshAtNs = AtomicLong(0L)
 
     @Volatile
     private var serverHost: String = DEFAULT_WS_HOST
@@ -1280,7 +1286,12 @@ class WalkieService : Service() {
                 updateBusyRxState()
                 updateRxActiveState()
                 broadcastStatus(signal)
-                delay(1000L)
+                val loopDelayMs = if (activityFocused) {
+                    SIGNAL_POLL_INTERVAL_FOREGROUND_MS
+                } else {
+                    SIGNAL_POLL_INTERVAL_BACKGROUND_MS
+                }
+                delay(loopDelayMs)
             }
         }
     }
@@ -1653,9 +1664,15 @@ class WalkieService : Service() {
 
     private fun updateActivityFocus(focused: Boolean) {
         activityFocused = focused
+        // Apply new signal/keepalive cadence immediately on focus transitions.
+        lastSignalRefreshAtNs.set(0L)
         enforceAudioRoutePolicy()
         synchronized(udpSocketLock) {
             udpSocket?.let { applyUdpReceiveTimeoutForActivity(it) }
+        }
+        if (desiredConnection.get() && wsConnected.get() && sessionId.get() != 0L) {
+            stopUdpKeepaliveLoop()
+            startUdpKeepaliveLoop()
         }
     }
 
@@ -1890,6 +1907,17 @@ class WalkieService : Service() {
 
     @Suppress("DEPRECATION")
     private fun currentSignalByte(): Int {
+        val nowNs = System.nanoTime()
+        val refreshIntervalNs = if (activityFocused) {
+            SIGNAL_REFRESH_INTERVAL_FOREGROUND_MS * 1_000_000L
+        } else {
+            SIGNAL_REFRESH_INTERVAL_BACKGROUND_MS * 1_000_000L
+        }
+        val lastNs = lastSignalRefreshAtNs.get()
+        if (lastNs != 0L && (nowNs - lastNs) < refreshIntervalNs) {
+            return cachedSignalByte.get()
+        }
+
         var wifiStrength = 0
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         if (wifiManager != null && wifiManager.isWifiEnabled) {
@@ -1906,7 +1934,10 @@ class WalkieService : Service() {
             }
         }
 
-        return maxOf(wifiStrength, cellularStrength).coerceIn(0, 255)
+        val signal = maxOf(wifiStrength, cellularStrength).coerceIn(0, 255)
+        cachedSignalByte.set(signal)
+        lastSignalRefreshAtNs.set(nowNs)
+        return signal
     }
 }
 

@@ -17,6 +17,7 @@ alwaysApply: true
 - Keep hardware PTT for foreground app usage and preserve core PTT/toggle behavior.
 
 ## Recent Key Changes
+- Android: tuned background idle battery mode further — `UDP_BG_KEEPALIVE_IDLE_INTERVAL_SEC=50`, `UDP_RECV_TIMEOUT_BACKGROUND_MS=10000`, cached signal-strength polling in background (max once per 50s), immediate keepalive mode switch on app focus change.
 - Android: reduce background battery use (softer UDP keepalive when app not in focus, longer RX socket timeout in background), bind UDP `DatagramSocket` to `ConnectivityManager` active `Network` after handoffs, queue UDP socket recreation until end of TX/call/roger, reset Opus on new `sessionId` and fix playback loop race on reconnect.
 - Implemented server-side configurable Opus parameters (bitrate/complexity/FEC/DTX/application) and handshake propagation.
 - Added and refined idle squelch shot scheduler on server:
