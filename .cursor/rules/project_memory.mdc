@@ -12,12 +12,16 @@ alwaysApply: true
 - Audio protocol: Opus mono, server handshake with protocol/version/audio params.
 
 ## Current Task
-- Android: adaptive UDP keepalive (foreground vs background intervals/timeouts) remains in `WalkieService`; monitor battery/NAT behavior after ANR fix (receive timeout applied on `Dispatchers.IO` only).
-- Windows: `windows-client-cpp` — server profiles (`profiles.json`), audio in `audio.json`, migration from legacy `connection.json`; auto-reconnect with backoff after WS/UDP loss until user Disconnect; `RelayClient` avoids self-join deadlock and uses connection-lost callback + `JoinWorkerThreads`.
-- Accessibility / background hardware PTT removed from Android for Play Protect compatibility; foreground PTT preserved.
-- Windows desktop target is now treated as release-ready baseline (no test/dev naming in user-facing client title or output artifact name).
+- Active development is ongoing for both clients in equal priority: Android and Windows (`windows-client-cpp`).
+- Feature policy: all new user-facing or protocol-impacting functionality must be implemented in both clients with parity unless explicitly scoped otherwise.
+- Windows release baseline includes: GUI subsystem app (`owalkie-desktop.exe`), auto-reconnect, profiles/settings persistence, signaling flow parity (`Roger` on PTT release, manual `Call`), local signal playback, global keyboard PTT hotkey, and release packaging to `build/dist`.
+- Legacy `windows-client` (WPF/.NET) is removed from repository and no longer participates in feature parity.
+- Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Windows: switched desktop build to GUI subsystem (`WIN32`) so release executable runs without background console window.
+- Windows: legacy `windows-client` WPF project removed and committed as retired after migration to C++ desktop client.
+- Windows: finalized release-facing naming (window title `O-Walkie Desktop`, output `owalkie-desktop.exe`), added build/debug ignores in `.gitignore`, and treated desktop target as production release path.
 - Windows: local UI signals (`PTT press/release`, `Roger`, `Call`, `Connected`) now play through separate one-shot high-quality playback path resampled to `44100 Hz`, decoupled from narrowband relay stream rate.
 - Windows: desktop client now looks up Android-matched UI sounds in `<exe>/sounds` (`selfpttup_002`, `selfttdown_002`; optional `.wav`) with generated fallback if missing; build post-step copies files from `android/app/src/main/res/raw` into `build/sounds` and `build/dist/sounds`.
 - Windows: added Android-like RX resume holdoff after TX/call/roger signaling in desktop audio path; incoming audio is temporarily suppressed during holdoff to avoid immediate post-TX buffer clashes.
