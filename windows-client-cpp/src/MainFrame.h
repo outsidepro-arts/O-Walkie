@@ -28,6 +28,8 @@ private:
     void OnConnectClicked(wxCommandEvent& event);
     void OnPttDown(wxMouseEvent& event);
     void OnPttUp(wxMouseEvent& event);
+    void OnPttButtonKeyDown(wxKeyEvent& event);
+    void OnPttButtonKeyUp(wxKeyEvent& event);
     void OnTxStop();
     void LoadConnectionSettings();
     void SaveConnectionSettings();

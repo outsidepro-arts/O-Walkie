@@ -44,4 +44,11 @@ If MSYS2 is not under `C:/dev/msys64`, set CMake cache variable `OWALKIE_MSYS_RO
 Next:
 1. Multi-profile / settings parity with Android
 2. Reconnect + diagnostics
-3. Keyboard-accessible PTT and richer status (Tx/Rx)
+3. Richer status (Tx/Rx), optional global hotkey PTT
+
+### Keyboard / accessibility notes
+
+- Controls live on a **`wxPanel` with `wxTAB_TRAVERSAL`** so Tab/Shift+Tab follow one chain (recommended over placing focusables directly on `wxFrame`).
+- **`wxWindow::DisableFocusFromKeyboard()`** on decorative widgets (`wxStaticText`, level gauge, read-only status line) so Tab skips them — matches common wx + AT guidance ([wxWidgets accessibility overview](https://wxwidgets.org/docs/tutorials/accessibility/), forum threads on tab traversal).
+- **`MoveAfterInTabOrder`** locks traversal to top-to-bottom field order.
+- After Tab to **Hold to Talk**, **Space** holds transmit (same as mouse hold); labels use **`SetName`** for screen readers where helpful.

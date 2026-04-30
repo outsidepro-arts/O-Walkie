@@ -10,10 +10,21 @@
 #include <wx/choice.h>
 #include <wx/filename.h>
 #include <wx/gauge.h>
+#include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/stdpaths.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
+
+namespace {
+
+void SkipKeyboardFocus(wxWindow* w) {
+    if (w) {
+        w->DisableFocusFromKeyboard();
+    }
+}
+
+} // namespace
 
 MainFrame::MainFrame()
     : wxFrame(nullptr, wxID_ANY, "O-Walkie Desktop CPP (wxWidgets)", wxDefaultPosition, wxSize(620, 520)),
@@ -53,6 +64,13 @@ MainFrame::MainFrame()
     PopulateAudioDeviceChoices();
     LoadConnectionSettings();
     ApplySelectedAudioDevicesToEngine();
+
+    // Focus after first layout/show pass (wxWidgets tab traversal needs valid hierarchy).
+    CallAfter([this] {
+        if (hostCtrl_) {
+            hostCtrl_->SetFocus();
+        }
+    });
 }
 
 MainFrame::~MainFrame() {
@@ -62,59 +80,103 @@ MainFrame::~MainFrame() {
 }
 
 void MainFrame::BuildUi() {
+    // Put focusable controls on a wxPanel: wxFrame alone often breaks predictable Tab traversal
+    // (see wxWidgets accessibility / forum guidance). wxTAB_TRAVERSAL keeps a single tab chain.
+    auto* panel = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
     auto* root = new wxBoxSizer(wxVERTICAL);
     auto* grid = new wxFlexGridSizer(2, 8, 10);
     grid->AddGrowableCol(1, 1);
 
-    grid->Add(new wxStaticText(this, wxID_ANY, "Host"), 0, wxALIGN_CENTER_VERTICAL);
-    hostCtrl_ = new wxTextCtrl(this, wxID_ANY, "127.0.0.1");
+    auto* labHost = new wxStaticText(panel, wxID_ANY, "Host");
+    SkipKeyboardFocus(labHost);
+    grid->Add(labHost, 0, wxALIGN_CENTER_VERTICAL);
+    hostCtrl_ = new wxTextCtrl(panel, wxID_ANY, "127.0.0.1");
+    hostCtrl_->SetName("Host");
     grid->Add(hostCtrl_, 1, wxEXPAND);
 
-    grid->Add(new wxStaticText(this, wxID_ANY, "WS port"), 0, wxALIGN_CENTER_VERTICAL);
-    wsPortCtrl_ = new wxTextCtrl(this, wxID_ANY, "5500");
+    auto* labWs = new wxStaticText(panel, wxID_ANY, "WS port");
+    SkipKeyboardFocus(labWs);
+    grid->Add(labWs, 0, wxALIGN_CENTER_VERTICAL);
+    wsPortCtrl_ = new wxTextCtrl(panel, wxID_ANY, "5500");
+    wsPortCtrl_->SetName("WebSocket port");
     grid->Add(wsPortCtrl_, 1, wxEXPAND);
 
-    grid->Add(new wxStaticText(this, wxID_ANY, "UDP port"), 0, wxALIGN_CENTER_VERTICAL);
-    udpPortCtrl_ = new wxTextCtrl(this, wxID_ANY, "5505");
+    auto* labUdp = new wxStaticText(panel, wxID_ANY, "UDP port");
+    SkipKeyboardFocus(labUdp);
+    grid->Add(labUdp, 0, wxALIGN_CENTER_VERTICAL);
+    udpPortCtrl_ = new wxTextCtrl(panel, wxID_ANY, "5505");
+    udpPortCtrl_->SetName("UDP port");
     grid->Add(udpPortCtrl_, 1, wxEXPAND);
 
-    grid->Add(new wxStaticText(this, wxID_ANY, "Channel"), 0, wxALIGN_CENTER_VERTICAL);
-    channelCtrl_ = new wxTextCtrl(this, wxID_ANY, "global");
+    auto* labCh = new wxStaticText(panel, wxID_ANY, "Channel");
+    SkipKeyboardFocus(labCh);
+    grid->Add(labCh, 0, wxALIGN_CENTER_VERTICAL);
+    channelCtrl_ = new wxTextCtrl(panel, wxID_ANY, "global");
+    channelCtrl_->SetName("Channel");
     grid->Add(channelCtrl_, 1, wxEXPAND);
 
-    grid->Add(new wxStaticText(this, wxID_ANY, "Microphone"), 0, wxALIGN_CENTER_VERTICAL);
-    inputDeviceChoice_ = new wxChoice(this, wxID_ANY);
+    auto* labIn = new wxStaticText(panel, wxID_ANY, "Microphone");
+    SkipKeyboardFocus(labIn);
+    grid->Add(labIn, 0, wxALIGN_CENTER_VERTICAL);
+    inputDeviceChoice_ = new wxChoice(panel, wxID_ANY);
+    inputDeviceChoice_->SetName("Microphone device");
     grid->Add(inputDeviceChoice_, 1, wxEXPAND);
 
-    grid->Add(new wxStaticText(this, wxID_ANY, "Speaker"), 0, wxALIGN_CENTER_VERTICAL);
-    outputDeviceChoice_ = new wxChoice(this, wxID_ANY);
+    auto* labOut = new wxStaticText(panel, wxID_ANY, "Speaker");
+    SkipKeyboardFocus(labOut);
+    grid->Add(labOut, 0, wxALIGN_CENTER_VERTICAL);
+    outputDeviceChoice_ = new wxChoice(panel, wxID_ANY);
+    outputDeviceChoice_->SetName("Speaker device");
     grid->Add(outputDeviceChoice_, 1, wxEXPAND);
 
     root->Add(grid, 0, wxEXPAND | wxALL, 12);
 
     auto* audioBar = new wxBoxSizer(wxHORIZONTAL);
-    refreshAudioBtn_ = new wxButton(this, wxID_ANY, "Refresh audio devices");
+    refreshAudioBtn_ = new wxButton(panel, wxID_ANY, "Refresh audio devices");
+    refreshAudioBtn_->SetName("Refresh audio devices");
     audioBar->Add(refreshAudioBtn_, 0, wxRIGHT, 10);
     root->Add(audioBar, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
-    repeaterCheck_ = new wxCheckBox(this, wxID_ANY, "Repeater mode");
+    repeaterCheck_ = new wxCheckBox(panel, wxID_ANY, "Repeater mode");
+    repeaterCheck_->SetName("Repeater mode");
     root->Add(repeaterCheck_, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     auto* actions = new wxBoxSizer(wxHORIZONTAL);
-    connectBtn_ = new wxButton(this, wxID_ANY, "Connect");
-    pttBtn_ = new wxButton(this, wxID_ANY, "Hold to Talk");
+    connectBtn_ = new wxButton(panel, wxID_ANY, "Connect");
+    connectBtn_->SetName("Connect or disconnect");
+    pttBtn_ = new wxButton(panel, wxID_ANY, "Hold to Talk");
+    pttBtn_->SetName("Push to talk");
     pttBtn_->Enable(false);
     actions->Add(connectBtn_, 0, wxRIGHT, 10);
     actions->Add(pttBtn_, 0, wxRIGHT, 10);
     root->Add(actions, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
-    signalGauge_ = new wxGauge(this, wxID_ANY, 100, wxDefaultPosition, wxSize(220, -1));
+    signalGauge_ = new wxGauge(panel, wxID_ANY, 100, wxDefaultPosition, wxSize(220, -1));
+    signalGauge_->SetName("Transmit level");
+    SkipKeyboardFocus(signalGauge_);
+
     root->Add(signalGauge_, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
-    statusText_ = new wxStaticText(this, wxID_ANY, "Status: Idle");
+    statusText_ = new wxStaticText(panel, wxID_ANY, "Status: Idle");
+    statusText_->SetName("Connection status");
+    SkipKeyboardFocus(statusText_);
     root->Add(statusText_, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
-    SetSizer(root);
+    panel->SetSizer(root);
+    auto* outer = new wxBoxSizer(wxVERTICAL);
+    outer->Add(panel, 1, wxEXPAND);
+    SetSizer(outer);
+
+    // Explicit order for AT / predictable Shift+Tab (wx docs: MoveAfterInTabOrder).
+    wsPortCtrl_->MoveAfterInTabOrder(hostCtrl_);
+    udpPortCtrl_->MoveAfterInTabOrder(wsPortCtrl_);
+    channelCtrl_->MoveAfterInTabOrder(udpPortCtrl_);
+    inputDeviceChoice_->MoveAfterInTabOrder(channelCtrl_);
+    outputDeviceChoice_->MoveAfterInTabOrder(inputDeviceChoice_);
+    refreshAudioBtn_->MoveAfterInTabOrder(outputDeviceChoice_);
+    repeaterCheck_->MoveAfterInTabOrder(refreshAudioBtn_);
+    connectBtn_->MoveAfterInTabOrder(repeaterCheck_);
+    pttBtn_->MoveAfterInTabOrder(connectBtn_);
 }
 
 void MainFrame::BindUi() {
@@ -125,6 +187,8 @@ void MainFrame::BindUi() {
     pttBtn_->Bind(wxEVT_LEFT_DOWN, &MainFrame::OnPttDown, this);
     pttBtn_->Bind(wxEVT_LEFT_UP, &MainFrame::OnPttUp, this);
     pttBtn_->Bind(wxEVT_LEAVE_WINDOW, &MainFrame::OnPttUp, this);
+    pttBtn_->Bind(wxEVT_KEY_DOWN, &MainFrame::OnPttButtonKeyDown, this);
+    pttBtn_->Bind(wxEVT_KEY_UP, &MainFrame::OnPttButtonKeyUp, this);
 }
 
 void MainFrame::SetStatus(const wxString& status) {
@@ -176,6 +240,29 @@ void MainFrame::OnPttUp(wxMouseEvent& event) {
         audio_->StopTransmit();
         relay_->SendTxEofBurst();
         SetStatus("Connected");
+    }
+    event.Skip();
+}
+
+void MainFrame::OnPttButtonKeyDown(wxKeyEvent& event) {
+    if (event.GetKeyCode() == WXK_SPACE && connected_) {
+        if (!audio_->IsTransmitting()) {
+            audio_->StartTransmit();
+            SetStatus("Transmitting");
+        }
+        return;
+    }
+    event.Skip();
+}
+
+void MainFrame::OnPttButtonKeyUp(wxKeyEvent& event) {
+    if (event.GetKeyCode() == WXK_SPACE && connected_) {
+        if (audio_->IsTransmitting()) {
+            audio_->StopTransmit();
+            relay_->SendTxEofBurst();
+            SetStatus("Connected");
+        }
+        return;
     }
     event.Skip();
 }

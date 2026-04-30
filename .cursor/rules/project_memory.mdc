@@ -13,7 +13,7 @@ alwaysApply: true
 
 ## Current Task
 - Android: adaptive UDP keepalive (foreground vs background intervals/timeouts) remains in `WalkieService`; monitor battery/NAT behavior after ANR fix (receive timeout applied on `Dispatchers.IO` only).
-- Windows: continue `windows-client-cpp` (wxWidgets) toward feature parity with Android (profiles, audio devices, reconnect UX).
+- Windows: continue `windows-client-cpp` (wxWidgets) toward feature parity with Android (profiles, audio devices, reconnect UX); main UI uses `wxPanel` + `DisableFocusFromKeyboard` on labels/gauge + `MoveAfterInTabOrder`, Space PTT when focus on push-to-talk button.
 - Accessibility / background hardware PTT removed from Android for Play Protect compatibility; foreground PTT preserved.
 
 ## Recent Key Changes
