@@ -126,10 +126,15 @@ class WalkieService : Service() {
         private const val PLAYBACK_BUFFER_FRAMES = 2
         private const val UDP_KEEPALIVE_IDLE_INTERVAL_SEC = 12L
         private const val UDP_KEEPALIVE_RECOVERY_INTERVAL_SEC = 6L
+        // Softer keepalive in background: foreground call signal / TX already punches NAT often.
+        private const val UDP_BG_KEEPALIVE_IDLE_INTERVAL_SEC = 28L
+        private const val UDP_BG_KEEPALIVE_RECOVERY_INTERVAL_SEC = 12L
         private const val UDP_KEEPALIVE_RECOVERY_WINDOW_SEC = 90L
         private const val UDP_KEEPALIVE_JITTER_PERCENT = 15L
         private const val WS_RECONNECT_JITTER_PERCENT = 20L
         private const val NETWORK_RECOVERY_MIN_INTERVAL_MS = 3000L
+        private const val UDP_RECV_TIMEOUT_FOREGROUND_MS = 300
+        private const val UDP_RECV_TIMEOUT_BACKGROUND_MS = 2000
     }
 
     private val binder = Binder()
@@ -150,8 +155,14 @@ class WalkieService : Service() {
         getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     }
     private var networkCallbackRegistered = false
+    @Volatile
+    private var activeCellularOrWifi: Network? = null
+    private val pendingUdpNetworkRecreate = AtomicBoolean(false)
+    private val playbackLoopGeneration = AtomicInteger(0)
+    private var lastWelcomeSessionId: Long = 0L
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            activeCellularOrWifi = network
             val fingerprint = network.hashCode().toLong()
             val previous = lastNetworkFingerprint.getAndSet(fingerprint)
             if (previous != fingerprint) {
@@ -160,6 +171,14 @@ class WalkieService : Service() {
         }
 
         override fun onLost(network: Network) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val fallback = connectivityManager.activeNetwork
+                if (fallback != null && fallback != network) {
+                    activeCellularOrWifi = fallback
+                } else {
+                    activeCellularOrWifi = null
+                }
+            }
             val fingerprint = network.hashCode().toLong()
             val previous = lastNetworkFingerprint.get()
             if (previous == fingerprint || previous == 0L) {
@@ -632,10 +651,15 @@ class WalkieService : Service() {
                     val previousSampleRate = serverSampleRate
                     val previousPacketMs = packetMs
                     val previousOpusConfig = opusConfig
-                    sessionId.set(obj.optLong("sessionId", 0L))
+                    val newSessionId = obj.optLong("sessionId", 0L)
+                    val newSession = (newSessionId != 0L && newSessionId != lastWelcomeSessionId)
+                    sessionId.set(newSessionId)
                     packetMs = normalizePacketMs(obj.optInt("packetMs", DEFAULT_PACKET_MS))
                     val negotiatedSampleRate = rawSampleRate
                     opusConfig = parseOpusConfig(obj)
+                    if (newSessionId != 0L) {
+                        lastWelcomeSessionId = newSessionId
+                    }
                     if (negotiatedSampleRate != serverSampleRate) {
                         serverSampleRate = negotiatedSampleRate
                         synchronized(encodeLock) {
@@ -645,8 +669,14 @@ class WalkieService : Service() {
                         synchronized(encodeLock) {
                             codec = OpusCodecFactory().create(serverSampleRate, CHANNELS, opusConfig)
                         }
+                    } else if (newSession) {
+                        // New WebSocket session: reset Opus internal PLC/concealment state to avoid
+                        // stretched/duplicated frames after reconnect while parameters stayed the same.
+                        synchronized(encodeLock) {
+                            codec = OpusCodecFactory().create(serverSampleRate, CHANNELS, opusConfig)
+                        }
                     }
-                    if (previousSampleRate != serverSampleRate || previousPacketMs != packetMs) {
+                    if (previousSampleRate != serverSampleRate || previousPacketMs != packetMs || newSession) {
                         restartPlaybackLoop()
                     }
                     busyMode = obj.optBoolean("busyMode", false)
@@ -697,15 +727,41 @@ class WalkieService : Service() {
     private fun ensureUdpSocket() {
         synchronized(udpSocketLock) {
             if (udpSocket?.isClosed == false) return
-            udpSocket = DatagramSocket().apply {
+            val socket = DatagramSocket().apply {
                 reuseAddress = true
-                soTimeout = 300
             }
+            tryBindDatagramToActiveNetwork(socket)
+            applyUdpReceiveTimeoutForActivity(socket)
+            udpSocket = socket
         }
+    }
+
+    private fun tryBindDatagramToActiveNetwork(socket: DatagramSocket) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val net = activeCellularOrWifi
+            ?: connectivityManager.activeNetwork
+        net?.let { n ->
+            runCatching { n.bindSocket(socket) }
+        }
+    }
+
+    private fun applyUdpReceiveTimeoutForActivity(socket: DatagramSocket) {
+        val ms = if (activityFocused) {
+            UDP_RECV_TIMEOUT_FOREGROUND_MS
+        } else {
+            UDP_RECV_TIMEOUT_BACKGROUND_MS
+        }
+        runCatching { socket.soTimeout = ms }
     }
 
     private fun recreateUdpSocket() {
         udpRecoveryCount.incrementAndGet()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val n = connectivityManager.activeNetwork
+            if (n != null) {
+                activeCellularOrWifi = n
+            }
+        }
         synchronized(udpSocketLock) {
             runCatching { udpSocket?.close() }
             udpSocket = null
@@ -719,6 +775,7 @@ class WalkieService : Service() {
 
     private fun ensurePlaybackLoop() {
         if (udpReceiveJob?.isActive == true) return
+        val gen = playbackLoopGeneration.get()
         udpReceiveJob = serviceScope.launch(Dispatchers.IO) {
             val minBuffer = AudioTrack.getMinBufferSize(
                 currentCodecSampleRate(),
@@ -744,11 +801,15 @@ class WalkieService : Service() {
             try {
                 val recvBuffer = ByteArray(1500)
                 while (isActive) {
+                    if (gen != playbackLoopGeneration.get()) {
+                        break
+                    }
                     val socket = udpSocket ?: run {
                         ensureUdpSocket()
                         delay(120L)
                         continue
                     }
+                    applyUdpReceiveTimeoutForActivity(socket)
                     val packet = DatagramPacket(recvBuffer, recvBuffer.size)
                     try {
                         socket.receive(packet)
@@ -797,6 +858,7 @@ class WalkieService : Service() {
     }
 
     private fun restartPlaybackLoop() {
+        playbackLoopGeneration.incrementAndGet()
         udpReceiveJob?.cancel()
         udpReceiveJob = null
         ensurePlaybackLoop()
@@ -864,6 +926,7 @@ class WalkieService : Service() {
                 scheduleRxResumeHoldoff()
                 rogerStreaming.set(false)
                 releaseVoiceProfileIfIdle()
+                drainPendingUdpNetworkRecreate()
             }
         }
     }
@@ -886,6 +949,7 @@ class WalkieService : Service() {
                 scheduleRxResumeHoldoff()
                 callStreaming.set(false)
                 releaseVoiceProfileIfIdle()
+                drainPendingUdpNetworkRecreate()
             }
         }
     }
@@ -934,6 +998,7 @@ class WalkieService : Service() {
             recorder.stop()
         } finally {
             recorder.release()
+            drainPendingUdpNetworkRecreate()
         }
     }
 
@@ -1228,6 +1293,12 @@ class WalkieService : Service() {
         runCatching {
             connectivityManager.registerNetworkCallback(request, networkCallback)
             networkCallbackRegistered = true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val n = connectivityManager.activeNetwork
+                if (n != null) {
+                    activeCellularOrWifi = n
+                }
+            }
         }
     }
 
@@ -1241,8 +1312,18 @@ class WalkieService : Service() {
 
     private fun onNetworkChangedForRecovery() {
         if (!desiredConnection.get()) return
-        // Do not rotate UDP socket during active TX/call/roger generation.
-        if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val n = connectivityManager.activeNetwork
+            if (n != null) {
+                activeCellularOrWifi = n
+            }
+        }
+        // Do not rotate UDP socket during active TX/call/roger generation: NAT stays on the old
+        // interface; we rebind right after the burst ends to avoid two-way glitches.
+        if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
+            pendingUdpNetworkRecreate.set(true)
+            return
+        }
         val nowNs = System.nanoTime()
         val lastNs = lastNetworkRecoveryAtNs.get()
         if (lastNs != 0L && (nowNs - lastNs) < (NETWORK_RECOVERY_MIN_INTERVAL_MS * 1_000_000L)) {
@@ -1251,6 +1332,20 @@ class WalkieService : Service() {
         lastNetworkRecoveryAtNs.set(nowNs)
         serviceScope.launch(Dispatchers.IO) {
             if (!desiredConnection.get()) return@launch
+            recreateUdpSocket()
+        }
+    }
+
+    private fun drainPendingUdpNetworkRecreate() {
+        if (!pendingUdpNetworkRecreate.getAndSet(false)) return
+        if (!desiredConnection.get()) return
+        serviceScope.launch(Dispatchers.IO) {
+            if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
+                pendingUdpNetworkRecreate.set(true)
+                return@launch
+            }
+            if (!desiredConnection.get()) return@launch
+            lastNetworkRecoveryAtNs.set(0L)
             recreateUdpSocket()
         }
     }
@@ -1398,7 +1493,17 @@ class WalkieService : Service() {
                 }
                 val nowNs = System.nanoTime()
                 val inRecovery = nowNs < udpKeepaliveRecoveryUntilNs.get()
-                val intervalSec = if (inRecovery) UDP_KEEPALIVE_RECOVERY_INTERVAL_SEC else UDP_KEEPALIVE_IDLE_INTERVAL_SEC
+                val idleSec = if (activityFocused) {
+                    UDP_KEEPALIVE_IDLE_INTERVAL_SEC
+                } else {
+                    UDP_BG_KEEPALIVE_IDLE_INTERVAL_SEC
+                }
+                val recoverySec = if (activityFocused) {
+                    UDP_KEEPALIVE_RECOVERY_INTERVAL_SEC
+                } else {
+                    UDP_BG_KEEPALIVE_RECOVERY_INTERVAL_SEC
+                }
+                val intervalSec = if (inRecovery) recoverySec else idleSec
                 val intervalNs = intervalSec * 1_000_000_000L
                 val lastTrafficNs = maxOf(lastInboundUdpAtNs.get(), lastOutboundUdpAtNs.get())
                 if (lastTrafficNs == 0L || (nowNs - lastTrafficNs) >= intervalNs) {
@@ -1549,6 +1654,9 @@ class WalkieService : Service() {
     private fun updateActivityFocus(focused: Boolean) {
         activityFocused = focused
         enforceAudioRoutePolicy()
+        synchronized(udpSocketLock) {
+            udpSocket?.let { applyUdpReceiveTimeoutForActivity(it) }
+        }
     }
 
     private fun shouldHoldBluetoothCommunicationProfile(): Boolean {
@@ -1652,6 +1760,8 @@ class WalkieService : Service() {
         lastOutboundUdpAtNs.set(0L)
         lastObservedUdpGapMs.set(0L)
         lastNetworkRecoveryAtNs.set(0L)
+        lastWelcomeSessionId = 0L
+        pendingUdpNetworkRecreate.set(false)
         udpKeepaliveRecoveryUntilNs.set(0L)
         wsReconnectCount.set(0L)
         udpRecoveryCount.set(0L)
