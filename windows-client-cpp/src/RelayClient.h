@@ -34,14 +34,17 @@ public:
     using WelcomeCallback = std::function<void(const WelcomeConfig&)>;
     using OpusFrameCallback = std::function<void(const std::vector<uint8_t>&)>;
     using TxStopCallback = std::function<void()>;
+    using ConnectionLostCallback = std::function<void()>;
 
     RelayClient();
     ~RelayClient();
 
     bool Connect(const std::string& host, int wsPort, int udpPort, const std::string& channel, bool repeater);
     void Disconnect();
+    void JoinWorkerThreads();
 
     bool IsConnected() const { return connected_.load(); }
+    bool AutoReconnectDesired() const { return autoReconnectDesired_.load(); }
     WelcomeConfig CurrentConfig() const;
 
     void SendOpusFrame(const uint8_t* data, size_t size, uint8_t signal);
@@ -52,6 +55,7 @@ public:
     void SetWelcomeCallback(WelcomeCallback cb) { onWelcome_ = std::move(cb); }
     void SetOpusFrameCallback(OpusFrameCallback cb) { onOpusFrame_ = std::move(cb); }
     void SetTxStopCallback(TxStopCallback cb) { onTxStop_ = std::move(cb); }
+    void SetConnectionLostCallback(ConnectionLostCallback cb) { onConnectionLost_ = std::move(cb); }
 
 private:
     void WsReadLoop();
@@ -61,6 +65,8 @@ private:
     void SendWsJson(const std::string& json);
     void SendUdpKeepalive();
     void SendUdpTxEof();
+    void CloseSocketsUnblockReaders();
+    void PostConnectionLostOnce();
     static int NormalizeSampleRate(int v);
     static int NormalizePacketMs(int v);
 
@@ -73,6 +79,8 @@ private:
     boost::asio::ip::udp::endpoint udpRemote_;
     std::atomic<bool> connected_{false};
     std::atomic<bool> stopRequested_{false};
+    std::atomic<bool> autoReconnectDesired_{false};
+    std::atomic<bool> connectionLostPosted_{false};
     std::atomic<int> seq_{0};
     WelcomeConfig cfg_;
     std::string host_;
@@ -91,4 +99,5 @@ private:
     WelcomeCallback onWelcome_;
     OpusFrameCallback onOpusFrame_;
     TxStopCallback onTxStop_;
+    ConnectionLostCallback onConnectionLost_;
 };

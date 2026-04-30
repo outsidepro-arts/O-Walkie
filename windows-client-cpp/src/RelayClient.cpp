@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include <random>
+#include <thread>
 
 #include <boost/asio/connect.hpp>
 #include <boost/beast/core/buffers_to_string.hpp>
@@ -24,10 +25,54 @@ RelayClient::RelayClient() : resolver_(ioc_) {}
 
 RelayClient::~RelayClient() { Disconnect(); }
 
+void RelayClient::CloseSocketsUnblockReaders() {
+    try {
+        if (ws_ && ws_->is_open()) {
+            ws_->close(ws::close_code::abnormal);
+        }
+    } catch (...) {}
+    try {
+        if (udp_) {
+            udp_->close();
+        }
+    } catch (...) {}
+}
+
+void RelayClient::PostConnectionLostOnce() {
+    if (stopRequested_.load() || !autoReconnectDesired_.load()) {
+        return;
+    }
+    bool expected = false;
+    if (connectionLostPosted_.compare_exchange_strong(expected, true)) {
+        if (onConnectionLost_) {
+            onConnectionLost_();
+        }
+    }
+}
+
+void RelayClient::JoinWorkerThreads() {
+    const auto tid = std::this_thread::get_id();
+    if (wsThread_.joinable() && wsThread_.get_id() != tid) {
+        wsThread_.join();
+    }
+    if (udpThread_.joinable() && udpThread_.get_id() != tid) {
+        udpThread_.join();
+    }
+    if (keepaliveThread_.joinable() && keepaliveThread_.get_id() != tid) {
+        keepaliveThread_.join();
+    }
+    ws_.reset();
+    udp_.reset();
+    connected_.store(false);
+    connectionLostPosted_.store(false);
+}
+
 bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, const std::string& channel, bool repeater) {
     if (connected_.load()) {
         return true;
     }
+
+    JoinWorkerThreads();
 
     host_ = host;
     wsPort_ = wsPort;
@@ -37,6 +82,7 @@ bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, cons
     stopRequested_.store(false);
     seq_.store(0);
     cfg_ = WelcomeConfig{};
+    connectionLostPosted_.store(false);
 
     try {
         auto const results = resolver_.resolve(host_, std::to_string(wsPort_));
@@ -48,41 +94,38 @@ bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, cons
         udpRemote_ = udp::endpoint(boost::asio::ip::make_address(host_), udpPort_);
 
         connected_.store(true);
-        if (onConnected_) onConnected_(true);
-        if (onStatus_) onStatus_("Connected");
+        autoReconnectDesired_.store(true);
+        if (onConnected_) {
+            onConnected_(true);
+        }
+        if (onStatus_) {
+            onStatus_("Connected");
+        }
 
         wsThread_ = std::thread([this] { WsReadLoop(); });
         udpThread_ = std::thread([this] { UdpReadLoop(); });
         keepaliveThread_ = std::thread([this] { KeepaliveLoop(); });
         return true;
     } catch (const std::exception& ex) {
-        if (onStatus_) onStatus_(std::string("Connect failed: ") + ex.what());
-        Disconnect();
+        autoReconnectDesired_.store(false);
+        if (onStatus_) {
+            onStatus_(std::string("Connect failed: ") + ex.what());
+        }
+        CloseSocketsUnblockReaders();
+        JoinWorkerThreads();
         return false;
     }
 }
 
 void RelayClient::Disconnect() {
     stopRequested_.store(true);
+    autoReconnectDesired_.store(false);
     connected_.store(false);
-
-    try {
-        if (ws_ && ws_->is_open()) {
-            ws_->close(ws::close_code::normal);
-        }
-    } catch (...) {}
-
-    try {
-        if (udp_) udp_->close();
-    } catch (...) {}
-
-    if (wsThread_.joinable()) wsThread_.join();
-    if (udpThread_.joinable()) udpThread_.join();
-    if (keepaliveThread_.joinable()) keepaliveThread_.join();
-
-    ws_.reset();
-    udp_.reset();
-    if (onConnected_) onConnected_(false);
+    CloseSocketsUnblockReaders();
+    JoinWorkerThreads();
+    if (onConnected_) {
+        onConnected_(false);
+    }
 }
 
 WelcomeConfig RelayClient::CurrentConfig() const {
@@ -91,13 +134,17 @@ WelcomeConfig RelayClient::CurrentConfig() const {
 }
 
 void RelayClient::SendWsJson(const std::string& text) {
-    if (!ws_ || !connected_.load()) return;
+    if (!ws_ || !connected_.load()) {
+        return;
+    }
     std::lock_guard<std::mutex> lg(stateMu_);
     ws_->write(boost::asio::buffer(text));
 }
 
 void RelayClient::SendOpusFrame(const uint8_t* data, size_t size, uint8_t signal) {
-    if (!udp_ || !connected_.load() || cfg_.sessionId == 0 || size == 0) return;
+    if (!udp_ || !connected_.load() || cfg_.sessionId == 0 || size == 0) {
+        return;
+    }
 
     int seq = seq_.fetch_add(1) + 1;
     std::vector<uint8_t> payload(9 + size, 0);
@@ -119,7 +166,9 @@ void RelayClient::SendOpusFrame(const uint8_t* data, size_t size, uint8_t signal
 }
 
 void RelayClient::SendUdpKeepalive() {
-    if (!udp_ || !connected_.load() || cfg_.sessionId == 0) return;
+    if (!udp_ || !connected_.load() || cfg_.sessionId == 0) {
+        return;
+    }
     std::array<uint8_t, 9> payload{};
     payload[0] = static_cast<uint8_t>((cfg_.sessionId >> 24) & 0xFF);
     payload[1] = static_cast<uint8_t>((cfg_.sessionId >> 16) & 0xFF);
@@ -133,7 +182,9 @@ void RelayClient::SendUdpKeepalive() {
 }
 
 void RelayClient::SendUdpTxEof() {
-    if (!udp_ || !connected_.load() || cfg_.sessionId == 0) return;
+    if (!udp_ || !connected_.load() || cfg_.sessionId == 0) {
+        return;
+    }
     int seq = seq_.fetch_add(1) + 1;
     std::array<uint8_t, 9> payload{};
     payload[0] = static_cast<uint8_t>((cfg_.sessionId >> 24) & 0xFF);
@@ -154,17 +205,36 @@ void RelayClient::SendUdpTxEof() {
 void RelayClient::SendTxEofBurst() {
     static constexpr int delays[] = {0, 20, 60};
     for (int d : delays) {
-        if (d > 0) std::this_thread::sleep_for(std::chrono::milliseconds(d));
+        if (d > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(d));
+        }
         SendUdpTxEof();
     }
 }
 
 int RelayClient::NormalizeSampleRate(int v) {
-    switch (v) { case 8000: case 12000: case 16000: case 24000: case 48000: return v; default: return 8000; }
+    switch (v) {
+        case 8000:
+        case 12000:
+        case 16000:
+        case 24000:
+        case 48000:
+            return v;
+        default:
+            return 8000;
+    }
 }
 
 int RelayClient::NormalizePacketMs(int v) {
-    switch (v) { case 10: case 20: case 40: case 60: return v; default: return 20; }
+    switch (v) {
+        case 10:
+        case 20:
+        case 40:
+        case 60:
+            return v;
+        default:
+            return 20;
+    }
 }
 
 void RelayClient::HandleWsText(const std::string& text) {
@@ -174,13 +244,27 @@ void RelayClient::HandleWsText(const std::string& text) {
         if (type == "welcome") {
             int protocol = root.value("protocolVersion", -1);
             if (protocol != 2) {
-                if (onStatus_) onStatus_("Protocol mismatch");
-                Disconnect();
+                if (onStatus_) {
+                    onStatus_("Protocol mismatch");
+                }
+                autoReconnectDesired_.store(false);
+                connected_.store(false);
+                CloseSocketsUnblockReaders();
+                if (onConnected_) {
+                    onConnected_(false);
+                }
                 return;
             }
             if (!root.contains("sampleRate")) {
-                if (onStatus_) onStatus_("Missing sampleRate in welcome");
-                Disconnect();
+                if (onStatus_) {
+                    onStatus_("Missing sampleRate in welcome");
+                }
+                autoReconnectDesired_.store(false);
+                connected_.store(false);
+                CloseSocketsUnblockReaders();
+                if (onConnected_) {
+                    onConnected_(false);
+                }
                 return;
             }
             WelcomeConfig local{};
@@ -200,25 +284,33 @@ void RelayClient::HandleWsText(const std::string& text) {
                 std::lock_guard<std::mutex> lg(stateMu_);
                 cfg_ = local;
             }
-            if (onWelcome_) onWelcome_(local);
+            if (onWelcome_) {
+                onWelcome_(local);
+            }
 
-            json join = {{"type","join"}, {"channel", channel_}};
+            json join = {{"type", "join"}, {"channel", channel_}};
             SendWsJson(join.dump());
 
             int localPort = udp_ ? udp_->local_endpoint().port() : 0;
-            json udpHello = {{"type","udp_hello"}, {"udpPort", localPort}};
+            json udpHello = {{"type", "udp_hello"}, {"udpPort", localPort}};
             SendWsJson(udpHello.dump());
 
-            json rep = {{"type","repeater_mode"}, {"enabled", repeater_}};
+            json rep = {{"type", "repeater_mode"}, {"enabled", repeater_}};
             SendWsJson(rep.dump());
 
             SendUdpKeepalive();
-            if (onStatus_) onStatus_("Welcome received");
+            if (onStatus_) {
+                onStatus_("Welcome received");
+            }
         } else if (type == "tx_stop") {
-            if (onTxStop_) onTxStop_();
+            if (onTxStop_) {
+                onTxStop_();
+            }
         }
     } catch (...) {
-        if (onStatus_) onStatus_("WS parse error");
+        if (onStatus_) {
+            onStatus_("WS parse error");
+        }
     }
 }
 
@@ -231,8 +323,14 @@ void RelayClient::WsReadLoop() {
             HandleWsText(text);
         }
     } catch (const std::exception& ex) {
-        if (!stopRequested_.load() && onStatus_) onStatus_(std::string("WS ended: ") + ex.what());
-        Disconnect();
+        connected_.store(false);
+        CloseSocketsUnblockReaders();
+        if (!stopRequested_.load()) {
+            if (onStatus_) {
+                onStatus_(std::string("WS ended: ") + ex.what());
+            }
+            PostConnectionLostOnce();
+        }
     }
 }
 
@@ -242,14 +340,25 @@ void RelayClient::UdpReadLoop() {
         while (connected_.load() && !stopRequested_.load()) {
             udp::endpoint ep;
             std::size_t n = udp_->receive_from(boost::asio::buffer(data), ep);
-            if (n <= 9) continue;
+            if (n <= 9) {
+                continue;
+            }
             lastInboundNs_.store(nowNs());
             std::vector<uint8_t> opus(n - 9);
             std::memcpy(opus.data(), data.data() + 9, n - 9);
-            if (onOpusFrame_) onOpusFrame_(opus);
+            if (onOpusFrame_) {
+                onOpusFrame_(opus);
+            }
         }
     } catch (...) {
-        if (!stopRequested_.load() && onStatus_) onStatus_("UDP ended");
+        connected_.store(false);
+        CloseSocketsUnblockReaders();
+        if (!stopRequested_.load()) {
+            if (onStatus_) {
+                onStatus_("UDP ended");
+            }
+            PostConnectionLostOnce();
+        }
     }
 }
 

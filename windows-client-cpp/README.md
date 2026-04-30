@@ -37,7 +37,9 @@ If MSYS2 is not under `C:/dev/msys64`, set CMake cache variable `OWALKIE_MSYS_RO
 
 ## Current stage
 
-- Main screen: connection fields, repeater, PTT, level meter, miniaudio input/output device list + persistence in `connection.json`
+- **Server profiles** in `%AppData%/…/profiles.json` (name, host, ports, channel, repeater); **audio** in `audio.json`. Legacy `connection.json` is migrated once on startup if `profiles.json` is missing.
+- **Auto-reconnect** with exponential backoff (about 1.5s → 30s cap) after WS/UDP drop while the session was connected; **Disconnect** cancels retries.
+- Main screen: profile picker + Save/New/Delete, connection fields, repeater, PTT, level meter, miniaudio device list
 - Protocol: WS welcome, `join`, `udp_hello`, `repeater_mode`, UDP keepalive, UDP `tx_eof` burst
 - Welcome-driven Opus/sample rate reconfiguration; reopening playback on timing/device change
 
