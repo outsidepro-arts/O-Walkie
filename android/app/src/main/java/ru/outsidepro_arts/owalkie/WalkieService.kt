@@ -135,6 +135,12 @@ class WalkieService : Service() {
         private const val NETWORK_RECOVERY_MIN_INTERVAL_MS = 3000L
         private const val UDP_RECV_TIMEOUT_FOREGROUND_MS = 300
         private const val UDP_RECV_TIMEOUT_BACKGROUND_MS = 10000
+        private const val UDP_KEEPALIVE_SIGNAL = 255
+        private const val UDP_KEEPALIVE_ACK_SIGNAL = 254
+        private const val UDP_KEEPALIVE_RTX_FOREGROUND_MS = 1200L
+        private const val UDP_KEEPALIVE_RTX_BACKGROUND_MS = 4000L
+        private const val UDP_KEEPALIVE_LOST_FOREGROUND_MS = 12000L
+        private const val UDP_KEEPALIVE_LOST_BACKGROUND_MS = 30000L
         private const val SIGNAL_POLL_INTERVAL_FOREGROUND_MS = 1000L
         private const val SIGNAL_POLL_INTERVAL_BACKGROUND_MS = 5000L
         private const val SIGNAL_REFRESH_INTERVAL_FOREGROUND_MS = 1000L
@@ -218,6 +224,9 @@ class WalkieService : Service() {
     private val lastInboundUdpAtNs = AtomicLong(0L)
     private val lastTxCollisionVibrateAtNs = AtomicLong(0L)
     private val lastOutboundUdpAtNs = AtomicLong(0L)
+    private val lastUdpKeepaliveSentAtNs = AtomicLong(0L)
+    private val udpKeepalivePendingSinceNs = AtomicLong(0L)
+    private val lastUdpKeepaliveAckAtNs = AtomicLong(0L)
     private val udpKeepaliveRecoveryUntilNs = AtomicLong(0L)
     private val wsReconnectCount = AtomicLong(0L)
     private val udpRecoveryCount = AtomicLong(0L)
@@ -826,6 +835,17 @@ class WalkieService : Service() {
                         recreateUdpSocket()
                         continue
                     }
+                    val nowNs = System.nanoTime()
+                    if (packet.length >= 9) {
+                        val sid = ByteBuffer.wrap(packet.data, 0, 4).order(ByteOrder.BIG_ENDIAN).int
+                        val seqNum = ByteBuffer.wrap(packet.data, 4, 4).order(ByteOrder.BIG_ENDIAN).int
+                        val signal = packet.data[8].toInt() and 0xFF
+                        val currentSid = sessionId.get().toInt()
+                        if (sid == currentSid && seqNum == 0 && signal == UDP_KEEPALIVE_ACK_SIGNAL) {
+                            onUdpKeepaliveAck(nowNs)
+                            continue
+                        }
+                    }
                     if (packet.length <= 9) continue
                     if (busyMode) {
                         busyLastRxAtNs.set(System.nanoTime())
@@ -833,7 +853,7 @@ class WalkieService : Service() {
                             broadcastStatus(currentSignalByte())
                         }
                     }
-                    val nowNs = System.nanoTime()
+                    onUdpKeepaliveAck(nowNs)
                     val previousInboundNs = lastInboundUdpAtNs.getAndSet(nowNs)
                     if (previousInboundNs > 0L && nowNs > previousInboundNs) {
                         lastObservedUdpGapMs.set((nowNs - previousInboundNs) / 1_000_000L)
@@ -1496,11 +1516,16 @@ class WalkieService : Service() {
         val bb = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
         bb.putInt(sid)
         bb.putInt(0)
-        bb.put(255.toByte())
+        bb.put(UDP_KEEPALIVE_SIGNAL.toByte())
 
         val packet = DatagramPacket(payload, payload.size, address, udpPort)
         runCatching { socket.send(packet) }
-            .onSuccess { lastOutboundUdpAtNs.set(System.nanoTime()) }
+            .onSuccess {
+                val nowNs = System.nanoTime()
+                lastOutboundUdpAtNs.set(nowNs)
+                lastUdpKeepaliveSentAtNs.set(nowNs)
+                udpKeepalivePendingSinceNs.compareAndSet(0L, nowNs)
+            }
             .onFailure {
                 if (allowRecovery) {
                     recreateUdpSocket()
@@ -1529,9 +1554,34 @@ class WalkieService : Service() {
                     UDP_BG_KEEPALIVE_RECOVERY_INTERVAL_SEC
                 }
                 val intervalSec = if (inRecovery) recoverySec else idleSec
+                val pendingSinceNs = udpKeepalivePendingSinceNs.get()
+                val rtxNs = (if (activityFocused) {
+                    UDP_KEEPALIVE_RTX_FOREGROUND_MS
+                } else {
+                    UDP_KEEPALIVE_RTX_BACKGROUND_MS
+                }) * 1_000_000L
+                val lostNs = (if (activityFocused) {
+                    UDP_KEEPALIVE_LOST_FOREGROUND_MS
+                } else {
+                    UDP_KEEPALIVE_LOST_BACKGROUND_MS
+                }) * 1_000_000L
+                val lastKeepaliveSentNs = lastUdpKeepaliveSentAtNs.get()
+                if (pendingSinceNs != 0L) {
+                    if ((nowNs - pendingSinceNs) >= lostNs) {
+                        udpKeepalivePendingSinceNs.set(0L)
+                        recreateUdpSocket()
+                        delay(250L)
+                        continue
+                    }
+                    if (lastKeepaliveSentNs == 0L || (nowNs - lastKeepaliveSentNs) >= rtxNs) {
+                        sendUdpKeepalivePacket()
+                    }
+                    val waitMs = if (activityFocused) 300L else 700L
+                    delay(waitMs)
+                    continue
+                }
                 val intervalNs = intervalSec * 1_000_000_000L
-                val lastTrafficNs = maxOf(lastInboundUdpAtNs.get(), lastOutboundUdpAtNs.get())
-                if (lastTrafficNs == 0L || (nowNs - lastTrafficNs) >= intervalNs) {
+                if (lastKeepaliveSentNs == 0L || (nowNs - lastKeepaliveSentNs) >= intervalNs) {
                     sendUdpKeepalivePacket()
                 }
                 delay(jitteredKeepaliveDelayMs(intervalSec))
@@ -1556,6 +1606,11 @@ class WalkieService : Service() {
         val minMs = (baseMs - deltaMs).coerceAtLeast(1000L)
         val maxMs = baseMs + deltaMs
         return if (maxMs <= minMs) minMs else Random.nextLong(minMs, maxMs + 1L)
+    }
+
+    private fun onUdpKeepaliveAck(nowNs: Long) {
+        lastUdpKeepaliveAckAtNs.set(nowNs)
+        udpKeepalivePendingSinceNs.set(0L)
     }
 
     private fun wsUrl(): String {
@@ -1793,6 +1848,9 @@ class WalkieService : Service() {
         busyLastRxAtNs.set(0L)
         lastInboundUdpAtNs.set(0L)
         lastOutboundUdpAtNs.set(0L)
+        lastUdpKeepaliveSentAtNs.set(0L)
+        udpKeepalivePendingSinceNs.set(0L)
+        lastUdpKeepaliveAckAtNs.set(0L)
         lastObservedUdpGapMs.set(0L)
         lastNetworkRecoveryAtNs.set(0L)
         lastWelcomeSessionId = 0L

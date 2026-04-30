@@ -15,6 +15,13 @@ using json = nlohmann::json;
 namespace ws = boost::beast::websocket;
 using tcp = boost::asio::ip::tcp;
 using udp = boost::asio::ip::udp;
+namespace {
+constexpr uint8_t kUdpKeepaliveSignal = 255;
+constexpr uint8_t kUdpKeepaliveAckSignal = 254;
+constexpr int64_t kUdpKeepaliveIntervalNs = 5'000'000'000LL;
+constexpr int64_t kUdpKeepaliveRtxNs = 1'200'000'000LL;
+constexpr int64_t kUdpKeepaliveLostNs = 12'000'000'000LL;
+}
 
 static int64_t nowNs() {
     auto now = std::chrono::steady_clock::now().time_since_epoch();
@@ -65,6 +72,8 @@ void RelayClient::JoinWorkerThreads() {
     udp_.reset();
     connected_.store(false);
     connectionLostPosted_.store(false);
+    lastUdpKeepaliveSentNs_.store(0);
+    udpKeepalivePendingSinceNs_.store(0);
 }
 
 bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, const std::string& channel, bool repeater) {
@@ -181,10 +190,14 @@ void RelayClient::SendUdpKeepalive() {
     payload[1] = static_cast<uint8_t>((cfg_.sessionId >> 16) & 0xFF);
     payload[2] = static_cast<uint8_t>((cfg_.sessionId >> 8) & 0xFF);
     payload[3] = static_cast<uint8_t>((cfg_.sessionId) & 0xFF);
-    payload[8] = 255;
+    payload[8] = kUdpKeepaliveSignal;
     try {
         udp_->send_to(boost::asio::buffer(payload), udpRemote_);
-        lastOutboundNs_.store(nowNs());
+        const int64_t now = nowNs();
+        lastOutboundNs_.store(now);
+        lastUdpKeepaliveSentNs_.store(now);
+        int64_t expected = 0;
+        (void)udpKeepalivePendingSinceNs_.compare_exchange_strong(expected, now);
     } catch (...) {}
 }
 
@@ -347,10 +360,21 @@ void RelayClient::UdpReadLoop() {
         while (connected_.load() && !stopRequested_.load()) {
             udp::endpoint ep;
             std::size_t n = udp_->receive_from(boost::asio::buffer(data), ep);
-            if (n <= 9) {
-                continue;
+            if (n >= 9) {
+                const uint32_t sid = (static_cast<uint32_t>(data[0]) << 24) | (static_cast<uint32_t>(data[1]) << 16) |
+                    (static_cast<uint32_t>(data[2]) << 8) | static_cast<uint32_t>(data[3]);
+                const uint32_t seq = (static_cast<uint32_t>(data[4]) << 24) | (static_cast<uint32_t>(data[5]) << 16) |
+                    (static_cast<uint32_t>(data[6]) << 8) | static_cast<uint32_t>(data[7]);
+                const uint8_t signal = data[8];
+                if (sid == cfg_.sessionId && seq == 0 && signal == kUdpKeepaliveAckSignal) {
+                    lastInboundNs_.store(nowNs());
+                    udpKeepalivePendingSinceNs_.store(0);
+                    continue;
+                }
             }
+            if (n <= 9) continue;
             lastInboundNs_.store(nowNs());
+            udpKeepalivePendingSinceNs_.store(0);
             std::vector<uint8_t> opus(n - 9);
             std::memcpy(opus.data(), data.data() + 9, n - 9);
             if (onOpusFrame_) {
@@ -372,14 +396,34 @@ void RelayClient::UdpReadLoop() {
 void RelayClient::KeepaliveLoop() {
     std::mt19937 rng(std::random_device{}());
     while (connected_.load() && !stopRequested_.load()) {
-        auto baseMs = 5000;
+        auto baseMs = 1000;
         auto jitter = baseMs * 15 / 100;
         std::uniform_int_distribution<int> dist(baseMs - jitter, baseMs + jitter);
         std::this_thread::sleep_for(std::chrono::milliseconds(dist(rng)));
 
-        auto now = nowNs();
-        auto lastTraffic = std::max(lastInboundNs_.load(), lastOutboundNs_.load());
-        if (lastTraffic == 0 || (now - lastTraffic) >= 5'000'000'000LL) {
+        const int64_t now = nowNs();
+        const int64_t pendingSince = udpKeepalivePendingSinceNs_.load();
+        if (pendingSince != 0) {
+            if ((now - pendingSince) >= kUdpKeepaliveLostNs) {
+                if (onStatus_) {
+                    onStatus_("UDP keepalive timeout");
+                }
+                connected_.store(false);
+                CloseSocketsUnblockReaders();
+                if (!stopRequested_.load()) {
+                    PostConnectionLostOnce();
+                }
+                return;
+            }
+            const int64_t lastSent = lastUdpKeepaliveSentNs_.load();
+            if (lastSent == 0 || (now - lastSent) >= kUdpKeepaliveRtxNs) {
+                SendUdpKeepalive();
+            }
+            continue;
+        }
+
+        const int64_t lastSent = lastUdpKeepaliveSentNs_.load();
+        if (lastSent == 0 || (now - lastSent) >= kUdpKeepaliveIntervalNs) {
             SendUdpKeepalive();
         }
     }

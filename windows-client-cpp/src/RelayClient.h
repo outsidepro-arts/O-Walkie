@@ -93,6 +93,8 @@ private:
     std::thread keepaliveThread_;
     std::atomic<int64_t> lastInboundNs_{0};
     std::atomic<int64_t> lastOutboundNs_{0};
+    std::atomic<int64_t> lastUdpKeepaliveSentNs_{0};
+    std::atomic<int64_t> udpKeepalivePendingSinceNs_{0};
 
     StatusCallback onStatus_;
     ConnectedCallback onConnected_;

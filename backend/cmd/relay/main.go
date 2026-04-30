@@ -32,6 +32,8 @@ const (
 	defaultPacketMs    = 20
 	protocolVersion    = 2
 	scanActivityWindow = 10 * time.Second
+	udpKeepaliveSignal = 255
+	udpKeepaliveAck    = 254
 )
 
 var (
@@ -424,6 +426,9 @@ func (h *relayHub) routePacket(pkt *audioPacket) {
 	}
 	if len(pkt.opus) == 0 {
 		// Empty-opus datagrams are treated as UDP keepalive punches.
+		if pkt.seq == 0 && pkt.signalStrength == udpKeepaliveSignal {
+			h.sendUDPKeepaliveAck(pkt.sessionID, pkt.srcAddr)
+		}
 		return
 	}
 	channelName := normalizeChannelName(c.getChannel())
@@ -432,6 +437,19 @@ func (h *relayHub) routePacket(pkt *audioPacket) {
 	}
 	h.markChannelActivity(channelName)
 	h.getOrCreateChannel(channelName).push(pkt)
+}
+
+func (h *relayHub) sendUDPKeepaliveAck(sessionID uint32, addr *net.UDPAddr) {
+	if addr == nil {
+		return
+	}
+	payload := make([]byte, 9)
+	binary.BigEndian.PutUint32(payload[0:4], sessionID)
+	binary.BigEndian.PutUint32(payload[4:8], 0)
+	payload[8] = udpKeepaliveAck
+	if _, err := h.udpConn.WriteToUDP(payload, addr); err != nil {
+		log.Printf("udp keepalive ack failed to %s: %v", addr, err)
+	}
 }
 
 func (h *relayHub) broadcastMixed(channel string, excludeSession uint32, mixedOpus []byte, seq uint32, signalStrength uint8) {

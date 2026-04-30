@@ -19,6 +19,9 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Protocol/transport: added explicit UDP keepalive ACK (`signal=254, seq=0, empty opus`) in backend relay for client keepalive punches (`signal=255, seq=0`), enabling ACK-aware client keepalive state machine.
+- Android: keepalive loop now uses TeamTalk-like interval/RTX/lost-timeout behavior (`interval`, `RTX`, `connection-lost`) with pending-ACK tracking; incoming UDP keepalive ACK clears pending state and prevents idle pinhole decay.
+- Android: recovery stabilization pass in `WalkieService` — increased foreground UDP recv timeout (`300ms -> 1000ms`), added timeout-burst debounce before UDP recovery, and serialized WS reconnect + UDP socket recreate through shared recovery mutex to avoid overlapping network recovery coroutines.
 - Windows: added settings toggle for microphone level progress bar (`show_mic_level_indicator` in `audio.json`); default is `off`, hidden indicator does not update and resets to zero.
 - Windows: global PTT key assignment now uses a dedicated modal capture dialog that supports modifier combos (`Ctrl`/`Alt`/`Shift` + key); combo display/persistence added via `ptt_hotkey_mods`, `Clear` behavior preserved.
 - Windows: connection management UI terminology and form were aligned closer to Android flow: `Profiles` renamed to `Connections`, inline `Connection name` field added to the main form, and save/new/delete actions remain directly accessible.
