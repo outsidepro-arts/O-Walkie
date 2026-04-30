@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -16,6 +17,18 @@ struct WelcomeConfig;
 struct NamedAudioDevice {
     int index = -1;
     std::string name;
+};
+
+struct SignalPatternPoint {
+    double freqHz = 0.0;
+    int durationMs = 0;
+};
+
+struct SignalPattern {
+    std::string id;
+    std::string name;
+    std::vector<SignalPatternPoint> points;
+    bool appendTail = false;
 };
 
 class AudioEngine {
@@ -33,13 +46,25 @@ public:
 
     static std::vector<NamedAudioDevice> ListInputDevices();
     static std::vector<NamedAudioDevice> ListOutputDevices();
+    static const std::vector<SignalPattern>& RogerPatterns();
+    static const std::vector<SignalPattern>& CallPatterns();
 
     void SetPreferredInputDevice(int indexOrMinusOneForDefault);
     void SetPreferredOutputDevice(int indexOrMinusOneForDefault);
+    void SetRogerPatternId(std::string patternId);
+    void SetCallPatternId(std::string patternId);
+    std::string RogerPatternId() const;
+    std::string CallPatternId() const;
 
     bool StartTransmit();
     void StopTransmit();
     bool IsTransmitting() const { return transmitting_.load(); }
+    bool IsSignalStreaming() const { return signalStreaming_.load(); }
+    void ScheduleRxResumeHoldoff(int multiplier = 2);
+    bool StreamRogerSignal();
+    bool StreamCallSignal();
+    void PlayConnectedSignal();
+    void PlayPttPressSignal();
 
     void OnIncomingOpusFrame(const std::vector<uint8_t>& opus);
 
@@ -48,6 +73,12 @@ public:
     void SetLevelCallback(LevelCallback cb) { onLevel_ = std::move(cb); }
 
 private:
+    static std::vector<int16_t> GenerateSignalPcm(int sampleRate, const SignalPattern& pattern);
+    const SignalPattern* FindRogerPatternLocked() const;
+    const SignalPattern* FindCallPatternLocked() const;
+    void QueuePcmForPlaybackLocked(const std::vector<int16_t>& pcm);
+    bool IsRxHoldoffActive() const;
+    bool StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal);
     void RecreateCodecUnlocked();
     int FrameSamples() const;
     int ResolveInputDeviceIndex() const;
@@ -87,11 +118,15 @@ private:
 
     int preferredInputDevice_ = -1;
     int preferredOutputDevice_ = -1;
+    std::string rogerPatternId_ = "variant_1";
+    std::string callPatternId_ = "call_variant_1";
 
     std::vector<int16_t> captureFifo_;
     std::vector<uint8_t> opusScratch_;
 
     std::atomic<bool> transmitting_{false};
+    std::atomic<bool> signalStreaming_{false};
+    std::atomic<int64_t> rxResumeAtNs_{0};
 
     EncodedFrameCallback onEncodedFrame_;
     StatusCallback onStatus_;

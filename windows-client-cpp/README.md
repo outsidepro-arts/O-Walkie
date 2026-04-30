@@ -1,6 +1,6 @@
-# O-Walkie Desktop C++ (wxWidgets)
+# O-Walkie Desktop
 
-Windows desktop client in C++ with:
+Windows desktop client with:
 - `wxWidgets` UI
 - `Boost.Beast` WebSocket + UDP transport
 - `Opus` codec
@@ -8,7 +8,7 @@ Windows desktop client in C++ with:
 
 ## Toolchain location
 
-C++ tooling (example layout):
+Tooling (example layout):
 - `C:\dev\msys64`
 
 Installed UCRT64 packages (typical):
@@ -30,7 +30,7 @@ From PowerShell:
 ```
 
 Outputs:
-- `windows-client-cpp/build/owalkie-desktop-cpp.exe` — build tree
+- `windows-client-cpp/build/owalkie-desktop.exe` — build tree
 - `windows-client-cpp/build/dist/` — **same exe plus MinGW/UCRT64 DLL dependencies** copied next to it (via `scripts/bundle-ucrt64-deps.sh` + `objdump`). Run the app from `dist/` for distribution.
 
 If MSYS2 is not under `C:/dev/msys64`, set CMake cache variable `OWALKIE_MSYS_ROOT` to your install (used only for the bundling step’s `bash.exe` path).

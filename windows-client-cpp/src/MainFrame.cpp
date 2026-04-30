@@ -11,6 +11,7 @@
 #include <wx/choice.h>
 #include <wx/filename.h>
 #include <wx/gauge.h>
+#include <wx/dialog.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/stdpaths.h>
@@ -18,7 +19,29 @@
 #include <wx/textctrl.h>
 #include <wx/textdlg.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace {
+
+#ifdef _WIN32
+MainFrame* g_mainFrameForPttHook = nullptr;
+
+std::string VKeyToDisplayName(int vkey) {
+    if (vkey <= 0) {
+        return "Not set";
+    }
+    const UINT scan = MapVirtualKeyA(static_cast<UINT>(vkey), MAPVK_VK_TO_VSC);
+    LONG lParam = static_cast<LONG>(scan << 16);
+    char name[128]{};
+    const int n = GetKeyNameTextA(lParam, name, static_cast<int>(sizeof(name)));
+    if (n > 0) {
+        return std::string(name, name + n);
+    }
+    return "VK " + std::to_string(vkey);
+}
+#endif
 
 void SkipKeyboardFocus(wxWindow* w) {
     if (w) {
@@ -26,10 +49,177 @@ void SkipKeyboardFocus(wxWindow* w) {
     }
 }
 
+class SettingsDialog final : public wxDialog {
+public:
+    SettingsDialog(
+        wxWindow* parent,
+        const std::vector<NamedAudioDevice>& inputDevices,
+        const std::vector<NamedAudioDevice>& outputDevices,
+        int selectedInputId,
+        int selectedOutputId,
+        const std::vector<SignalPattern>& rogerPatterns,
+        const std::vector<SignalPattern>& callPatterns,
+        const std::string& selectedRogerId,
+        const std::string& selectedCallId,
+        int globalPttVKey)
+        : wxDialog(parent, wxID_ANY, "Settings", wxDefaultPosition, wxSize(520, 320), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+          inputDevices_(inputDevices),
+          outputDevices_(outputDevices),
+          rogerPatterns_(rogerPatterns),
+          callPatterns_(callPatterns) {
+        auto* root = new wxBoxSizer(wxVERTICAL);
+        auto* grid = new wxFlexGridSizer(2, 8, 10);
+        grid->AddGrowableCol(1, 1);
+
+        grid->Add(new wxStaticText(this, wxID_ANY, "Microphone"), 0, wxALIGN_CENTER_VERTICAL);
+        inputChoice_ = new wxChoice(this, wxID_ANY);
+        inputChoice_->Append("System default");
+        inputIds_.push_back(-1);
+        for (const auto& d : inputDevices_) {
+            inputChoice_->Append(wxString::FromUTF8(d.name));
+            inputIds_.push_back(d.index);
+        }
+        grid->Add(inputChoice_, 1, wxEXPAND);
+
+        grid->Add(new wxStaticText(this, wxID_ANY, "Speaker"), 0, wxALIGN_CENTER_VERTICAL);
+        outputChoice_ = new wxChoice(this, wxID_ANY);
+        outputChoice_->Append("System default");
+        outputIds_.push_back(-1);
+        for (const auto& d : outputDevices_) {
+            outputChoice_->Append(wxString::FromUTF8(d.name));
+            outputIds_.push_back(d.index);
+        }
+        grid->Add(outputChoice_, 1, wxEXPAND);
+
+        grid->Add(new wxStaticText(this, wxID_ANY, "Roger pattern"), 0, wxALIGN_CENTER_VERTICAL);
+        rogerChoice_ = new wxChoice(this, wxID_ANY);
+        for (const auto& p : rogerPatterns_) {
+            rogerChoice_->Append(wxString::FromUTF8(p.name));
+            rogerIds_.push_back(p.id);
+        }
+        grid->Add(rogerChoice_, 1, wxEXPAND);
+
+        grid->Add(new wxStaticText(this, wxID_ANY, "Call pattern"), 0, wxALIGN_CENTER_VERTICAL);
+        callChoice_ = new wxChoice(this, wxID_ANY);
+        for (const auto& p : callPatterns_) {
+            callChoice_->Append(wxString::FromUTF8(p.name));
+            callIds_.push_back(p.id);
+        }
+        grid->Add(callChoice_, 1, wxEXPAND);
+
+        grid->Add(new wxStaticText(this, wxID_ANY, "Global PTT key"), 0, wxALIGN_CENTER_VERTICAL);
+        auto* pttRow = new wxBoxSizer(wxHORIZONTAL);
+        pttKeyLabel_ = new wxStaticText(this, wxID_ANY, wxString::FromUTF8(VKeyToDisplayName(globalPttVKey)));
+        pttCaptureBtn_ = new wxButton(this, wxID_ANY, "Assign key");
+        pttClearBtn_ = new wxButton(this, wxID_ANY, "Clear");
+        pttRow->Add(pttKeyLabel_, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+        pttRow->Add(pttCaptureBtn_, 0, wxRIGHT, 8);
+        pttRow->Add(pttClearBtn_, 0);
+        grid->Add(pttRow, 1, wxEXPAND);
+
+        root->Add(grid, 1, wxEXPAND | wxALL, 12);
+        root->Add(CreateSeparatedButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+        SetSizerAndFit(root);
+
+        SelectById(inputChoice_, inputIds_, selectedInputId);
+        SelectById(outputChoice_, outputIds_, selectedOutputId);
+        SelectByString(rogerChoice_, rogerIds_, selectedRogerId);
+        SelectByString(callChoice_, callIds_, selectedCallId);
+        selectedPttVKey_ = globalPttVKey;
+
+        pttCaptureBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            waitingPttKey_ = true;
+            pttKeyLabel_->SetLabel("Press any key...");
+        });
+        pttClearBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            waitingPttKey_ = false;
+            selectedPttVKey_ = 0;
+            pttKeyLabel_->SetLabel("Not set");
+        });
+        Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& e) {
+            if (!waitingPttKey_) {
+                e.Skip();
+                return;
+            }
+#ifdef _WIN32
+            const int raw = static_cast<int>(e.GetRawKeyCode());
+            if (raw > 0) {
+                selectedPttVKey_ = raw;
+                waitingPttKey_ = false;
+                pttKeyLabel_->SetLabel(wxString::FromUTF8(VKeyToDisplayName(selectedPttVKey_)));
+                return;
+            }
+#endif
+            e.Skip();
+        });
+    }
+
+    int SelectedInputId() const { return PickId(inputChoice_, inputIds_); }
+    int SelectedOutputId() const { return PickId(outputChoice_, outputIds_); }
+    std::string SelectedRogerId() const { return PickString(rogerChoice_, rogerIds_); }
+    std::string SelectedCallId() const { return PickString(callChoice_, callIds_); }
+    int SelectedGlobalPttVKey() const { return selectedPttVKey_; }
+
+private:
+    static void SelectById(wxChoice* c, const std::vector<int>& ids, int id) {
+        int sel = 0;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            if (ids[i] == id) {
+                sel = static_cast<int>(i);
+                break;
+            }
+        }
+        c->SetSelection(sel);
+    }
+    static void SelectByString(wxChoice* c, const std::vector<std::string>& ids, const std::string& id) {
+        int sel = 0;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            if (ids[i] == id) {
+                sel = static_cast<int>(i);
+                break;
+            }
+        }
+        c->SetSelection(sel);
+    }
+    static int PickId(wxChoice* c, const std::vector<int>& ids) {
+        const int i = c->GetSelection();
+        if (i == wxNOT_FOUND || i < 0 || static_cast<size_t>(i) >= ids.size()) {
+            return -1;
+        }
+        return ids[static_cast<size_t>(i)];
+    }
+    static std::string PickString(wxChoice* c, const std::vector<std::string>& ids) {
+        const int i = c->GetSelection();
+        if (i == wxNOT_FOUND || i < 0 || static_cast<size_t>(i) >= ids.size()) {
+            return ids.empty() ? std::string{} : ids.front();
+        }
+        return ids[static_cast<size_t>(i)];
+    }
+
+private:
+    const std::vector<NamedAudioDevice>& inputDevices_;
+    const std::vector<NamedAudioDevice>& outputDevices_;
+    const std::vector<SignalPattern>& rogerPatterns_;
+    const std::vector<SignalPattern>& callPatterns_;
+    wxChoice* inputChoice_ = nullptr;
+    wxChoice* outputChoice_ = nullptr;
+    wxChoice* rogerChoice_ = nullptr;
+    wxChoice* callChoice_ = nullptr;
+    wxStaticText* pttKeyLabel_ = nullptr;
+    wxButton* pttCaptureBtn_ = nullptr;
+    wxButton* pttClearBtn_ = nullptr;
+    std::vector<int> inputIds_;
+    std::vector<int> outputIds_;
+    std::vector<std::string> rogerIds_;
+    std::vector<std::string> callIds_;
+    bool waitingPttKey_ = false;
+    int selectedPttVKey_ = 0;
+};
+
 } // namespace
 
 MainFrame::MainFrame()
-    : wxFrame(nullptr, wxID_ANY, "O-Walkie Desktop CPP (wxWidgets)", wxDefaultPosition, wxSize(680, 560)),
+    : wxFrame(nullptr, wxID_ANY, "O-Walkie Desktop", wxDefaultPosition, wxSize(680, 560)),
       relay_(std::make_unique<RelayClient>()),
       audio_(std::make_unique<AudioEngine>()),
       reconnectTimer_(this) {
@@ -37,19 +227,27 @@ MainFrame::MainFrame()
     BindUi();
 
     reconnectTimer_.Bind(wxEVT_TIMER, &MainFrame::OnReconnectTimer, this);
+#ifdef _WIN32
+    InstallGlobalPttHook();
+#endif
 
     relay_->SetStatusCallback([this](const std::string& msg) {
         this->CallAfter([this, msg] { SetStatus(wxString::FromUTF8(msg)); });
     });
     relay_->SetConnectedCallback([this](bool connected) {
         this->CallAfter([this, connected] {
+            const bool wasConnected = connected_;
             connected_ = connected;
             if (!connected && !relay_->AutoReconnectDesired()) {
                 userWantsSession_ = false;
                 StopReconnectTimer();
             }
+            if (connected && !wasConnected) {
+                audio_->PlayConnectedSignal();
+            }
             connectBtn_->SetLabel((connected || userWantsSession_) ? "Disconnect" : "Connect");
             pttBtn_->Enable(connected);
+            callBtn_->Enable(connected);
             UpdateProfileControlsEnabled();
         });
     });
@@ -75,7 +273,7 @@ MainFrame::MainFrame()
     PopulateAudioDeviceChoices();
     MigrateLegacyConnectionJsonIfNeeded();
     LoadAllSettings();
-    ApplySelectedAudioDevicesToEngine();
+    ApplyAudioSettingsToEngine();
     UpdateProfileControlsEnabled();
 
     CallAfter([this] {
@@ -86,6 +284,9 @@ MainFrame::MainFrame()
 }
 
 MainFrame::~MainFrame() {
+#ifdef _WIN32
+    UninstallGlobalPttHook();
+#endif
     StopReconnectTimer();
     SaveAudioSettings();
     SaveProfilesToDisk();
@@ -210,9 +411,11 @@ void MainFrame::LoadAllSettings() {
             if (in) {
                 nlohmann::json j;
                 in >> j;
-                const int inDev = j.value("audio_input_device", -1);
-                const int outDev = j.value("audio_output_device", -1);
-                SelectAudioDevicesInUi(inDev, outDev);
+                selectedInputDeviceId_ = j.value("audio_input_device", -1);
+                selectedOutputDeviceId_ = j.value("audio_output_device", -1);
+                selectedRogerPatternId_ = j.value("roger_pattern_id", std::string("variant_1"));
+                selectedCallPatternId_ = j.value("call_pattern_id", std::string("call_variant_1"));
+                globalPttVKey_ = j.value("ptt_hotkey_vkey", 0);
             }
         }
     } catch (...) {
@@ -251,8 +454,11 @@ void MainFrame::SaveProfilesToDisk() {
 
 void MainFrame::SaveAudioSettings() {
     nlohmann::json j;
-    j["audio_input_device"] = SelectedInputDeviceId();
-    j["audio_output_device"] = SelectedOutputDeviceId();
+    j["audio_input_device"] = selectedInputDeviceId_;
+    j["audio_output_device"] = selectedOutputDeviceId_;
+    j["roger_pattern_id"] = selectedRogerPatternId_;
+    j["call_pattern_id"] = selectedCallPatternId_;
+    j["ptt_hotkey_vkey"] = globalPttVKey_;
     try {
         std::ofstream out(AudioSettingsPath().utf8_string());
         if (out) {
@@ -491,26 +697,12 @@ void MainFrame::BuildUi() {
     channelCtrl_->SetName("Channel");
     grid->Add(channelCtrl_, 1, wxEXPAND);
 
-    auto* labIn = new wxStaticText(panel, wxID_ANY, "Microphone");
-    SkipKeyboardFocus(labIn);
-    grid->Add(labIn, 0, wxALIGN_CENTER_VERTICAL);
-    inputDeviceChoice_ = new wxChoice(panel, wxID_ANY);
-    inputDeviceChoice_->SetName("Microphone device");
-    grid->Add(inputDeviceChoice_, 1, wxEXPAND);
-
-    auto* labOut = new wxStaticText(panel, wxID_ANY, "Speaker");
-    SkipKeyboardFocus(labOut);
-    grid->Add(labOut, 0, wxALIGN_CENTER_VERTICAL);
-    outputDeviceChoice_ = new wxChoice(panel, wxID_ANY);
-    outputDeviceChoice_->SetName("Speaker device");
-    grid->Add(outputDeviceChoice_, 1, wxEXPAND);
-
     root->Add(grid, 0, wxEXPAND | wxALL, 12);
 
     auto* audioBar = new wxBoxSizer(wxHORIZONTAL);
-    refreshAudioBtn_ = new wxButton(panel, wxID_ANY, "Refresh audio devices");
-    refreshAudioBtn_->SetName("Refresh audio devices");
-    audioBar->Add(refreshAudioBtn_, 0, wxRIGHT, 10);
+    settingsBtn_ = new wxButton(panel, wxID_ANY, "Settings");
+    settingsBtn_->SetName("Open settings");
+    audioBar->Add(settingsBtn_, 0, wxRIGHT, 10);
     root->Add(audioBar, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     repeaterCheck_ = new wxCheckBox(panel, wxID_ANY, "Repeater mode");
@@ -522,9 +714,13 @@ void MainFrame::BuildUi() {
     connectBtn_->SetName("Connect or disconnect");
     pttBtn_ = new wxButton(panel, wxID_ANY, "Hold to Talk");
     pttBtn_->SetName("Push to talk");
+    callBtn_ = new wxButton(panel, wxID_ANY, "Call");
+    callBtn_->SetName("Call signal");
     pttBtn_->Enable(false);
+    callBtn_->Enable(false);
     actions->Add(connectBtn_, 0, wxRIGHT, 10);
     actions->Add(pttBtn_, 0, wxRIGHT, 10);
+    actions->Add(callBtn_, 0, wxRIGHT, 10);
     root->Add(actions, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     signalGauge_ = new wxGauge(panel, wxID_ANY, 100, wxDefaultPosition, wxSize(220, -1));
@@ -550,12 +746,11 @@ void MainFrame::BuildUi() {
     wsPortCtrl_->MoveAfterInTabOrder(hostCtrl_);
     udpPortCtrl_->MoveAfterInTabOrder(wsPortCtrl_);
     channelCtrl_->MoveAfterInTabOrder(udpPortCtrl_);
-    inputDeviceChoice_->MoveAfterInTabOrder(channelCtrl_);
-    outputDeviceChoice_->MoveAfterInTabOrder(inputDeviceChoice_);
-    refreshAudioBtn_->MoveAfterInTabOrder(outputDeviceChoice_);
-    repeaterCheck_->MoveAfterInTabOrder(refreshAudioBtn_);
+    settingsBtn_->MoveAfterInTabOrder(channelCtrl_);
+    repeaterCheck_->MoveAfterInTabOrder(settingsBtn_);
     connectBtn_->MoveAfterInTabOrder(repeaterCheck_);
     pttBtn_->MoveAfterInTabOrder(connectBtn_);
+    callBtn_->MoveAfterInTabOrder(pttBtn_);
 }
 
 void MainFrame::BindUi() {
@@ -564,14 +759,13 @@ void MainFrame::BindUi() {
     newProfileBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnNewProfile, this);
     deleteProfileBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnDeleteProfile, this);
     connectBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnConnectClicked, this);
-    refreshAudioBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnRefreshAudioDevices, this);
-    inputDeviceChoice_->Bind(wxEVT_CHOICE, &MainFrame::OnAudioDeviceChanged, this);
-    outputDeviceChoice_->Bind(wxEVT_CHOICE, &MainFrame::OnAudioDeviceChanged, this);
+    settingsBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnSettingsClicked, this);
     pttBtn_->Bind(wxEVT_LEFT_DOWN, &MainFrame::OnPttDown, this);
     pttBtn_->Bind(wxEVT_LEFT_UP, &MainFrame::OnPttUp, this);
     pttBtn_->Bind(wxEVT_LEAVE_WINDOW, &MainFrame::OnPttUp, this);
     pttBtn_->Bind(wxEVT_KEY_DOWN, &MainFrame::OnPttButtonKeyDown, this);
     pttBtn_->Bind(wxEVT_KEY_UP, &MainFrame::OnPttButtonKeyUp, this);
+    callBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnCallSignalClicked, this);
 }
 
 void MainFrame::SetStatus(const wxString& status) {
@@ -588,6 +782,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
         connected_ = false;
         connectBtn_->SetLabel("Connect");
         pttBtn_->Enable(false);
+        callBtn_->Enable(false);
         UpdateProfileControlsEnabled();
         SetStatus("Disconnected");
         return;
@@ -612,28 +807,18 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
 }
 
 void MainFrame::OnPttDown(wxMouseEvent& event) {
-    if (connected_) {
-        audio_->StartTransmit();
-        SetStatus("Transmitting");
-    }
+    BeginPttTx();
     event.Skip();
 }
 
 void MainFrame::OnPttUp(wxMouseEvent& event) {
-    if (connected_) {
-        audio_->StopTransmit();
-        relay_->SendTxEofBurst();
-        SetStatus("Connected");
-    }
+    EndPttTx();
     event.Skip();
 }
 
 void MainFrame::OnPttButtonKeyDown(wxKeyEvent& event) {
     if (event.GetKeyCode() == WXK_SPACE && connected_) {
-        if (!audio_->IsTransmitting()) {
-            audio_->StartTransmit();
-            SetStatus("Transmitting");
-        }
+        BeginPttTx();
         return;
     }
     event.Skip();
@@ -641,15 +826,47 @@ void MainFrame::OnPttButtonKeyDown(wxKeyEvent& event) {
 
 void MainFrame::OnPttButtonKeyUp(wxKeyEvent& event) {
     if (event.GetKeyCode() == WXK_SPACE && connected_) {
-        if (audio_->IsTransmitting()) {
-            audio_->StopTransmit();
-            relay_->SendTxEofBurst();
-            SetStatus("Connected");
-        }
+        EndPttTx();
         return;
     }
     event.Skip();
 }
+
+void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
+    if (!connected_ || audio_->IsTransmitting() || audio_->IsSignalStreaming()) {
+        return;
+    }
+    SetStatus("Sending call signal");
+    if (audio_->StreamCallSignal()) {
+        relay_->SendTxEofBurst();
+        audio_->ScheduleRxResumeHoldoff();
+        SetStatus("Connected");
+    } else {
+        SetStatus("Call signal failed");
+    }
+}
+
+void MainFrame::BeginPttTx() {
+    if (!connected_ || audio_->IsSignalStreaming() || audio_->IsTransmitting()) {
+        return;
+    }
+    audio_->PlayPttPressSignal();
+    if (audio_->StartTransmit()) {
+        SetStatus("Transmitting");
+    }
+}
+
+void MainFrame::EndPttTx() {
+    if (!connected_ || !audio_->IsTransmitting()) {
+        return;
+    }
+    audio_->StopTransmit();
+    audio_->ScheduleRxResumeHoldoff();
+    audio_->StreamRogerSignal();
+    relay_->SendTxEofBurst();
+    SetStatus("Connected");
+}
+
 
 void MainFrame::OnTxStop() {
     audio_->StopTransmit();
@@ -657,78 +874,75 @@ void MainFrame::OnTxStop() {
 }
 
 void MainFrame::PopulateAudioDeviceChoices() {
-    inputDeviceChoice_->Clear();
-    inputDevIds_.clear();
-    inputDeviceChoice_->Append("System default");
-    inputDevIds_.push_back(-1);
-    for (const auto& d : AudioEngine::ListInputDevices()) {
-        inputDeviceChoice_->Append(wxString::FromUTF8(d.name));
-        inputDevIds_.push_back(d.index);
-    }
-    inputDeviceChoice_->SetSelection(0);
-
-    outputDeviceChoice_->Clear();
-    outputDevIds_.clear();
-    outputDeviceChoice_->Append("System default");
-    outputDevIds_.push_back(-1);
-    for (const auto& d : AudioEngine::ListOutputDevices()) {
-        outputDeviceChoice_->Append(wxString::FromUTF8(d.name));
-        outputDevIds_.push_back(d.index);
-    }
-    outputDeviceChoice_->SetSelection(0);
+    inputDevices_ = AudioEngine::ListInputDevices();
+    outputDevices_ = AudioEngine::ListOutputDevices();
 }
 
-void MainFrame::SelectAudioDevicesInUi(int inputDeviceId, int outputDeviceId) {
-    int inSel = 0;
-    for (size_t i = 0; i < inputDevIds_.size(); ++i) {
-        if (inputDevIds_[i] == inputDeviceId) {
-            inSel = static_cast<int>(i);
-            break;
-        }
-    }
-    inputDeviceChoice_->SetSelection(inSel);
-
-    int outSel = 0;
-    for (size_t i = 0; i < outputDevIds_.size(); ++i) {
-        if (outputDevIds_[i] == outputDeviceId) {
-            outSel = static_cast<int>(i);
-            break;
-        }
-    }
-    outputDeviceChoice_->SetSelection(outSel);
+void MainFrame::ApplyAudioSettingsToEngine() {
+    audio_->SetPreferredInputDevice(selectedInputDeviceId_);
+    audio_->SetPreferredOutputDevice(selectedOutputDeviceId_);
+    audio_->SetRogerPatternId(selectedRogerPatternId_);
+    audio_->SetCallPatternId(selectedCallPatternId_);
 }
 
-void MainFrame::ApplySelectedAudioDevicesToEngine() {
-    audio_->SetPreferredInputDevice(SelectedInputDeviceId());
-    audio_->SetPreferredOutputDevice(SelectedOutputDeviceId());
-}
-
-void MainFrame::OnRefreshAudioDevices(wxCommandEvent&) {
-    const int inId = SelectedInputDeviceId();
-    const int outId = SelectedOutputDeviceId();
+void MainFrame::OnSettingsClicked(wxCommandEvent&) {
     PopulateAudioDeviceChoices();
-    SelectAudioDevicesInUi(inId, outId);
-    ApplySelectedAudioDevicesToEngine();
-    SetStatus("Audio device list refreshed");
-}
-
-void MainFrame::OnAudioDeviceChanged(wxCommandEvent&) {
-    ApplySelectedAudioDevicesToEngine();
+    SettingsDialog dlg(
+        this,
+        inputDevices_,
+        outputDevices_,
+        selectedInputDeviceId_,
+        selectedOutputDeviceId_,
+        AudioEngine::RogerPatterns(),
+        AudioEngine::CallPatterns(),
+        selectedRogerPatternId_,
+        selectedCallPatternId_,
+        globalPttVKey_);
+    if (dlg.ShowModal() != wxID_OK) {
+        return;
+    }
+    selectedInputDeviceId_ = dlg.SelectedInputId();
+    selectedOutputDeviceId_ = dlg.SelectedOutputId();
+    selectedRogerPatternId_ = dlg.SelectedRogerId();
+    selectedCallPatternId_ = dlg.SelectedCallId();
+    globalPttVKey_ = dlg.SelectedGlobalPttVKey();
+    ApplyAudioSettingsToEngine();
     SaveAudioSettings();
+    SetStatus("Settings applied");
 }
 
-int MainFrame::SelectedInputDeviceId() const {
-    const int i = inputDeviceChoice_->GetSelection();
-    if (i == wxNOT_FOUND || i < 0 || static_cast<size_t>(i) >= inputDevIds_.size()) {
-        return -1;
+#ifdef _WIN32
+void MainFrame::InstallGlobalPttHook() {
+    g_mainFrameForPttHook = this;
+    if (!globalPttHook_) {
+        globalPttHook_ = SetWindowsHookExA(WH_KEYBOARD_LL, MainFrame::GlobalPttKeyboardProc, GetModuleHandle(nullptr), 0);
     }
-    return inputDevIds_[static_cast<size_t>(i)];
 }
 
-int MainFrame::SelectedOutputDeviceId() const {
-    const int i = outputDeviceChoice_->GetSelection();
-    if (i == wxNOT_FOUND || i < 0 || static_cast<size_t>(i) >= outputDevIds_.size()) {
-        return -1;
+void MainFrame::UninstallGlobalPttHook() {
+    if (globalPttHook_) {
+        UnhookWindowsHookEx(static_cast<HHOOK>(globalPttHook_));
+        globalPttHook_ = nullptr;
     }
-    return outputDevIds_[static_cast<size_t>(i)];
+    if (g_mainFrameForPttHook == this) {
+        g_mainFrameForPttHook = nullptr;
+    }
 }
+
+LRESULT CALLBACK MainFrame::GlobalPttKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION && g_mainFrameForPttHook) {
+        const auto* data = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+        if (data && g_mainFrameForPttHook->globalPttVKey_ > 0 &&
+            static_cast<int>(data->vkCode) == g_mainFrameForPttHook->globalPttVKey_) {
+            if ((wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) && !g_mainFrameForPttHook->globalPttPressed_) {
+                g_mainFrameForPttHook->globalPttPressed_ = true;
+                g_mainFrameForPttHook->CallAfter([frame = g_mainFrameForPttHook] { frame->BeginPttTx(); });
+            } else if ((wParam == WM_KEYUP || wParam == WM_SYSKEYUP) && g_mainFrameForPttHook->globalPttPressed_) {
+                g_mainFrameForPttHook->globalPttPressed_ = false;
+                g_mainFrameForPttHook->CallAfter([frame = g_mainFrameForPttHook] { frame->EndPttTx(); });
+            }
+        }
+    }
+    return CallNextHookEx(nullptr, nCode, wParam, lParam);
+}
+#endif

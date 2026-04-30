@@ -3,10 +3,19 @@
 #include "RelayClient.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <thread>
 
 #include <opus/opus.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 void AudioEngine::CaptureCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
     (void)pOutput;
@@ -39,6 +48,279 @@ void AudioEngine::PlaybackCallback(ma_device* pDevice, void* pOutput, const void
     if (done < frameCount) {
         std::memset(out + done * bpf, 0, (frameCount - done) * bpf);
     }
+}
+
+namespace {
+constexpr int kRogerTailMs = 40;
+constexpr int kUiSignalPlaybackRate = 44100;
+
+struct WavPcm {
+    std::vector<int16_t> samples;
+    int sampleRate = 0;
+};
+
+std::filesystem::path ExecutableDir() {
+#ifdef _WIN32
+    char pathBuf[MAX_PATH]{};
+    const DWORD n = GetModuleFileNameA(nullptr, pathBuf, static_cast<DWORD>(sizeof(pathBuf)));
+    if (n > 0) {
+        return std::filesystem::path(std::string(pathBuf, pathBuf + n)).parent_path();
+    }
+#endif
+    return std::filesystem::current_path();
+}
+
+std::vector<uint8_t> ReadBinary(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return {};
+    }
+    in.seekg(0, std::ios::end);
+    const auto sz = static_cast<size_t>(in.tellg());
+    in.seekg(0, std::ios::beg);
+    std::vector<uint8_t> out(sz);
+    if (sz > 0) {
+        in.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(sz));
+    }
+    return out;
+}
+
+int32_t ReadLeI32(const uint8_t* p) {
+    return static_cast<int32_t>(p[0]) | (static_cast<int32_t>(p[1]) << 8) | (static_cast<int32_t>(p[2]) << 16) |
+           (static_cast<int32_t>(p[3]) << 24);
+}
+
+int16_t ReadLeI16(const uint8_t* p) { return static_cast<int16_t>(p[0] | (p[1] << 8)); }
+
+WavPcm ParseWavPcm(const std::vector<uint8_t>& bytes) {
+    WavPcm out{};
+    if (bytes.size() < 44) {
+        return out;
+    }
+    if (std::memcmp(bytes.data(), "RIFF", 4) != 0 || std::memcmp(bytes.data() + 8, "WAVE", 4) != 0) {
+        return out;
+    }
+    size_t offset = 12;
+    int sampleRate = 0;
+    int channels = 0;
+    int bits = 0;
+    size_t dataStart = 0;
+    size_t dataSize = 0;
+    while (offset + 8 <= bytes.size()) {
+        const uint8_t* chunk = bytes.data() + offset;
+        const int32_t chunkSize = ReadLeI32(chunk + 4);
+        const size_t payloadStart = offset + 8;
+        if (chunkSize < 0 || payloadStart + static_cast<size_t>(chunkSize) > bytes.size()) {
+            break;
+        }
+        if (std::memcmp(chunk, "fmt ", 4) == 0 && chunkSize >= 16) {
+            const uint8_t* p = bytes.data() + payloadStart;
+            const int audioFmt = ReadLeI16(p + 0);
+            channels = ReadLeI16(p + 2);
+            sampleRate = ReadLeI32(p + 4);
+            bits = ReadLeI16(p + 14);
+            if (audioFmt != 1) { // PCM
+                return {};
+            }
+        } else if (std::memcmp(chunk, "data", 4) == 0) {
+            dataStart = payloadStart;
+            dataSize = static_cast<size_t>(chunkSize);
+            break;
+        }
+        offset = payloadStart + static_cast<size_t>(chunkSize) + (static_cast<size_t>(chunkSize) & 1u);
+    }
+    if (sampleRate <= 0 || channels != 1 || bits != 16 || dataSize < 2 || dataStart + dataSize > bytes.size()) {
+        return {};
+    }
+    out.sampleRate = sampleRate;
+    out.samples.reserve(dataSize / 2);
+    for (size_t i = 0; i + 1 < dataSize; i += 2) {
+        out.samples.push_back(ReadLeI16(bytes.data() + dataStart + i));
+    }
+    return out;
+}
+
+std::vector<int16_t> ResampleLinear(const std::vector<int16_t>& in, int srcRate, int dstRate) {
+    if (in.empty() || srcRate <= 0 || dstRate <= 0) {
+        return {};
+    }
+    if (srcRate == dstRate) {
+        return in;
+    }
+    const size_t outN = std::max<size_t>(1, (in.size() * static_cast<size_t>(dstRate)) / static_cast<size_t>(srcRate));
+    std::vector<int16_t> out(outN);
+    const double scale = static_cast<double>(srcRate) / static_cast<double>(dstRate);
+    for (size_t i = 0; i < outN; ++i) {
+        const double srcPos = i * scale;
+        const size_t i0 = static_cast<size_t>(srcPos);
+        const size_t i1 = std::min(i0 + 1, in.size() - 1);
+        const double t = srcPos - static_cast<double>(i0);
+        const double v = (1.0 - t) * in[i0] + t * in[i1];
+        out[i] = static_cast<int16_t>(std::clamp(static_cast<int>(std::lround(v)), -32768, 32767));
+    }
+    return out;
+}
+
+std::vector<int16_t> LoadSoundFromExeDir(const char* baseName, int targetRate) {
+    if (!baseName || targetRate <= 0) {
+        return {};
+    }
+    const auto dir = ExecutableDir() / "sounds";
+    const std::filesystem::path candidates[] = {dir / (std::string(baseName) + ".wav"), dir / baseName};
+    for (const auto& p : candidates) {
+        const auto bytes = ReadBinary(p);
+        if (bytes.empty()) {
+            continue;
+        }
+        auto wav = ParseWavPcm(bytes);
+        if (wav.samples.empty()) {
+            continue;
+        }
+        return ResampleLinear(wav.samples, wav.sampleRate, targetRate);
+    }
+    return {};
+}
+
+struct OneShotPlaybackState {
+    std::vector<int16_t> pcm;
+    size_t offset = 0;
+};
+
+void OneShotPlaybackCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
+    (void)pInput;
+    auto* state = static_cast<OneShotPlaybackState*>(pDevice->pUserData);
+    auto* out = static_cast<int16_t*>(pOutput);
+    if (!state || !out) {
+        return;
+    }
+    size_t framesLeft = state->pcm.size() - state->offset;
+    const size_t toCopy = std::min<size_t>(frameCount, framesLeft);
+    if (toCopy > 0) {
+        std::memcpy(out, state->pcm.data() + state->offset, toCopy * sizeof(int16_t));
+        state->offset += toCopy;
+    }
+    if (toCopy < frameCount) {
+        std::memset(out + toCopy, 0, (frameCount - toCopy) * sizeof(int16_t));
+    }
+}
+
+void PlayOneShotHighQuality(const std::vector<int16_t>& pcm, int srcRate) {
+    if (pcm.empty() || srcRate <= 0) {
+        return;
+    }
+    auto pcm44 = ResampleLinear(pcm, srcRate, kUiSignalPlaybackRate);
+    if (pcm44.empty()) {
+        return;
+    }
+    std::thread([pcm44 = std::move(pcm44)]() mutable {
+        ma_context ctx{};
+        if (ma_context_init(nullptr, 0, nullptr, &ctx) != MA_SUCCESS) {
+            return;
+        }
+        auto state = std::make_unique<OneShotPlaybackState>();
+        state->pcm = std::move(pcm44);
+        ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
+        cfg.playback.format = ma_format_s16;
+        cfg.playback.channels = 1;
+        cfg.sampleRate = static_cast<ma_uint32>(kUiSignalPlaybackRate);
+        cfg.dataCallback = OneShotPlaybackCallback;
+        cfg.pUserData = state.get();
+        ma_device dev{};
+        if (ma_device_init(&ctx, &cfg, &dev) != MA_SUCCESS) {
+            ma_context_uninit(&ctx);
+            return;
+        }
+        if (ma_device_start(&dev) != MA_SUCCESS) {
+            ma_device_uninit(&dev);
+            ma_context_uninit(&ctx);
+            return;
+        }
+        const auto playMs = static_cast<int64_t>(state->pcm.size()) * 1000LL / kUiSignalPlaybackRate;
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::max<int64_t>(playMs + 50, 80)));
+        ma_device_stop(&dev);
+        ma_device_uninit(&dev);
+        ma_context_uninit(&ctx);
+    }).detach();
+}
+
+void AppendSilence(std::vector<int16_t>& out, int sampleRate, int durationMs) {
+    if (sampleRate <= 0 || durationMs <= 0) {
+        return;
+    }
+    const int samples = (sampleRate * durationMs) / 1000;
+    out.insert(out.end(), static_cast<size_t>(samples), 0);
+}
+
+void AppendTone(std::vector<int16_t>& out, int sampleRate, double freqHz, int durationMs, double gain = 0.35) {
+    if (sampleRate <= 0 || durationMs <= 0 || freqHz <= 0.0) {
+        return;
+    }
+    const int samples = (sampleRate * durationMs) / 1000;
+    constexpr double kPi = 3.14159265358979323846;
+    const double w = (2.0 * kPi * freqHz) / static_cast<double>(sampleRate);
+    for (int i = 0; i < samples; ++i) {
+        const double env = std::sin((kPi * i) / std::max(samples - 1, 1));
+        const double s = std::sin(w * i) * env * gain;
+        const int v = static_cast<int>(std::lround(s * 32767.0));
+        out.push_back(static_cast<int16_t>(std::clamp(v, -32768, 32767)));
+    }
+}
+
+std::vector<int16_t> ApplyGain(const std::vector<int16_t>& in, double gain) {
+    if (gain == 1.0) {
+        return in;
+    }
+    std::vector<int16_t> out;
+    out.reserve(in.size());
+    for (int16_t s : in) {
+        const int v = static_cast<int>(std::lround(static_cast<double>(s) * gain));
+        out.push_back(static_cast<int16_t>(std::clamp(v, -32768, 32767)));
+    }
+    return out;
+}
+} // namespace
+
+const std::vector<SignalPattern>& AudioEngine::RogerPatterns() {
+    static const std::vector<SignalPattern> kPatterns = {
+        {"none", "No signal", {}, true},
+        {"variant_1", "Variant 1", {{890.0, 20}, {670.0, 20}, {890.0, 45}, {1000.0, 28}}, true},
+        {"variant_2", "Variant 2", {{1000.0, 88}, {800.0, 64}}, true},
+        {"variant_3", "Variant 3", {{1330.0, 68}, {1600.0, 56}}, true},
+    };
+    return kPatterns;
+}
+
+const std::vector<SignalPattern>& AudioEngine::CallPatterns() {
+    static const std::vector<SignalPattern> kPatterns = [] {
+        std::vector<SignalPattern> out;
+        SignalPattern p1{"call_variant_1", "Variant 1", {}, false};
+        for (int i = 0; i < 9; ++i) {
+            p1.points.push_back({2300.0, 70});
+            p1.points.push_back({1850.0, 70});
+            p1.points.push_back({1450.0, 70});
+        }
+        out.push_back(std::move(p1));
+
+        SignalPattern p2{"call_variant_2", "Variant 2", {}, false};
+        for (int i = 0; i < 14; ++i) {
+            p2.points.push_back({1150.0, 35});
+            p2.points.push_back({1350.0, 35});
+            p2.points.push_back({1550.0, 35});
+            p2.points.push_back({1750.0, 35});
+            p2.points.push_back({1550.0, 35});
+            p2.points.push_back({1350.0, 35});
+        }
+        out.push_back(std::move(p2));
+
+        SignalPattern p3{"call_variant_3", "Variant 3", {}, false};
+        for (int i = 0; i < 32; ++i) {
+            p3.points.push_back({2000.0, 60});
+            p3.points.push_back({1000.0, 60});
+        }
+        out.push_back(std::move(p3));
+        return out;
+    }();
+    return kPatterns;
 }
 
 AudioEngine::AudioEngine() = default;
@@ -149,6 +431,26 @@ void AudioEngine::SetPreferredOutputDevice(int indexOrMinusOneForDefault) {
     }
 }
 
+void AudioEngine::SetRogerPatternId(std::string patternId) {
+    std::lock_guard<std::mutex> lg(mu_);
+    rogerPatternId_ = std::move(patternId);
+}
+
+void AudioEngine::SetCallPatternId(std::string patternId) {
+    std::lock_guard<std::mutex> lg(mu_);
+    callPatternId_ = std::move(patternId);
+}
+
+std::string AudioEngine::RogerPatternId() const {
+    std::lock_guard<std::mutex> lg(mu_);
+    return rogerPatternId_;
+}
+
+std::string AudioEngine::CallPatternId() const {
+    std::lock_guard<std::mutex> lg(mu_);
+    return callPatternId_;
+}
+
 int AudioEngine::ResolveInputDeviceIndex() const {
     return preferredInputDevice_;
 }
@@ -176,6 +478,51 @@ void AudioEngine::CloseCaptureDeviceLocked() {
         captureActive_ = false;
     }
     captureFifo_.clear();
+}
+
+const SignalPattern* AudioEngine::FindRogerPatternLocked() const {
+    for (const auto& p : RogerPatterns()) {
+        if (p.id == rogerPatternId_) {
+            return &p;
+        }
+    }
+    return &RogerPatterns().front();
+}
+
+const SignalPattern* AudioEngine::FindCallPatternLocked() const {
+    for (const auto& p : CallPatterns()) {
+        if (p.id == callPatternId_) {
+            return &p;
+        }
+    }
+    return &CallPatterns().front();
+}
+
+std::vector<int16_t> AudioEngine::GenerateSignalPcm(int sampleRate, const SignalPattern& pattern) {
+    if (sampleRate <= 0 || pattern.points.empty()) {
+        return {};
+    }
+    std::vector<int16_t> out;
+    out.reserve(static_cast<size_t>(sampleRate));
+    constexpr double kPi = 3.14159265358979323846;
+    double phase = 0.0;
+    for (const auto& seg : pattern.points) {
+        const int n = std::max((sampleRate * seg.durationMs) / 1000, 1);
+        const bool pause = seg.freqHz <= 0.0;
+        const double step = pause ? 0.0 : (2.0 * kPi * seg.freqHz / sampleRate);
+        for (int i = 0; i < n; ++i) {
+            const double envPos = static_cast<double>(i) / static_cast<double>(n);
+            const double env = (envPos < 0.08) ? (envPos / 0.08) : ((envPos > 0.92) ? ((1.0 - envPos) / 0.08) : 1.0);
+            const double s = pause ? 0.0 : std::sin(phase) * env * 0.26;
+            const int v = static_cast<int>(std::lround(s * 32767.0));
+            out.push_back(static_cast<int16_t>(std::clamp(v, -32768, 32767)));
+            phase += step;
+        }
+    }
+    if (pattern.appendTail) {
+        AppendSilence(out, sampleRate, kRogerTailMs);
+    }
+    return out;
 }
 
 void AudioEngine::RecreateCodecUnlocked() {
@@ -249,7 +596,7 @@ void AudioEngine::EnsurePlaybackDeviceLocked() {
 
 bool AudioEngine::StartTransmit() {
     std::lock_guard<std::mutex> lg(mu_);
-    if (captureActive_ || !encoder_ || !contextReady_) {
+    if (captureActive_ || signalStreaming_.load() || !encoder_ || !contextReady_) {
         return false;
     }
 
@@ -293,6 +640,198 @@ void AudioEngine::StopTransmit() {
     CloseCaptureDeviceLocked();
 }
 
+void AudioEngine::ScheduleRxResumeHoldoff(int multiplier) {
+    const int safeMult = std::max(multiplier, 1);
+    int packetMs = 20;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        packetMs = std::max(packetMs_, 10);
+    }
+    const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count();
+    rxResumeAtNs_.store(nowNs + static_cast<int64_t>(packetMs) * safeMult * 1'000'000LL);
+}
+
+bool AudioEngine::IsRxHoldoffActive() const {
+    const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count();
+    return nowNs < rxResumeAtNs_.load();
+}
+
+bool AudioEngine::StreamRogerSignal() {
+    if (transmitting_.load() || signalStreaming_.exchange(true)) {
+        return false;
+    }
+    std::vector<int16_t> remotePcm;
+    std::vector<int16_t> localPcm;
+    int localRate = 8000;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        localRate = sampleRate_;
+        const SignalPattern* pattern = FindRogerPatternLocked();
+        if (!pattern || pattern->points.empty()) {
+            signalStreaming_.store(false);
+            return false;
+        }
+        remotePcm = GenerateSignalPcm(sampleRate_, *pattern);
+        std::vector<int16_t> pttRelease = LoadSoundFromExeDir("selfttdown_002", sampleRate_);
+        if (pttRelease.empty()) {
+            AppendTone(pttRelease, sampleRate_, 760.0, 28, 0.18);
+            AppendSilence(pttRelease, sampleRate_, 18);
+        }
+        localPcm.reserve(pttRelease.size() + remotePcm.size());
+        localPcm.insert(localPcm.end(), pttRelease.begin(), pttRelease.end());
+        auto rogerLocal = ApplyGain(remotePcm, 0.9);
+        localPcm.insert(localPcm.end(), rogerLocal.begin(), rogerLocal.end());
+    }
+    PlayOneShotHighQuality(localPcm, localRate);
+    const bool ok = StreamGeneratedSignal(remotePcm);
+    ScheduleRxResumeHoldoff();
+    signalStreaming_.store(false);
+    return ok;
+}
+
+bool AudioEngine::StreamCallSignal() {
+    if (transmitting_.load() || signalStreaming_.exchange(true)) {
+        return false;
+    }
+    std::vector<int16_t> remotePcm;
+    std::vector<int16_t> localPcm;
+    int localRate = 8000;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        localRate = sampleRate_;
+        const SignalPattern* pattern = FindCallPatternLocked();
+        if (!pattern || pattern->points.empty()) {
+            signalStreaming_.store(false);
+            return false;
+        }
+        remotePcm = GenerateSignalPcm(sampleRate_, *pattern);
+        localPcm = ApplyGain(remotePcm, 0.55);
+    }
+    PlayOneShotHighQuality(localPcm, localRate);
+    const bool ok = StreamGeneratedSignal(remotePcm);
+    ScheduleRxResumeHoldoff();
+    signalStreaming_.store(false);
+    return ok;
+}
+
+void AudioEngine::PlayConnectedSignal() {
+    std::vector<int16_t> pcm;
+    int localRate = 8000;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        localRate = sampleRate_;
+        AppendTone(pcm, sampleRate_, 620.0, 56, 0.22);
+        AppendTone(pcm, sampleRate_, 1330.0, 12, 0.22);
+        AppendTone(pcm, sampleRate_, 2670.0, 140, 0.22);
+    }
+    PlayOneShotHighQuality(pcm, localRate);
+}
+
+void AudioEngine::PlayPttPressSignal() {
+    std::vector<int16_t> pcm;
+    int localRate = 8000;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        localRate = sampleRate_;
+        pcm = LoadSoundFromExeDir("selfpttup_002", sampleRate_);
+        if (pcm.empty()) {
+            AppendTone(pcm, sampleRate_, 1260.0, 24, 0.18);
+            AppendSilence(pcm, sampleRate_, 10);
+        }
+    }
+    PlayOneShotHighQuality(pcm, localRate);
+}
+
+void AudioEngine::QueuePcmForPlaybackLocked(const std::vector<int16_t>& pcm) {
+    if (pcm.empty()) {
+        return;
+    }
+    EnsurePlaybackDeviceLocked();
+    if (!playbackRbReady_ || !playbackActive_) {
+        return;
+    }
+    ma_uint32 toWrite = static_cast<ma_uint32>(pcm.size());
+    const int16_t* pSrc = pcm.data();
+    while (toWrite > 0) {
+        ma_uint32 chunk = toWrite;
+        void* pW = nullptr;
+        ma_pcm_rb_acquire_write(&playbackRb_, &chunk, &pW);
+        if (chunk == 0) {
+            break;
+        }
+        std::memcpy(pW, pSrc, chunk * sizeof(int16_t));
+        ma_pcm_rb_commit_write(&playbackRb_, chunk);
+        pSrc += chunk;
+        toWrite -= chunk;
+    }
+}
+
+bool AudioEngine::StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal) {
+    if (pcmSignal.empty()) {
+        return false;
+    }
+
+    int frameSamples = 0;
+    int frameMs = 0;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        if (!encoder_ || !contextReady_) {
+            return false;
+        }
+        frameSamples = FrameSamples();
+        frameMs = packetMs_;
+    }
+    if (frameSamples <= 0 || frameMs <= 0) {
+        return false;
+    }
+
+    const int64_t frameNs = static_cast<int64_t>(frameMs) * 1'000'000LL;
+    int64_t nextFrameAtNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
+
+    std::vector<uint8_t> opusBuf(1275);
+    std::vector<int16_t> frame(static_cast<size_t>(frameSamples), 0);
+    size_t offset = 0;
+    while (offset < pcmSignal.size()) {
+        std::fill(frame.begin(), frame.end(), 0);
+        const size_t copyN = std::min(frame.size(), pcmSignal.size() - offset);
+        std::memcpy(frame.data(), pcmSignal.data() + offset, copyN * sizeof(int16_t));
+        offset += copyN;
+
+        int encoded = 0;
+        {
+            std::lock_guard<std::mutex> lg(mu_);
+            if (!encoder_) {
+                return false;
+            }
+            encoded = opus_encode(encoder_, frame.data(), frameSamples, opusBuf.data(), static_cast<int>(opusBuf.size()));
+        }
+        if (encoded > 0 && onEncodedFrame_) {
+            onEncodedFrame_(opusBuf.data(), static_cast<size_t>(encoded), 255);
+        }
+        if (offset < pcmSignal.size()) {
+            nextFrameAtNs += frameNs;
+            const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
+            const int64_t sleepNs = nextFrameAtNs - nowNs;
+            if (sleepNs > 0) {
+                const int64_t sleepMs = std::max<int64_t>(1, sleepNs / 1'000'000LL);
+                std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+            } else if (sleepNs < -frameNs * 2) {
+                // If scheduling drift grew too much, re-anchor pacing from current time.
+                nextFrameAtNs = nowNs;
+            }
+        }
+    }
+    return true;
+}
+
 void AudioEngine::OnCaptureFrames(const void* pInput, ma_uint32 frameCount) {
     if (!transmitting_.load() || !pInput || frameCount == 0) {
         return;
@@ -331,7 +870,7 @@ void AudioEngine::DrainCaptureFifoOpus() {
 
 void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
     std::lock_guard<std::mutex> lg(mu_);
-    if (!decoder_ || opus.empty() || transmitting_.load()) {
+    if (!decoder_ || opus.empty() || transmitting_.load() || signalStreaming_.load() || IsRxHoldoffActive()) {
         return;
     }
 
@@ -347,18 +886,5 @@ void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
         return;
     }
 
-    ma_uint32 toWrite = static_cast<ma_uint32>(decoded);
-    const int16_t* pSrc = pcm.data();
-    while (toWrite > 0) {
-        ma_uint32 chunk = toWrite;
-        void* pW = nullptr;
-        ma_pcm_rb_acquire_write(&playbackRb_, &chunk, &pW);
-        if (chunk == 0) {
-            break;
-        }
-        std::memcpy(pW, pSrc, chunk * sizeof(int16_t));
-        ma_pcm_rb_commit_write(&playbackRb_, chunk);
-        pSrc += chunk;
-        toWrite -= chunk;
-    }
+    QueuePcmForPlaybackLocked(pcm);
 }

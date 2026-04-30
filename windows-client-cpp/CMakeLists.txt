@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(OWalkieDesktopCpp VERSION 0.1.0 LANGUAGES CXX)
+project(OWalkieDesktop VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,6 +33,7 @@ add_executable(owalkie-desktop-cpp
     src/AudioEngine.cpp
     src/miniaudio_impl.cpp
 )
+set_target_properties(owalkie-desktop-cpp PROPERTIES OUTPUT_NAME "owalkie-desktop")
 
 target_include_directories(owalkie-desktop-cpp PRIVATE
     src
@@ -63,11 +64,20 @@ endif()
 set(OWALKIE_MSYS_ROOT "C:/dev/msys64" CACHE PATH "MSYS2 install root (for dist/ DLL bundling)")
 if(WIN32 AND MINGW)
     set(_bundle_sh "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-ucrt64-deps.sh")
+    set(_copy_sounds_cmake "${CMAKE_CURRENT_SOURCE_DIR}/scripts/copy-android-sounds.cmake")
     add_custom_command(TARGET owalkie-desktop-cpp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/dist"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:owalkie-desktop-cpp>"
             "${CMAKE_BINARY_DIR}/dist/"
+        COMMAND ${CMAKE_COMMAND}
+            -DANDROID_RAW_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../android/app/src/main/res/raw
+            -DOUT_SOUNDS_DIR=$<TARGET_FILE_DIR:owalkie-desktop-cpp>/sounds
+            -P "${_copy_sounds_cmake}"
+        COMMAND ${CMAKE_COMMAND}
+            -DANDROID_RAW_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../android/app/src/main/res/raw
+            -DOUT_SOUNDS_DIR=${CMAKE_BINARY_DIR}/dist/sounds
+            -P "${_copy_sounds_cmake}"
         COMMAND "${OWALKIE_MSYS_ROOT}/usr/bin/bash.exe" "${_bundle_sh}"
             "$<TARGET_FILE:owalkie-desktop-cpp>"
             "${CMAKE_BINARY_DIR}/dist"

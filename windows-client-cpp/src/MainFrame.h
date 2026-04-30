@@ -10,12 +10,17 @@
 #include "AudioEngine.h"
 #include "RelayClient.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 class wxButton;
 class wxChoice;
 class wxGauge;
 class wxStaticText;
 class wxTextCtrl;
 class wxCheckBox;
+class wxDialog;
 
 struct ServerProfile {
     std::string name{"Default"};
@@ -40,6 +45,7 @@ private:
     void OnPttUp(wxMouseEvent& event);
     void OnPttButtonKeyDown(wxKeyEvent& event);
     void OnPttButtonKeyUp(wxKeyEvent& event);
+    void OnCallSignalClicked(wxCommandEvent& event);
     void OnTxStop();
     void OnReconnectTimer(wxTimerEvent& event);
     void OnRelayConnectionLost();
@@ -63,16 +69,20 @@ private:
     void UpdateProfileControlsEnabled();
 
     void PopulateAudioDeviceChoices();
-    void SelectAudioDevicesInUi(int inputDeviceId, int outputDeviceId);
-    void ApplySelectedAudioDevicesToEngine();
-    void OnRefreshAudioDevices(wxCommandEvent& event);
-    void OnAudioDeviceChanged(wxCommandEvent& event);
-    int SelectedInputDeviceId() const;
-    int SelectedOutputDeviceId() const;
+    void ApplyAudioSettingsToEngine();
+    void OnSettingsClicked(wxCommandEvent& event);
 
     void ScheduleReconnect();
     void StopReconnectTimer();
     bool TryConnectWithCurrentFields();
+    void BeginPttTx();
+    void EndPttTx();
+
+#ifdef _WIN32
+    void InstallGlobalPttHook();
+    void UninstallGlobalPttHook();
+    static LRESULT CALLBACK GlobalPttKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
+#endif
 
 private:
     wxStaticText* profileLabel_ = nullptr;
@@ -85,12 +95,11 @@ private:
     wxTextCtrl* wsPortCtrl_ = nullptr;
     wxTextCtrl* udpPortCtrl_ = nullptr;
     wxTextCtrl* channelCtrl_ = nullptr;
-    wxChoice* inputDeviceChoice_ = nullptr;
-    wxChoice* outputDeviceChoice_ = nullptr;
-    wxButton* refreshAudioBtn_ = nullptr;
+    wxButton* settingsBtn_ = nullptr;
     wxCheckBox* repeaterCheck_ = nullptr;
     wxButton* connectBtn_ = nullptr;
     wxButton* pttBtn_ = nullptr;
+    wxButton* callBtn_ = nullptr;
     wxStaticText* statusText_ = nullptr;
     wxGauge* signalGauge_ = nullptr;
 
@@ -98,8 +107,17 @@ private:
     std::unique_ptr<AudioEngine> audio_;
     bool connected_ = false;
     bool userWantsSession_ = false;
-    std::vector<int> inputDevIds_;
-    std::vector<int> outputDevIds_;
+    std::vector<NamedAudioDevice> inputDevices_;
+    std::vector<NamedAudioDevice> outputDevices_;
+    int selectedInputDeviceId_ = -1;
+    int selectedOutputDeviceId_ = -1;
+    std::string selectedRogerPatternId_ = "variant_1";
+    std::string selectedCallPatternId_ = "call_variant_1";
+    int globalPttVKey_ = 0;
+    bool globalPttPressed_ = false;
+#ifdef _WIN32
+    void* globalPttHook_ = nullptr;
+#endif
 
     std::vector<ServerProfile> profiles_;
     int activeProfileIndex_ = 0;

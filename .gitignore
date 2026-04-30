@@ -25,6 +25,14 @@ android/keystore/
 # Release artifacts
 release/
 
+# C++ desktop client local build
+windows-client-cpp/build/
+windows-client-cpp/*.exe
+windows-client-cpp/*.dll
+debug-*.log
+*.obj
+*.pdb
+
 # Windows client (.NET/WPF)
 windows-client/**/bin/
 windows-client/**/obj/
