@@ -26,7 +26,7 @@ find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
 
-add_executable(owalkie-desktop-cpp
+add_executable(owalkie-desktop-cpp WIN32
     src/main.cpp
     src/MainFrame.cpp
     src/RelayClient.cpp
