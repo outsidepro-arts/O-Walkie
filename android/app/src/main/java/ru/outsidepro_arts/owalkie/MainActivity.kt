@@ -103,7 +103,9 @@ class MainActivity : ComponentActivity() {
                 uiSignalPlayer.playConnected()
             } else if (!prevProtocolIncompatible && protocolIncompatible) {
                 uiSignalPlayer.playConnectionError()
-            } else if (prevConnecting && !wsConnecting && !wsConnected) {
+            } else if (userRequestedConnection && prevConnecting && !wsConnecting && !wsConnected) {
+                uiSignalPlayer.playConnectionError()
+            } else if (userRequestedConnection && prevConnected && !wsConnected) {
                 uiSignalPlayer.playConnectionError()
             }
 
@@ -610,6 +612,7 @@ class MainActivity : ComponentActivity() {
     private fun handleConnectAction() {
         if (wsConnecting || wsConnected) {
             userRequestedConnection = false
+            uiSignalPlayer.playManualDisconnect()
             sendServiceAction(WalkieService.ACTION_DISCONNECT_AND_STOP)
             wsConnecting = false
             wsConnected = false
@@ -625,6 +628,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         userRequestedConnection = true
+        uiSignalPlayer.playManualConnectStart()
         startWalkieService(profile)
         wsConnecting = true
         wsConnected = false

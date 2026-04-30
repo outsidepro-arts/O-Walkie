@@ -205,6 +205,7 @@ class WalkieService : Service() {
     private var localPttPressPlaybackJob: Job? = null
 
     private val transmitting = AtomicBoolean(false)
+    private val txLoopRunning = AtomicBoolean(false)
     private val rogerStreaming = AtomicBoolean(false)
     private val callStreaming = AtomicBoolean(false)
     private val sessionId = AtomicLong(0L)
@@ -907,9 +908,18 @@ class WalkieService : Service() {
         localPttPressPlaybackJob = serviceScope.launch(Dispatchers.IO) {
             playLocalSignalPcm(localPttPressPcm, LOCAL_PLAYBACK_SAMPLE_RATE, 0.0)
         }
-        if (txJob?.isActive == true) return
+        if (!txLoopRunning.compareAndSet(false, true)) return
+        if (txJob?.isActive == true) {
+            txLoopRunning.set(false)
+            return
+        }
         txJob = serviceScope.launch(Dispatchers.Default) {
-            runCaptureLoop()
+            try {
+                runCaptureLoop()
+            } finally {
+                txLoopRunning.set(false)
+                txJob = null
+            }
         }
     }
 

@@ -64,6 +64,9 @@ public:
     bool StreamRogerSignal();
     bool StreamCallSignal();
     void PlayConnectedSignal();
+    void PlayConnectionErrorSignal();
+    void PlayManualConnectStartSignal();
+    void PlayManualDisconnectSignal();
     void PlayPttPressSignal();
 
     void OnIncomingOpusFrame(const std::vector<uint8_t>& opus);

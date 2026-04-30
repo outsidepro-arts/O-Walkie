@@ -19,6 +19,11 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Windows: aligned connection UX tones with Android: manual connect start `{932.33, 1174.66, 1396.91, 1864.66}`, manual disconnect reverse sequence, handshake-success connected tone `{1400Hz 40ms, pause 50ms, 1700Hz 50ms}`, plus explicit connection error tone on connect failure and link loss.
+- Windows: moved connected sound trigger from raw WS connect state to post-`welcome` handling (after negotiated parameters are applied), matching "successful handshake + init" semantics.
+- Android: added TX single-run guard in `WalkieService` (`txLoopRunning` CAS) to prevent duplicate capture/transmit coroutine starts during reconnect/race conditions under heavy PTT activity.
+- Android: updated UI connection tones: manual connect start now plays `{932.33, 1174.66, 1396.91, 1864.66}` sequence, manual disconnect/reconnect step uses reverse sequence, and successful handshake/parameter init "connected" tone is now `{1400Hz 40ms, pause 50ms, 1700Hz 50ms}`.
+- Android: connection error tone now plays for protocol incompatibility, failed connect attempts, and unexpected link loss while user-requested connection remains active.
 - Windows: switched desktop build to GUI subsystem (`WIN32`) so release executable runs without background console window.
 - Windows: legacy `windows-client` WPF project removed and committed as retired after migration to C++ desktop client.
 - Windows: finalized release-facing naming (window title `O-Walkie Desktop`, output `owalkie-desktop.exe`), added build/debug ignores in `.gitignore`, and treated desktop target as production release path.

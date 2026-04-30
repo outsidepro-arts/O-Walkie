@@ -724,9 +724,50 @@ void AudioEngine::PlayConnectedSignal() {
     {
         std::lock_guard<std::mutex> lg(mu_);
         localRate = sampleRate_;
-        AppendTone(pcm, sampleRate_, 620.0, 56, 0.22);
-        AppendTone(pcm, sampleRate_, 1330.0, 12, 0.22);
-        AppendTone(pcm, sampleRate_, 2670.0, 140, 0.22);
+        AppendTone(pcm, sampleRate_, 1400.0, 40, 0.22);
+        AppendSilence(pcm, sampleRate_, 50);
+        AppendTone(pcm, sampleRate_, 1700.0, 50, 0.22);
+    }
+    PlayOneShotHighQuality(pcm, localRate);
+}
+
+void AudioEngine::PlayConnectionErrorSignal() {
+    std::vector<int16_t> pcm;
+    int localRate = 8000;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        localRate = sampleRate_;
+        AppendTone(pcm, sampleRate_, 890.0, 192, 0.2);
+        AppendSilence(pcm, sampleRate_, 300);
+        AppendTone(pcm, sampleRate_, 890.0, 200, 0.2);
+    }
+    PlayOneShotHighQuality(pcm, localRate);
+}
+
+void AudioEngine::PlayManualConnectStartSignal() {
+    std::vector<int16_t> pcm;
+    int localRate = 8000;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        localRate = sampleRate_;
+        AppendTone(pcm, sampleRate_, 932.33, 50, 0.22);
+        AppendTone(pcm, sampleRate_, 1174.66, 50, 0.22);
+        AppendTone(pcm, sampleRate_, 1396.91, 50, 0.22);
+        AppendTone(pcm, sampleRate_, 1864.66, 70, 0.22);
+    }
+    PlayOneShotHighQuality(pcm, localRate);
+}
+
+void AudioEngine::PlayManualDisconnectSignal() {
+    std::vector<int16_t> pcm;
+    int localRate = 8000;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        localRate = sampleRate_;
+        AppendTone(pcm, sampleRate_, 1864.66, 70, 0.22);
+        AppendTone(pcm, sampleRate_, 1396.91, 50, 0.22);
+        AppendTone(pcm, sampleRate_, 1174.66, 50, 0.22);
+        AppendTone(pcm, sampleRate_, 932.33, 50, 0.22);
     }
     PlayOneShotHighQuality(pcm, localRate);
 }

@@ -242,9 +242,6 @@ MainFrame::MainFrame()
                 userWantsSession_ = false;
                 StopReconnectTimer();
             }
-            if (connected && !wasConnected) {
-                audio_->PlayConnectedSignal();
-            }
             connectBtn_->SetLabel((connected || userWantsSession_) ? "Disconnect" : "Connect");
             pttBtn_->Enable(connected);
             callBtn_->Enable(connected);
@@ -253,6 +250,7 @@ MainFrame::MainFrame()
     });
     relay_->SetWelcomeCallback([this](const WelcomeConfig& cfg) {
         audio_->Reconfigure(cfg);
+        audio_->PlayConnectedSignal();
     });
     relay_->SetOpusFrameCallback([this](const std::vector<uint8_t>& opus) {
         audio_->OnIncomingOpusFrame(opus);
@@ -627,6 +625,7 @@ bool MainFrame::TryConnectWithCurrentFields() {
 void MainFrame::OnRelayConnectionLost() {
     relay_->JoinWorkerThreads();
     connected_ = false;
+    audio_->PlayConnectionErrorSignal();
     pttBtn_->Enable(false);
     connectBtn_->SetLabel(userWantsSession_ ? "Disconnect" : "Connect");
     UpdateProfileControlsEnabled();
@@ -777,6 +776,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
 
     if (connected_ || userWantsSession_) {
         userWantsSession_ = false;
+        audio_->PlayManualDisconnectSignal();
         audio_->StopTransmit();
         relay_->Disconnect();
         connected_ = false;
@@ -790,6 +790,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
 
     SyncActiveProfileFromUi();
     userWantsSession_ = true;
+    audio_->PlayManualConnectStartSignal();
     reconnectBackoffMs_ = 1500;
     UpdateProfileControlsEnabled();
     connectBtn_->SetLabel("Disconnect");
@@ -802,6 +803,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
         userWantsSession_ = false;
         connectBtn_->SetLabel("Connect");
         UpdateProfileControlsEnabled();
+        audio_->PlayConnectionErrorSignal();
         SetStatus("Connect failed");
     }
 }

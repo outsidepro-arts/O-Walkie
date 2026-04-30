@@ -28,6 +28,16 @@ class UiSignalPlayer(context: Context) {
         playPcm(pcm, SAMPLE_RATE)
     }
 
+    fun playManualConnectStart() {
+        val pcm = generateManualConnectStartPcm()
+        playPcm(pcm, SAMPLE_RATE)
+    }
+
+    fun playManualDisconnect() {
+        val pcm = generateManualDisconnectPcm()
+        playPcm(pcm, SAMPLE_RATE)
+    }
+
     fun playConnectionError() {
         val pcm = generateConnectionErrorPcm()
         playPcm(pcm, SAMPLE_RATE)
@@ -70,9 +80,29 @@ class UiSignalPlayer(context: Context) {
 
     private fun generateConnectedPcm(): ShortArray {
         val segments = listOf(
-            Segment(620.0, 56),
-            Segment(1330.0, 12),
-            Segment(2670.0, 140),
+            Segment(1400.0, 40),
+            Segment(0.0, 50),
+            Segment(1700.0, 50),
+        )
+        return synthesizeSegments(segments, gain = 0.22)
+    }
+
+    private fun generateManualConnectStartPcm(): ShortArray {
+        val segments = listOf(
+            Segment(932.33, 50),
+            Segment(1174.66, 50),
+            Segment(1396.91, 50),
+            Segment(1864.66, 70),
+        )
+        return synthesizeSegments(segments, gain = 0.22)
+    }
+
+    private fun generateManualDisconnectPcm(): ShortArray {
+        val segments = listOf(
+            Segment(1864.66, 70),
+            Segment(1396.91, 50),
+            Segment(1174.66, 50),
+            Segment(932.33, 50),
         )
         return synthesizeSegments(segments, gain = 0.22)
     }
