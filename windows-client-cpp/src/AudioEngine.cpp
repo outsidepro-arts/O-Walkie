@@ -278,6 +278,12 @@ std::vector<int16_t> ApplyGain(const std::vector<int16_t>& in, double gain) {
     }
     return out;
 }
+
+int64_t CurrentSteadyNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 } // namespace
 
 const std::vector<SignalPattern>& AudioEngine::RogerPatterns() {
@@ -787,6 +793,31 @@ void AudioEngine::PlayPttPressSignal() {
     PlayOneShotHighQuality(pcm, localRate);
 }
 
+void AudioEngine::PlayVibrationPattern(const std::vector<int>& patternMs) {
+    if (patternMs.empty()) {
+        return;
+    }
+    std::vector<int16_t> pcm;
+    int localRate = 8000;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        localRate = sampleRate_;
+        bool toneOn = true;
+        for (int d : patternMs) {
+            if (d <= 0) {
+                continue;
+            }
+            if (toneOn) {
+                AppendTone(pcm, sampleRate_, 100.0, d, 0.18);
+            } else {
+                AppendSilence(pcm, sampleRate_, d);
+            }
+            toneOn = !toneOn;
+        }
+    }
+    PlayOneShotHighQuality(pcm, localRate);
+}
+
 void AudioEngine::QueuePcmForPlaybackLocked(const std::vector<int16_t>& pcm) {
     if (pcm.empty()) {
         return;
@@ -910,8 +941,25 @@ void AudioEngine::DrainCaptureFifoOpus() {
 }
 
 void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
+    if (opus.empty()) {
+        return;
+    }
+    const int64_t now = CurrentSteadyNs();
+    const int64_t prevInbound = lastInboundNs_.exchange(now);
+    if (transmitting_.load() || signalStreaming_.load()) {
+        const bool isNewBurst = prevInbound == 0 || (now - prevInbound) > 600'000'000LL;
+        const int64_t lastBuzz = lastTxCollisionToneNs_.load();
+        const bool cooldownOk = lastBuzz == 0 || (now - lastBuzz) > 1'500'000'000LL;
+        if (isNewBurst && cooldownOk) {
+            lastTxCollisionToneNs_.store(now);
+            // Android-like "vibration" pattern emulation for desktop.
+            PlayVibrationPattern({35, 55, 35, 55, 35});
+        }
+        return;
+    }
+
     std::lock_guard<std::mutex> lg(mu_);
-    if (!decoder_ || opus.empty() || transmitting_.load() || signalStreaming_.load() || IsRxHoldoffActive()) {
+    if (!decoder_ || IsRxHoldoffActive()) {
         return;
     }
 

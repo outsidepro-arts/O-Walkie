@@ -19,6 +19,10 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Windows: added settings toggle for microphone level progress bar (`show_mic_level_indicator` in `audio.json`); default is `off`, hidden indicator does not update and resets to zero.
+- Windows: global PTT key assignment now uses a dedicated modal capture dialog that supports modifier combos (`Ctrl`/`Alt`/`Shift` + key); combo display/persistence added via `ptt_hotkey_mods`, `Clear` behavior preserved.
+- Windows: connection management UI terminology and form were aligned closer to Android flow: `Profiles` renamed to `Connections`, inline `Connection name` field added to the main form, and save/new/delete actions remain directly accessible.
+- Windows: Android-style TX collision "vibration" parity added as desktop tone pattern emulation (`100 Hz` pulses with Android timing pattern `35/55/35/55/35 ms`) triggered on incoming-audio-while-TX burst detection with cooldown.
 - Windows: aligned connection UX tones with Android: manual connect start `{932.33, 1174.66, 1396.91, 1864.66}`, manual disconnect reverse sequence, handshake-success connected tone `{1400Hz 40ms, pause 50ms, 1700Hz 50ms}`, plus explicit connection error tone on connect failure and link loss.
 - Windows: moved connected sound trigger from raw WS connect state to post-`welcome` handling (after negotiated parameters are applied), matching "successful handshake + init" semantics.
 - Android: added TX single-run guard in `WalkieService` (`txLoopRunning` CAS) to prevent duplicate capture/transmit coroutine starts during reconnect/race conditions under heavy PTT activity.

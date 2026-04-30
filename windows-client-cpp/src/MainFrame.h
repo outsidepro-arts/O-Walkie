@@ -71,6 +71,7 @@ private:
     void PopulateAudioDeviceChoices();
     void ApplyAudioSettingsToEngine();
     void OnSettingsClicked(wxCommandEvent& event);
+    void UpdateMicLevelIndicatorVisibility();
 
     void ScheduleReconnect();
     void StopReconnectTimer();
@@ -92,6 +93,7 @@ private:
     wxButton* deleteProfileBtn_ = nullptr;
 
     wxTextCtrl* hostCtrl_ = nullptr;
+    wxTextCtrl* connectionNameCtrl_ = nullptr;
     wxTextCtrl* wsPortCtrl_ = nullptr;
     wxTextCtrl* udpPortCtrl_ = nullptr;
     wxTextCtrl* channelCtrl_ = nullptr;
@@ -114,6 +116,8 @@ private:
     std::string selectedRogerPatternId_ = "variant_1";
     std::string selectedCallPatternId_ = "call_variant_1";
     int globalPttVKey_ = 0;
+    int globalPttMods_ = 0;
+    bool showMicLevelIndicator_ = false;
     bool globalPttPressed_ = false;
 #ifdef _WIN32
     void* globalPttHook_ = nullptr;

@@ -82,6 +82,7 @@ private:
     void QueuePcmForPlaybackLocked(const std::vector<int16_t>& pcm);
     bool IsRxHoldoffActive() const;
     bool StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal);
+    void PlayVibrationPattern(const std::vector<int>& patternMs);
     void RecreateCodecUnlocked();
     int FrameSamples() const;
     int ResolveInputDeviceIndex() const;
@@ -130,6 +131,8 @@ private:
     std::atomic<bool> transmitting_{false};
     std::atomic<bool> signalStreaming_{false};
     std::atomic<int64_t> rxResumeAtNs_{0};
+    std::atomic<int64_t> lastInboundNs_{0};
+    std::atomic<int64_t> lastTxCollisionToneNs_{0};
 
     EncodedFrameCallback onEncodedFrame_;
     StatusCallback onStatus_;
