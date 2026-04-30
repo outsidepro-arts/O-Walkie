@@ -17,6 +17,8 @@ alwaysApply: true
 - Accessibility / background hardware PTT removed from Android for Play Protect compatibility; foreground PTT preserved.
 
 ## Recent Key Changes
+- Android: fixed crash on network handoff (`StackOverflowError`) by breaking recursive recovery loop between `recreateUdpSocket()` and `sendUdpKeepalivePacket()`; keepalive send from recreate path now skips nested recovery call.
+- Windows: `windows-client-cpp` `RelayClient::Connect` — UDP remote endpoint берётся из `tcp::socket::remote_endpoint()` (тот же адрес, что и WS), сокет UDP открывается v4/v6 в соответствии; убран `make_address(host)` на этапе UDP (исправление WSAEINVAL для имён вроде `localhost`).
 - Android: fixed potential Activity resume ANR by moving UDP socket timeout policy update (`soTimeout`) off the service main thread to `Dispatchers.IO`.
 - Windows: C++ wxWidgets client persists last connection fields to `%AppData%`-style user data dir as `connection.json` (host/ports/channel/repeater); app/vendor display names set for stable config path.
 - Windows: `windows-client-cpp` — miniaudio вместо PortAudio; выбор устройств ввода/вывода, сохранение индексов в `connection.json`; POST_BUILD кладёт exe и UCRT64 DLL в `build/dist/` (`scripts/bundle-ucrt64-deps.sh`, кэш `OWALKIE_MSYS_ROOT`).

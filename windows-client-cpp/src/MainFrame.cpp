@@ -413,13 +413,9 @@ bool MainFrame::TryConnectWithCurrentFields() {
         SetStatus("Invalid ports");
         return false;
     }
-    return relay_->Connect(
-        hostCtrl_->GetValue().ToStdString(),
-        static_cast<int>(wsPort),
-        static_cast<int>(udpPort),
-        channelCtrl_->GetValue().ToStdString(),
-        repeaterCheck_->GetValue()
-    );
+    const std::string hostU8 = hostCtrl_->GetValue().utf8_string();
+    const std::string chU8 = channelCtrl_->GetValue().utf8_string();
+    return relay_->Connect(hostU8, static_cast<int>(wsPort), static_cast<int>(udpPort), chU8, repeaterCheck_->GetValue());
 }
 
 void MainFrame::OnRelayConnectionLost() {

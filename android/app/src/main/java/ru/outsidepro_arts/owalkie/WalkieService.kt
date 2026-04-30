@@ -776,7 +776,7 @@ class WalkieService : Service() {
         sendUdpHello()
         enterUdpKeepaliveRecoveryWindow()
         // Also punch immediately to reduce "no UDP until next TX" on reconnects.
-        sendUdpKeepalivePacket()
+        sendUdpKeepalivePacket(allowRecovery = false)
     }
 
     private fun ensurePlaybackLoop() {
@@ -1470,7 +1470,7 @@ class WalkieService : Service() {
             .onFailure { recreateUdpSocket() }
     }
 
-    private fun sendUdpKeepalivePacket() {
+    private fun sendUdpKeepalivePacket(allowRecovery: Boolean = true) {
         val socket = udpSocket ?: run {
             ensureUdpSocket()
             udpSocket ?: return
@@ -1491,7 +1491,11 @@ class WalkieService : Service() {
         val packet = DatagramPacket(payload, payload.size, address, udpPort)
         runCatching { socket.send(packet) }
             .onSuccess { lastOutboundUdpAtNs.set(System.nanoTime()) }
-            .onFailure { recreateUdpSocket() }
+            .onFailure {
+                if (allowRecovery) {
+                    recreateUdpSocket()
+                }
+            }
     }
 
     private fun startUdpKeepaliveLoop() {

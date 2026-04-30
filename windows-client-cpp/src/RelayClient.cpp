@@ -89,9 +89,16 @@ bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, cons
         ws_.emplace(ioc_);
         boost::asio::connect(ws_->next_layer(), results.begin(), results.end());
         ws_->handshake(host_, "/ws");
-
-        udp_.emplace(ioc_, udp::endpoint(udp::v4(), 0));
-        udpRemote_ = udp::endpoint(boost::asio::ip::make_address(host_), udpPort_);
+        {
+            const tcp::endpoint tcpRemote = ws_->next_layer().remote_endpoint();
+            const boost::asio::ip::address peerAddr = tcpRemote.address();
+            if (peerAddr.is_v4()) {
+                udp_.emplace(ioc_, udp::endpoint(udp::v4(), 0));
+            } else {
+                udp_.emplace(ioc_, udp::endpoint(udp::v6(), 0));
+            }
+            udpRemote_ = udp::endpoint(peerAddr, static_cast<std::uint16_t>(udpPort_));
+        }
 
         connected_.store(true);
         autoReconnectDesired_.store(true);
