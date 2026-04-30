@@ -1667,8 +1667,12 @@ class WalkieService : Service() {
         // Apply new signal/keepalive cadence immediately on focus transitions.
         lastSignalRefreshAtNs.set(0L)
         enforceAudioRoutePolicy()
-        synchronized(udpSocketLock) {
-            udpSocket?.let { applyUdpReceiveTimeoutForActivity(it) }
+        // Never touch DatagramSocket timeout from main thread: if receiver thread is blocked in
+        // a long background receive(), this can stall Activity resume and trigger ANR.
+        serviceScope.launch(Dispatchers.IO) {
+            synchronized(udpSocketLock) {
+                udpSocket?.let { applyUdpReceiveTimeoutForActivity(it) }
+            }
         }
         if (desiredConnection.get() && wsConnected.get() && sessionId.get() != 0L) {
             stopUdpKeepaliveLoop()
