@@ -3,12 +3,12 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
-typedef void PaStream;
+#include "miniaudio.h"
+
 struct OpusEncoder;
 struct OpusDecoder;
 struct WelcomeConfig;
@@ -48,16 +48,33 @@ public:
     void SetLevelCallback(LevelCallback cb) { onLevel_ = std::move(cb); }
 
 private:
-    void RecreateCodec();
+    void RecreateCodecUnlocked();
     int FrameSamples() const;
-    int ResolveInputDevice() const;
-    int ResolveOutputDevice() const;
+    int ResolveInputDeviceIndex() const;
+    int ResolveOutputDeviceIndex() const;
     void CloseOutputStreamLocked();
+    void CloseCaptureDeviceLocked();
+    void EnsurePlaybackDeviceLocked();
+
+    static void CaptureCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
+    static void PlaybackCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
+    void OnCaptureFrames(const void* pInput, ma_uint32 frameCount);
+    void DrainCaptureFifoOpus();
 
 private:
     mutable std::mutex mu_;
-    PaStream* inputStream_ = nullptr;
-    PaStream* outputStream_ = nullptr;
+    ma_context context_{};
+    bool contextReady_ = false;
+
+    ma_device captureDev_{};
+    bool captureActive_ = false;
+
+    ma_device playbackDev_{};
+    bool playbackActive_ = false;
+
+    ma_pcm_rb playbackRb_{};
+    bool playbackRbReady_ = false;
+
     OpusEncoder* encoder_ = nullptr;
     OpusDecoder* decoder_ = nullptr;
 
@@ -70,6 +87,9 @@ private:
 
     int preferredInputDevice_ = -1;
     int preferredOutputDevice_ = -1;
+
+    std::vector<int16_t> captureFifo_;
+    std::vector<uint8_t> opusScratch_;
 
     std::atomic<bool> transmitting_{false};
 

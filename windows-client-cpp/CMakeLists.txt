@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(MINIAUDIO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio")
+
 execute_process(
     COMMAND bash -lc "export PATH=/ucrt64/bin:/usr/bin:$PATH; wx-config --cxxflags"
     OUTPUT_VARIABLE WX_CXXFLAGS
@@ -22,7 +24,6 @@ find_package(Boost REQUIRED COMPONENTS system)
 find_package(nlohmann_json REQUIRED)
 find_package(PkgConfig REQUIRED)
 
-pkg_check_modules(PORTAUDIO REQUIRED IMPORTED_TARGET portaudio-2.0)
 pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
 
 add_executable(owalkie-desktop-cpp
@@ -30,16 +31,20 @@ add_executable(owalkie-desktop-cpp
     src/MainFrame.cpp
     src/RelayClient.cpp
     src/AudioEngine.cpp
+    src/miniaudio_impl.cpp
 )
 
-target_include_directories(owalkie-desktop-cpp PRIVATE src)
+target_include_directories(owalkie-desktop-cpp PRIVATE
+    src
+    "${MINIAUDIO_DIR}"
+)
+
 target_compile_options(owalkie-desktop-cpp PRIVATE ${WX_CXXFLAGS_LIST})
 
 target_link_libraries(owalkie-desktop-cpp PRIVATE
     ${WX_LIBS_LIST}
     Boost::system
     nlohmann_json::nlohmann_json
-    PkgConfig::PORTAUDIO
     PkgConfig::OPUS
     ws2_32
     iphlpapi
@@ -47,4 +52,25 @@ target_link_libraries(owalkie-desktop-cpp PRIVATE
 
 if(MINGW)
     target_compile_definitions(owalkie-desktop-cpp PRIVATE _WIN32_WINNT=0x0601)
+    target_link_libraries(owalkie-desktop-cpp PRIVATE
+        winmm
+        ole32
+        uuid
+        avrt
+    )
+endif()
+
+set(OWALKIE_MSYS_ROOT "C:/dev/msys64" CACHE PATH "MSYS2 install root (for dist/ DLL bundling)")
+if(WIN32 AND MINGW)
+    set(_bundle_sh "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-ucrt64-deps.sh")
+    add_custom_command(TARGET owalkie-desktop-cpp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/dist"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:owalkie-desktop-cpp>"
+            "${CMAKE_BINARY_DIR}/dist/"
+        COMMAND "${OWALKIE_MSYS_ROOT}/usr/bin/bash.exe" "${_bundle_sh}"
+            "$<TARGET_FILE:owalkie-desktop-cpp>"
+            "${CMAKE_BINARY_DIR}/dist"
+        VERBATIM
+    )
 endif()
