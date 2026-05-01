@@ -114,6 +114,9 @@ bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, cons
     channel_ = channel.empty() ? "global" : channel;
     repeater_ = repeater;
     stopRequested_.store(false);
+    // Any outbound Connect (UI or reconnect timer) means we want auto-retry after drops
+    // until explicit Disconnect(). Welcome protocol errors clear this flag again.
+    autoReconnectDesired_.store(true);
     seq_.store(0);
     cfg_ = WelcomeConfig{};
     connectionLostPosted_.store(false);
@@ -135,7 +138,6 @@ bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, cons
         }
 
         connected_.store(true);
-        autoReconnectDesired_.store(true);
         if (onConnected_) {
             onConnected_(true);
         }

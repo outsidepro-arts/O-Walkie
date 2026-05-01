@@ -709,7 +709,8 @@ void MainFrame::StopReconnectTimer() {
 }
 
 void MainFrame::ScheduleReconnect() {
-    if (!userWantsSession_ || !relay_->AutoReconnectDesired()) {
+    // userWantsSession_ is the UI source of truth; relay may lag on atomic flags during teardown.
+    if (!userWantsSession_) {
         return;
     }
     SetStatus(wxString::Format("Reconnecting in %d ms", reconnectBackoffMs_));
@@ -717,7 +718,7 @@ void MainFrame::ScheduleReconnect() {
 }
 
 void MainFrame::OnReconnectTimer(wxTimerEvent&) {
-    if (!userWantsSession_ || !relay_->AutoReconnectDesired()) {
+    if (!userWantsSession_) {
         return;
     }
     relay_->JoinWorkerThreads();
@@ -757,8 +758,7 @@ void MainFrame::OnRelayConnectionLost() {
     connectBtn_->SetLabel(userWantsSession_ ? "Disconnect" : "Connect");
     UpdateProfileControlsEnabled();
 
-    if (!userWantsSession_ || !relay_->AutoReconnectDesired()) {
-        userWantsSession_ = false;
+    if (!userWantsSession_) {
         SetStatus("Disconnected");
         return;
     }
