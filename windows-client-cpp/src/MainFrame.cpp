@@ -330,8 +330,10 @@ MainFrame::MainFrame()
     });
     relay_->SetConnectedCallback([this](bool connected) {
         this->CallAfter([this, connected] {
-            const bool wasConnected = connected_;
             connected_ = connected;
+            if (connected) {
+                reconnectBackoffMs_ = 1500;
+            }
             if (!connected && !relay_->AutoReconnectDesired()) {
                 userWantsSession_ = false;
                 StopReconnectTimer();
@@ -745,10 +747,13 @@ bool MainFrame::TryConnectWithCurrentFields() {
 }
 
 void MainFrame::OnRelayConnectionLost() {
+    audio_->StopTransmit();
+    globalPttPressed_ = false;
     relay_->JoinWorkerThreads();
     connected_ = false;
     audio_->PlayConnectionErrorSignal();
     pttBtn_->Enable(false);
+    callBtn_->Enable(false);
     connectBtn_->SetLabel(userWantsSession_ ? "Disconnect" : "Connect");
     UpdateProfileControlsEnabled();
 
@@ -757,7 +762,7 @@ void MainFrame::OnRelayConnectionLost() {
         SetStatus("Disconnected");
         return;
     }
-    SetStatus("Connection lost");
+    SetStatus("Connection lost — retrying");
     ScheduleReconnect();
 }
 

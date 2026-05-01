@@ -97,7 +97,6 @@ void RelayClient::JoinWorkerThreads() {
     ws_.reset();
     udp_.reset();
     connected_.store(false);
-    connectionLostPosted_.store(false);
     lastUdpKeepaliveSentNs_.store(0);
     udpKeepalivePendingSinceNs_.store(0);
 }
@@ -149,12 +148,13 @@ bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, cons
         keepaliveThread_ = std::thread([this] { KeepaliveLoop(); });
         return true;
     } catch (const std::exception& ex) {
-        autoReconnectDesired_.store(false);
         if (onStatus_) {
             onStatus_(std::string("Connect failed: ") + ex.what());
         }
         CloseSocketsUnblockReaders();
         JoinWorkerThreads();
+        // Keep autoReconnectDesired_ unchanged so MainFrame retry timer keeps backing off
+        // until the server is reachable again (only Disconnect clears the flag).
         return false;
     }
 }
@@ -165,6 +165,7 @@ void RelayClient::Disconnect() {
     connected_.store(false);
     CloseSocketsUnblockReaders();
     JoinWorkerThreads();
+    connectionLostPosted_.store(false);
     if (onConnected_) {
         onConnected_(false);
     }
@@ -379,6 +380,9 @@ void RelayClient::WsReadLoop() {
                 if (onStatus_) {
                     onStatus_(std::string("WS ended: ") + ec.message());
                 }
+                if (onConnected_) {
+                    onConnected_(false);
+                }
                 PostConnectionLostOnce();
             }
             return;
@@ -403,6 +407,9 @@ void RelayClient::UdpReadLoop() {
                 CloseSocketsUnblockReaders();
                 if (onStatus_) {
                     onStatus_(std::string("UDP ended: ") + ec.message());
+                }
+                if (onConnected_) {
+                    onConnected_(false);
                 }
                 PostConnectionLostOnce();
             }
@@ -451,6 +458,9 @@ void RelayClient::KeepaliveLoop() {
                 connected_.store(false);
                 CloseSocketsUnblockReaders();
                 if (!stopRequested_.load()) {
+                    if (onConnected_) {
+                        onConnected_(false);
+                    }
                     PostConnectionLostOnce();
                 }
                 return;
