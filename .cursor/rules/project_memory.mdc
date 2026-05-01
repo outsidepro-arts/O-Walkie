@@ -19,6 +19,10 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Backend: hardened channel mixer runtime against UDP/audio generation crashes — added panic recovery with stack trace, emergency mixer loop restart with backoff, and codec/repeater state reinitialization after failure so relay process stays alive under runtime faults.
+- Backend: mixer emergency restarts now expose a lifetime counter per channel and log `ALERT` when ≥5 restarts occur within 1 minute (throttled to once per 30s per channel) for operator visibility.
+- Backend: UDP keepalive punch now triggers unicast resend of the last mixed frame to that client (after ACK), with a 500ms catch-up age window so joiners mid-transmission get audio immediately even when `udp_hello` races or NAT path differs from WS peer IP.
+- Android + Windows: keepalive stage-1 tuning for faster idle recovery — reduced UDP keepalive lost-timeout and slightly faster RTX cadence to avoid long post-silence recovery windows (~30s symptom).
 - Protocol/transport: added explicit UDP keepalive ACK (`signal=254, seq=0, empty opus`) in backend relay for client keepalive punches (`signal=255, seq=0`), enabling ACK-aware client keepalive state machine.
 - Android: keepalive loop now uses TeamTalk-like interval/RTX/lost-timeout behavior (`interval`, `RTX`, `connection-lost`) with pending-ACK tracking; incoming UDP keepalive ACK clears pending state and prevents idle pinhole decay.
 - Android: recovery stabilization pass in `WalkieService` — increased foreground UDP recv timeout (`300ms -> 1000ms`), added timeout-burst debounce before UDP recovery, and serialized WS reconnect + UDP socket recreate through shared recovery mutex to avoid overlapping network recovery coroutines.

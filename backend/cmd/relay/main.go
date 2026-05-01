@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,14 @@ const (
 	scanActivityWindow = 10 * time.Second
 	udpKeepaliveSignal = 255
 	udpKeepaliveAck    = 254
+
+	// Mixer emergency-restart observability (panic recovery path).
+	mixerRestartAlertWindow    = time.Minute
+	mixerRestartAlertThreshold = 5
+	mixerRestartAlertThrottle  = 30 * time.Second
+	// Unicast catch-up: last mixed frame may be older than one packet when a client
+	// registers UDP (punch / udp_hello); too short a window skips resend during live TX.
+	mixerCatchupFrameMaxAge = 500 * time.Millisecond
 )
 
 var (
@@ -428,6 +437,11 @@ func (h *relayHub) routePacket(pkt *audioPacket) {
 		// Empty-opus datagrams are treated as UDP keepalive punches.
 		if pkt.seq == 0 && pkt.signalStrength == udpKeepaliveSignal {
 			h.sendUDPKeepaliveAck(pkt.sessionID, pkt.srcAddr)
+			// Punch establishes/refreshes c.srcAddr (NAT). Resend last mixed frame so
+			// joiners mid-transmission hear immediately; udp_hello alone can race or use wrong path.
+			if ch := normalizeChannelName(c.getChannel()); ch != "" {
+				h.getOrCreateChannel(ch).sendLatestFrameToParticipant(pkt.sessionID)
+			}
 		}
 		return
 	}
@@ -534,6 +548,11 @@ type channelMixer struct {
 	txStartedAt         map[uint32]time.Time
 	txForceStopped      map[uint32]bool
 	txLastStopNoticeAt  map[uint32]time.Time
+
+	mixerEmergencyRestarts atomic.Uint64
+	mixerRestartMu         sync.Mutex
+	mixerRestartWindow     []time.Time
+	mixerRestartLastAlert  time.Time
 
 	lastFrameMu      sync.RWMutex
 	lastFramePayload []byte
@@ -968,7 +987,7 @@ func (m *channelMixer) latestFramePayload(maxAge time.Duration) []byte {
 }
 
 func (m *channelMixer) sendLatestFrameToParticipant(sessionID uint32) {
-	payload := m.latestFramePayload(2 * packetDur)
+	payload := m.latestFramePayload(mixerCatchupFrameMaxAge)
 	if len(payload) == 0 {
 		return
 	}
@@ -1016,6 +1035,55 @@ func (m *channelMixer) markEOF(sessionID uint32) {
 }
 
 func (m *channelMixer) run() {
+	restartDelay := 150 * time.Millisecond
+	for {
+		if !m.runLoop() {
+			return
+		}
+		total := m.mixerEmergencyRestarts.Add(1)
+		m.recordMixerRestartAlert(total)
+		m.resetAfterLoopFailure()
+		log.Printf("channel %s mixer loop emergency restart #%d in %s", m.name, total, restartDelay)
+		time.Sleep(restartDelay)
+		if restartDelay < 2*time.Second {
+			restartDelay *= 2
+		}
+	}
+}
+
+func (m *channelMixer) recordMixerRestartAlert(lifetimeTotal uint64) {
+	now := time.Now()
+	cutoff := now.Add(-mixerRestartAlertWindow)
+
+	m.mixerRestartMu.Lock()
+	defer m.mixerRestartMu.Unlock()
+
+	idx := 0
+	for idx < len(m.mixerRestartWindow) && m.mixerRestartWindow[idx].Before(cutoff) {
+		idx++
+	}
+	m.mixerRestartWindow = append(m.mixerRestartWindow[idx:], now)
+
+	inWindow := len(m.mixerRestartWindow)
+	if inWindow < mixerRestartAlertThreshold {
+		return
+	}
+	if now.Sub(m.mixerRestartLastAlert) < mixerRestartAlertThrottle {
+		return
+	}
+	m.mixerRestartLastAlert = now
+	log.Printf("ALERT channel %q mixer: %d emergency restarts in last %v (lifetime total %d)",
+		m.name, inWindow, mixerRestartAlertWindow, lifetimeTotal)
+}
+
+func (m *channelMixer) runLoop() (panicked bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			panicked = true
+			log.Printf("channel %s mixer panic recovered: %v\n%s", m.name, r, string(debug.Stack()))
+		}
+	}()
+
 	ticker := time.NewTicker(packetDur)
 	defer ticker.Stop()
 
@@ -1075,6 +1143,29 @@ func (m *channelMixer) run() {
 	}
 }
 
+func (m *channelMixer) resetAfterLoopFailure() {
+	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, resolveOpusApplication(configuredOpus.Application))
+	if err != nil {
+		log.Printf("channel %s encoder re-init failed after panic: %v", m.name, err)
+		return
+	}
+	applyOpusEncoderConfig(enc)
+	m.encoder = enc
+
+	m.decodersMu.Lock()
+	m.decoders = make(map[uint32]*opus.Decoder)
+	m.decodersMu.Unlock()
+
+	m.repeaterMu.Lock()
+	m.repeaterState = make(map[uint32]*repeaterSession)
+	m.repeaterMu.Unlock()
+
+	m.lastFrameMu.Lock()
+	m.lastFramePayload = nil
+	m.lastFrameAt = time.Time{}
+	m.lastFrameMu.Unlock()
+}
+
 func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool, now time.Time) {
 	m.participantsMu.RLock()
 	participants := make(map[uint32]struct{}, len(m.participants))
@@ -1132,13 +1223,19 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		)
 		m.decodersMu.Lock()
 		dec = m.decoders[sessionID]
+		m.decodersMu.Unlock()
 		if dec == nil {
 			dec, createErr = opus.NewDecoder(configuredSampleRate, audioChannels)
 			if createErr == nil {
-				m.decoders[sessionID] = dec
+				m.decodersMu.Lock()
+				if existing := m.decoders[sessionID]; existing != nil {
+					dec = existing
+				} else {
+					m.decoders[sessionID] = dec
+				}
+				m.decodersMu.Unlock()
 			}
 		}
-		m.decodersMu.Unlock()
 		if createErr != nil {
 			log.Printf("decoder create failed for %d: %v", sessionID, createErr)
 			continue
