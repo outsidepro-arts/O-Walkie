@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,6 +42,7 @@ private:
     void BuildUi();
     void BindUi();
     void SetStatus(const wxString& status);
+    wxString HumanizeStatus(const wxString& status) const;
     void OnConnectClicked(wxCommandEvent& event);
     void OnPttDown(wxMouseEvent& event);
     void OnPttUp(wxMouseEvent& event);
@@ -80,6 +82,7 @@ private:
     void ScheduleReconnect();
     void StopReconnectTimer();
     bool TryConnectWithCurrentFields();
+    void StartReconnectAttemptAsync();
     void BeginPttTx();
     void EndPttTx();
 
@@ -106,7 +109,6 @@ private:
     wxButton* connectBtn_ = nullptr;
     wxButton* pttBtn_ = nullptr;
     wxButton* callBtn_ = nullptr;
-    wxStaticText* statusText_ = nullptr;
     wxGauge* signalGauge_ = nullptr;
     wxSlider* rxVolumeSlider_ = nullptr;
     wxStaticText* rxVolumeValueText_ = nullptr;
@@ -135,4 +137,7 @@ private:
 
     wxTimer reconnectTimer_;
     int reconnectBackoffMs_ = 1500;
+    std::atomic<bool> reconnectAttemptInFlight_{false};
+    int reconnectAttemptSeq_ = 0;
+    std::atomic<uint64_t> reconnectScheduleTicket_{0};
 };

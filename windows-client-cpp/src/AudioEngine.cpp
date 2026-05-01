@@ -52,7 +52,8 @@ void AudioEngine::PlaybackCallback(ma_device* pDevice, void* pOutput, const void
 
 namespace {
 constexpr int kRogerTailMs = 40;
-constexpr int kUiSignalPlaybackRate = 44100;
+constexpr int kUiSignalPlaybackRate = 48000;
+constexpr int kLocalSignalSynthesisRate = 48000;
 constexpr int kRxVolumeMinPercent = 0;
 constexpr int kRxVolumeMaxPercent = 200;
 constexpr int kRxVolumeDefaultPercent = 100;
@@ -675,27 +676,28 @@ bool AudioEngine::StreamRogerSignal() {
     }
     std::vector<int16_t> remotePcm;
     std::vector<int16_t> localPcm;
-    int localRate = 8000;
+    int streamRate = 8000;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        localRate = sampleRate_;
+        streamRate = sampleRate_;
         const SignalPattern* pattern = FindRogerPatternLocked();
         if (!pattern || pattern->points.empty()) {
             signalStreaming_.store(false);
             return false;
         }
-        remotePcm = GenerateSignalPcm(sampleRate_, *pattern);
-        std::vector<int16_t> pttRelease = LoadSoundFromExeDir("selfttdown_002", sampleRate_);
+        const auto localRoger = GenerateSignalPcm(kLocalSignalSynthesisRate, *pattern);
+        remotePcm = ResampleLinear(localRoger, kLocalSignalSynthesisRate, streamRate);
+        std::vector<int16_t> pttRelease = LoadSoundFromExeDir("selfttdown_002", kLocalSignalSynthesisRate);
         if (pttRelease.empty()) {
-            AppendTone(pttRelease, sampleRate_, 760.0, 28, 0.18);
-            AppendSilence(pttRelease, sampleRate_, 18);
+            AppendTone(pttRelease, kLocalSignalSynthesisRate, 760.0, 28, 0.18);
+            AppendSilence(pttRelease, kLocalSignalSynthesisRate, 18);
         }
-        localPcm.reserve(pttRelease.size() + remotePcm.size());
+        localPcm.reserve(pttRelease.size() + localRoger.size());
         localPcm.insert(localPcm.end(), pttRelease.begin(), pttRelease.end());
-        auto rogerLocal = ApplyGain(remotePcm, 0.9);
+        auto rogerLocal = ApplyGain(localRoger, 0.9);
         localPcm.insert(localPcm.end(), rogerLocal.begin(), rogerLocal.end());
     }
-    PlayOneShotHighQuality(localPcm, localRate);
+    PlayOneShotHighQuality(localPcm, kLocalSignalSynthesisRate);
     const bool ok = StreamGeneratedSignal(remotePcm);
     ScheduleRxResumeHoldoff();
     signalStreaming_.store(false);
@@ -708,19 +710,20 @@ bool AudioEngine::StreamCallSignal() {
     }
     std::vector<int16_t> remotePcm;
     std::vector<int16_t> localPcm;
-    int localRate = 8000;
+    int streamRate = 8000;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        localRate = sampleRate_;
+        streamRate = sampleRate_;
         const SignalPattern* pattern = FindCallPatternLocked();
         if (!pattern || pattern->points.empty()) {
             signalStreaming_.store(false);
             return false;
         }
-        remotePcm = GenerateSignalPcm(sampleRate_, *pattern);
-        localPcm = ApplyGain(remotePcm, 0.55);
+        localPcm = GenerateSignalPcm(kLocalSignalSynthesisRate, *pattern);
+        remotePcm = ResampleLinear(localPcm, kLocalSignalSynthesisRate, streamRate);
+        localPcm = ApplyGain(localPcm, 0.55);
     }
-    PlayOneShotHighQuality(localPcm, localRate);
+    PlayOneShotHighQuality(localPcm, kLocalSignalSynthesisRate);
     const bool ok = StreamGeneratedSignal(remotePcm);
     ScheduleRxResumeHoldoff();
     signalStreaming_.store(false);
@@ -729,71 +732,61 @@ bool AudioEngine::StreamCallSignal() {
 
 void AudioEngine::PlayConnectedSignal() {
     std::vector<int16_t> pcm;
-    int localRate = 8000;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        localRate = sampleRate_;
-        AppendTone(pcm, sampleRate_, 1400.0, 40, 0.22);
-        AppendSilence(pcm, sampleRate_, 50);
-        AppendTone(pcm, sampleRate_, 1700.0, 50, 0.22);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 1400.0, 40, 0.22);
+        AppendSilence(pcm, kLocalSignalSynthesisRate, 50);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 1700.0, 50, 0.22);
     }
-    PlayOneShotHighQuality(pcm, localRate);
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
 }
 
 void AudioEngine::PlayConnectionErrorSignal() {
     std::vector<int16_t> pcm;
-    int localRate = 8000;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        localRate = sampleRate_;
-        AppendTone(pcm, sampleRate_, 890.0, 192, 0.2);
-        AppendSilence(pcm, sampleRate_, 300);
-        AppendTone(pcm, sampleRate_, 890.0, 200, 0.2);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 890.0, 192, 0.2);
+        AppendSilence(pcm, kLocalSignalSynthesisRate, 300);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 890.0, 200, 0.2);
     }
-    PlayOneShotHighQuality(pcm, localRate);
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
 }
 
 void AudioEngine::PlayManualConnectStartSignal() {
     std::vector<int16_t> pcm;
-    int localRate = 8000;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        localRate = sampleRate_;
-        AppendTone(pcm, sampleRate_, 932.33, 50, 0.22);
-        AppendTone(pcm, sampleRate_, 1174.66, 50, 0.22);
-        AppendTone(pcm, sampleRate_, 1396.91, 50, 0.22);
-        AppendTone(pcm, sampleRate_, 1864.66, 70, 0.22);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 932.33, 50, 0.22);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 1174.66, 50, 0.22);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 1396.91, 50, 0.22);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 1864.66, 70, 0.22);
     }
-    PlayOneShotHighQuality(pcm, localRate);
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
 }
 
 void AudioEngine::PlayManualDisconnectSignal() {
     std::vector<int16_t> pcm;
-    int localRate = 8000;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        localRate = sampleRate_;
-        AppendTone(pcm, sampleRate_, 1864.66, 70, 0.22);
-        AppendTone(pcm, sampleRate_, 1396.91, 50, 0.22);
-        AppendTone(pcm, sampleRate_, 1174.66, 50, 0.22);
-        AppendTone(pcm, sampleRate_, 932.33, 50, 0.22);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 1864.66, 70, 0.22);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 1396.91, 50, 0.22);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 1174.66, 50, 0.22);
+        AppendTone(pcm, kLocalSignalSynthesisRate, 932.33, 50, 0.22);
     }
-    PlayOneShotHighQuality(pcm, localRate);
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
 }
 
 void AudioEngine::PlayPttPressSignal() {
     std::vector<int16_t> pcm;
-    int localRate = 8000;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        localRate = sampleRate_;
-        pcm = LoadSoundFromExeDir("selfpttup_002", sampleRate_);
+        pcm = LoadSoundFromExeDir("selfpttup_002", kLocalSignalSynthesisRate);
         if (pcm.empty()) {
-            AppendTone(pcm, sampleRate_, 1260.0, 24, 0.18);
-            AppendSilence(pcm, sampleRate_, 10);
+            AppendTone(pcm, kLocalSignalSynthesisRate, 1260.0, 24, 0.18);
+            AppendSilence(pcm, kLocalSignalSynthesisRate, 10);
         }
     }
-    PlayOneShotHighQuality(pcm, localRate);
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
 }
 
 void AudioEngine::PlayVibrationPattern(const std::vector<int>& patternMs) {
@@ -801,24 +794,22 @@ void AudioEngine::PlayVibrationPattern(const std::vector<int>& patternMs) {
         return;
     }
     std::vector<int16_t> pcm;
-    int localRate = 8000;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        localRate = sampleRate_;
         bool toneOn = true;
         for (int d : patternMs) {
             if (d <= 0) {
                 continue;
             }
             if (toneOn) {
-                AppendTone(pcm, sampleRate_, 100.0, d, 0.18);
+                AppendTone(pcm, kLocalSignalSynthesisRate, 100.0, d, 0.18);
             } else {
-                AppendSilence(pcm, sampleRate_, d);
+                AppendSilence(pcm, kLocalSignalSynthesisRate, d);
             }
             toneOn = !toneOn;
         }
     }
-    PlayOneShotHighQuality(pcm, localRate);
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
 }
 
 void AudioEngine::QueuePcmForPlaybackLocked(const std::vector<int16_t>& pcm) {

@@ -106,6 +106,9 @@ bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, cons
         return true;
     }
 
+    // Force-unblock stale reader threads from previous broken session before join.
+    // Otherwise JoinWorkerThreads() can hang and prevent reconnect attempts.
+    CloseSocketsUnblockReaders();
     JoinWorkerThreads();
 
     host_ = host;

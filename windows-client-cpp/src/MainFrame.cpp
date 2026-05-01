@@ -1,8 +1,10 @@
 #include "MainFrame.h"
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <string>
+#include <thread>
 
 #include <nlohmann/json.hpp>
 
@@ -30,21 +32,15 @@ MainFrame* g_mainFrameForPttHook = nullptr;
 constexpr int kPttModShift = 1;
 constexpr int kPttModCtrl = 2;
 constexpr int kPttModAlt = 4;
+constexpr int kPttModLShift = 1 << 3;
+constexpr int kPttModRShift = 1 << 4;
+constexpr int kPttModLCtrl = 1 << 5;
+constexpr int kPttModRCtrl = 1 << 6;
+constexpr int kPttModLAlt = 1 << 7;
+constexpr int kPttModRAlt = 1 << 8;
 
 int NormalizeHotkeyVKey(int vkey) {
-    switch (vkey) {
-        case VK_LSHIFT:
-        case VK_RSHIFT:
-            return VK_SHIFT;
-        case VK_LCONTROL:
-        case VK_RCONTROL:
-            return VK_CONTROL;
-        case VK_LMENU:
-        case VK_RMENU:
-            return VK_MENU;
-        default:
-            return vkey;
-    }
+    return vkey;
 }
 
 std::string VKeyToDisplayName(int vkey) {
@@ -63,9 +59,84 @@ std::string VKeyToDisplayName(int vkey) {
 
 int CurrentModifierMask() {
     int mods = 0;
-    if ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0) mods |= kPttModShift;
-    if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) mods |= kPttModCtrl;
-    if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0) mods |= kPttModAlt;
+    const bool lShift = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
+    const bool rShift = (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
+    const bool lCtrl = (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
+    const bool rCtrl = (GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0;
+    const bool lAlt = (GetAsyncKeyState(VK_LMENU) & 0x8000) != 0;
+    const bool rAlt = (GetAsyncKeyState(VK_RMENU) & 0x8000) != 0;
+    if (lShift || rShift) mods |= kPttModShift;
+    if (lCtrl || rCtrl) mods |= kPttModCtrl;
+    if (lAlt || rAlt) mods |= kPttModAlt;
+    if (lShift) mods |= kPttModLShift;
+    if (rShift) mods |= kPttModRShift;
+    if (lCtrl) mods |= kPttModLCtrl;
+    if (rCtrl) mods |= kPttModRCtrl;
+    if (lAlt) mods |= kPttModLAlt;
+    if (rAlt) mods |= kPttModRAlt;
+    return mods;
+}
+
+bool IsModifierVKey(int vkey) {
+    return vkey == VK_SHIFT || vkey == VK_LSHIFT || vkey == VK_RSHIFT ||
+           vkey == VK_CONTROL || vkey == VK_LCONTROL || vkey == VK_RCONTROL ||
+           vkey == VK_MENU || vkey == VK_LMENU || vkey == VK_RMENU;
+}
+
+int ModifierBitsForVKey(int vkey) {
+    switch (vkey) {
+        case VK_LSHIFT:
+            return kPttModShift | kPttModLShift;
+        case VK_RSHIFT:
+            return kPttModShift | kPttModRShift;
+        case VK_SHIFT:
+            return kPttModShift;
+        case VK_LCONTROL:
+            return kPttModCtrl | kPttModLCtrl;
+        case VK_RCONTROL:
+            return kPttModCtrl | kPttModRCtrl;
+        case VK_CONTROL:
+            return kPttModCtrl;
+        case VK_LMENU:
+            return kPttModAlt | kPttModLAlt;
+        case VK_RMENU:
+            return kPttModAlt | kPttModRAlt;
+        case VK_MENU:
+            return kPttModAlt;
+        default:
+            return 0;
+    }
+}
+
+int NormalizeModifierMask(int mods) {
+    // Keep side bits authoritative and derive generic bits from them.
+    mods &= ~(kPttModShift | kPttModCtrl | kPttModAlt);
+    if ((mods & (kPttModLShift | kPttModRShift)) != 0) mods |= kPttModShift;
+    if ((mods & (kPttModLCtrl | kPttModRCtrl)) != 0) mods |= kPttModCtrl;
+    if ((mods & (kPttModLAlt | kPttModRAlt)) != 0) mods |= kPttModAlt;
+    return mods;
+}
+
+int StripPrimaryModifierFamily(int mods, int vkey) {
+    switch (vkey) {
+        case VK_SHIFT:
+        case VK_LSHIFT:
+        case VK_RSHIFT:
+            mods &= ~(kPttModShift | kPttModLShift | kPttModRShift);
+            break;
+        case VK_CONTROL:
+        case VK_LCONTROL:
+        case VK_RCONTROL:
+            mods &= ~(kPttModCtrl | kPttModLCtrl | kPttModRCtrl);
+            break;
+        case VK_MENU:
+        case VK_LMENU:
+        case VK_RMENU:
+            mods &= ~(kPttModAlt | kPttModLAlt | kPttModRAlt);
+            break;
+        default:
+            break;
+    }
     return mods;
 }
 
@@ -74,11 +145,51 @@ std::string PttComboToDisplayName(int vkey, int mods) {
         return "Not set";
     }
     std::string out;
-    if ((mods & kPttModCtrl) != 0) out += "Ctrl+";
-    if ((mods & kPttModAlt) != 0) out += "Alt+";
-    if ((mods & kPttModShift) != 0) out += "Shift+";
+    if ((mods & kPttModLCtrl) != 0) out += "Left Ctrl+";
+    if ((mods & kPttModRCtrl) != 0) out += "Right Ctrl+";
+    if ((mods & (kPttModLCtrl | kPttModRCtrl)) == 0 && (mods & kPttModCtrl) != 0) out += "Ctrl+";
+    if ((mods & kPttModLAlt) != 0) out += "Left Alt+";
+    if ((mods & kPttModRAlt) != 0) out += "Right Alt+";
+    if ((mods & (kPttModLAlt | kPttModRAlt)) == 0 && (mods & kPttModAlt) != 0) out += "Alt+";
+    if ((mods & kPttModLShift) != 0) out += "Left Shift+";
+    if ((mods & kPttModRShift) != 0) out += "Right Shift+";
+    if ((mods & (kPttModLShift | kPttModRShift)) == 0 && (mods & kPttModShift) != 0) out += "Shift+";
     out += VKeyToDisplayName(vkey);
     return out;
+}
+
+bool IsPrimaryKeyMatch(int savedVKey, int pressedVKey) {
+    if (savedVKey == pressedVKey) {
+        return true;
+    }
+    if (savedVKey == VK_SHIFT) {
+        return pressedVKey == VK_LSHIFT || pressedVKey == VK_RSHIFT;
+    }
+    if (savedVKey == VK_CONTROL) {
+        return pressedVKey == VK_LCONTROL || pressedVKey == VK_RCONTROL;
+    }
+    if (savedVKey == VK_MENU) {
+        return pressedVKey == VK_LMENU || pressedVKey == VK_RMENU;
+    }
+    return false;
+}
+
+bool AreRequiredModsPressed(int required, int current) {
+    const auto hasAll = [&](int mask) { return (current & mask) == mask; };
+    if ((required & kPttModLCtrl) != 0 && !hasAll(kPttModLCtrl)) return false;
+    if ((required & kPttModRCtrl) != 0 && !hasAll(kPttModRCtrl)) return false;
+    if ((required & kPttModLShift) != 0 && !hasAll(kPttModLShift)) return false;
+    if ((required & kPttModRShift) != 0 && !hasAll(kPttModRShift)) return false;
+    if ((required & kPttModLAlt) != 0 && !hasAll(kPttModLAlt)) return false;
+    if ((required & kPttModRAlt) != 0 && !hasAll(kPttModRAlt)) return false;
+
+    const bool requiresGenericCtrl = ((required & kPttModCtrl) != 0) && ((required & (kPttModLCtrl | kPttModRCtrl)) == 0);
+    const bool requiresGenericShift = ((required & kPttModShift) != 0) && ((required & (kPttModLShift | kPttModRShift)) == 0);
+    const bool requiresGenericAlt = ((required & kPttModAlt) != 0) && ((required & (kPttModLAlt | kPttModRAlt)) == 0);
+    if (requiresGenericCtrl && (current & (kPttModLCtrl | kPttModRCtrl)) == 0) return false;
+    if (requiresGenericShift && (current & (kPttModLShift | kPttModRShift)) == 0) return false;
+    if (requiresGenericAlt && (current & (kPttModLAlt | kPttModRAlt)) == 0) return false;
+    return true;
 }
 
 class HotkeyCaptureDialog final : public wxDialog {
@@ -92,50 +203,91 @@ public:
         root->Add(hint, 0, wxALL, 12);
         root->Add(keyText_, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
         SetSizerAndFit(root);
-        Bind(wxEVT_CHAR_HOOK, &HotkeyCaptureDialog::OnCharHook, this);
+        activeDialog_ = this;
+        hook_ = SetWindowsHookExA(WH_KEYBOARD_LL, &HotkeyCaptureDialog::CaptureKeyboardProc, GetModuleHandle(nullptr), 0);
+        Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent& event) {
+            UninstallHook();
+            event.Skip();
+        });
         CentreOnParent();
+    }
+
+    ~HotkeyCaptureDialog() override {
+        UninstallHook();
     }
 
     int CapturedVKey() const { return vkey_; }
     int CapturedMods() const { return mods_; }
 
 private:
-    void OnCharHook(wxKeyEvent& event) {
-        int raw = static_cast<int>(event.GetRawKeyCode());
-        if (raw <= 0) {
-            const int key = event.GetKeyCode();
-            switch (key) {
-                case WXK_SHIFT:
-                    raw = VK_SHIFT;
-                    break;
-                case WXK_CONTROL:
-                    raw = VK_CONTROL;
-                    break;
-                case WXK_ALT:
-                    raw = VK_MENU;
-                    break;
-                default:
-                    break;
-            }
+    void UninstallHook() {
+        if (hook_) {
+            UnhookWindowsHookEx(hook_);
+            hook_ = nullptr;
         }
-        if (raw <= 0) {
-            event.Skip();
+        if (activeDialog_ == this) {
+            activeDialog_ = nullptr;
+        }
+    }
+
+    void CommitCapture(int rawVKey, int currentMods) {
+        vkey_ = NormalizeHotkeyVKey(rawVKey);
+        mods_ = StripPrimaryModifierFamily(NormalizeModifierMask(currentMods), vkey_);
+        keyText_->SetLabel(wxString::FromUTF8(PttComboToDisplayName(vkey_, mods_)));
+        UninstallHook();
+        EndModal(wxID_OK);
+    }
+
+    void OnLowLevelKey(int rawVKey, bool isKeyDown, bool isKeyUp) {
+        if (rawVKey <= 0) {
             return;
         }
-        vkey_ = NormalizeHotkeyVKey(raw);
-        mods_ = CurrentModifierMask();
-        // Treat modifiers as ordinary primary keys when captured directly.
-        if (vkey_ == VK_SHIFT) mods_ &= ~kPttModShift;
-        if (vkey_ == VK_CONTROL) mods_ &= ~kPttModCtrl;
-        if (vkey_ == VK_MENU) mods_ &= ~kPttModAlt;
-        keyText_->SetLabel(wxString::FromUTF8(PttComboToDisplayName(vkey_, mods_)));
-        EndModal(wxID_OK);
+        const bool isModifier = IsModifierVKey(rawVKey);
+        if (isModifier) {
+            const int bits = ModifierBitsForVKey(rawVKey);
+            if (isKeyDown) {
+                heldMods_ = NormalizeModifierMask(heldMods_ | bits);
+                pendingModifierVKey_ = rawVKey;
+                pendingModifierMods_ = StripPrimaryModifierFamily(heldMods_, rawVKey);
+                keyText_->SetLabel(wxString::FromUTF8(PttComboToDisplayName(rawVKey, pendingModifierMods_)));
+            } else if (isKeyUp) {
+                if (pendingModifierVKey_ == rawVKey) {
+                    CommitCapture(rawVKey, pendingModifierMods_);
+                    return;
+                }
+                heldMods_ = NormalizeModifierMask(heldMods_ & ~bits);
+            }
+            return;
+        }
+        if (isKeyDown) {
+            CommitCapture(rawVKey, heldMods_);
+        }
+    }
+
+    static LRESULT CALLBACK CaptureKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+        if (nCode == HC_ACTION && activeDialog_) {
+            const auto* data = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+            if (data) {
+                const bool isDown = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
+                const bool isUp = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
+                if (isDown || isUp) {
+                    activeDialog_->OnLowLevelKey(static_cast<int>(data->vkCode), isDown, isUp);
+                    return 1;
+                }
+            }
+        }
+        return CallNextHookEx(nullptr, nCode, wParam, lParam);
     }
 
 private:
     wxStaticText* keyText_ = nullptr;
     int vkey_ = 0;
     int mods_ = 0;
+    int heldMods_ = 0;
+    int pendingModifierVKey_ = 0;
+    int pendingModifierMods_ = 0;
+    HHOOK hook_ = nullptr;
+    static inline HotkeyCaptureDialog* activeDialog_ = nullptr;
 };
 #endif
 
@@ -310,6 +462,19 @@ private:
     int selectedPttMods_ = 0;
 };
 
+wxString ToWxStatusText(const std::string& msg) {
+    if (msg.empty()) {
+        return {};
+    }
+    // Relay/ASIO error text on Windows may come in non-UTF8 system encoding.
+    // Avoid dropping status to empty label when UTF-8 decode fails.
+    wxString s = wxString::FromUTF8(msg.c_str());
+    if (s.empty()) {
+        s = wxString::From8BitData(msg.c_str());
+    }
+    return s;
+}
+
 } // namespace
 
 MainFrame::MainFrame()
@@ -318,6 +483,9 @@ MainFrame::MainFrame()
       audio_(std::make_unique<AudioEngine>()),
       reconnectTimer_(this) {
     BuildUi();
+    CreateStatusBar(1);
+    SetStatusBarPane(0);
+    SetStatus("Disconnected");
     BindUi();
 
     reconnectTimer_.Bind(wxEVT_TIMER, &MainFrame::OnReconnectTimer, this);
@@ -326,22 +494,29 @@ MainFrame::MainFrame()
 #endif
 
     relay_->SetStatusCallback([this](const std::string& msg) {
-        this->CallAfter([this, msg] { SetStatus(wxString::FromUTF8(msg)); });
+        this->CallAfter([this, msg] {
+            wxString text = ToWxStatusText(msg);
+            if (!text.empty()) {
+                SetStatus(text);
+            }
+        });
     });
     relay_->SetConnectedCallback([this](bool connected) {
         this->CallAfter([this, connected] {
             connected_ = connected;
             if (connected) {
                 reconnectBackoffMs_ = 1500;
-            }
-            if (!connected && !relay_->AutoReconnectDesired()) {
-                userWantsSession_ = false;
                 StopReconnectTimer();
             }
             connectBtn_->SetLabel((connected || userWantsSession_) ? "Disconnect" : "Connect");
             pttBtn_->Enable(connected);
             callBtn_->Enable(connected);
             UpdateProfileControlsEnabled();
+            // Guard path: if transport dropped but loss callback was missed/raced,
+            // keep reconnect loop alive as long as user still wants the session.
+            if (!connected && userWantsSession_ && !reconnectTimer_.IsRunning()) {
+                ScheduleReconnect();
+            }
         });
     });
     relay_->SetWelcomeCallback([this](const WelcomeConfig& cfg) {
@@ -358,7 +533,12 @@ MainFrame::MainFrame()
         relay_->SendOpusFrame(data, size, signal);
     });
     audio_->SetStatusCallback([this](const std::string& msg) {
-        this->CallAfter([this, msg] { SetStatus(wxString::FromUTF8(msg)); });
+        this->CallAfter([this, msg] {
+            wxString text = ToWxStatusText(msg);
+            if (!text.empty()) {
+                SetStatus(text);
+            }
+        });
     });
     audio_->SetLevelCallback([this](int percent) {
         this->CallAfter([this, percent] {
@@ -703,6 +883,7 @@ void MainFrame::OnDeleteProfile(wxCommandEvent&) {
 }
 
 void MainFrame::StopReconnectTimer() {
+    reconnectScheduleTicket_.fetch_add(1, std::memory_order_relaxed);
     if (reconnectTimer_.IsRunning()) {
         reconnectTimer_.Stop();
     }
@@ -713,26 +894,29 @@ void MainFrame::ScheduleReconnect() {
     if (!userWantsSession_) {
         return;
     }
-    SetStatus(wxString::Format("Reconnecting in %d ms", reconnectBackoffMs_));
-    reconnectTimer_.StartOnce(reconnectBackoffMs_);
+    const int delayMs = reconnectBackoffMs_;
+    const uint64_t ticket = reconnectScheduleTicket_.fetch_add(1, std::memory_order_relaxed) + 1;
+    SetStatus(wxString::Format("Reconnecting in %d ms", delayMs));
+    std::thread([this, ticket, delayMs] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+        this->CallAfter([this, ticket] {
+            if (ticket != reconnectScheduleTicket_.load(std::memory_order_relaxed)) {
+                return;
+            }
+            if (!userWantsSession_ || relay_->IsConnected()) {
+                return;
+            }
+            StartReconnectAttemptAsync();
+        });
+    }).detach();
 }
 
 void MainFrame::OnReconnectTimer(wxTimerEvent&) {
-    if (!userWantsSession_) {
+    // Legacy fallback path (timer no longer primary reconnect scheduler).
+    if (!userWantsSession_ || relay_->IsConnected()) {
         return;
     }
-    relay_->JoinWorkerThreads();
-    if (relay_->IsConnected()) {
-        reconnectBackoffMs_ = 1500;
-        return;
-    }
-    if (TryConnectWithCurrentFields()) {
-        reconnectBackoffMs_ = 1500;
-        SaveAudioSettings();
-        return;
-    }
-    reconnectBackoffMs_ = std::min(reconnectBackoffMs_ * 2, 30000);
-    ScheduleReconnect();
+    StartReconnectAttemptAsync();
 }
 
 bool MainFrame::TryConnectWithCurrentFields() {
@@ -747,10 +931,49 @@ bool MainFrame::TryConnectWithCurrentFields() {
     return relay_->Connect(hostU8, static_cast<int>(wsPort), static_cast<int>(udpPort), chU8, repeaterCheck_->GetValue());
 }
 
+void MainFrame::StartReconnectAttemptAsync() {
+    bool expected = false;
+    if (!reconnectAttemptInFlight_.compare_exchange_strong(expected, true)) {
+        return;
+    }
+
+    long wsPort = 0;
+    long udpPort = 0;
+    if (!wsPortCtrl_->GetValue().ToLong(&wsPort) || !udpPortCtrl_->GetValue().ToLong(&udpPort)) {
+        reconnectAttemptInFlight_.store(false);
+        SetStatus("Invalid ports");
+        return;
+    }
+    const std::string hostU8 = hostCtrl_->GetValue().utf8_string();
+    const std::string chU8 = channelCtrl_->GetValue().utf8_string();
+    const bool repeater = repeaterCheck_->GetValue();
+    const int attemptNo = ++reconnectAttemptSeq_;
+    SetStatus(wxString::Format("Reconnect attempt #%d", attemptNo));
+
+    std::thread([this, hostU8, chU8, wsPort, udpPort, repeater] {
+        const bool ok = relay_->Connect(hostU8, static_cast<int>(wsPort), static_cast<int>(udpPort), chU8, repeater);
+        this->CallAfter([this, ok] {
+            reconnectAttemptInFlight_.store(false);
+            if (!userWantsSession_) {
+                return;
+            }
+            if (ok) {
+                reconnectBackoffMs_ = 1500;
+                reconnectAttemptSeq_ = 0;
+                SaveAudioSettings();
+                SetStatus("Reconnected");
+                return;
+            }
+            SetStatus(wxString::Format("Reconnect failed, retry in %d ms", reconnectBackoffMs_));
+            reconnectBackoffMs_ = std::min(reconnectBackoffMs_ * 2, 30000);
+            ScheduleReconnect();
+        });
+    }).detach();
+}
+
 void MainFrame::OnRelayConnectionLost() {
     audio_->StopTransmit();
     globalPttPressed_ = false;
-    relay_->JoinWorkerThreads();
     connected_ = false;
     audio_->PlayConnectionErrorSignal();
     pttBtn_->Enable(false);
@@ -874,11 +1097,6 @@ void MainFrame::BuildUi() {
 
     root->Add(signalGauge_, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
-    statusText_ = new wxStaticText(panel, wxID_ANY, "Status: Idle");
-    statusText_->SetName("Connection status");
-    SkipKeyboardFocus(statusText_);
-    root->Add(statusText_, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
-
     panel->SetSizer(root);
     auto* outer = new wxBoxSizer(wxVERTICAL);
     outer->Add(panel, 1, wxEXPAND);
@@ -918,7 +1136,51 @@ void MainFrame::BindUi() {
 }
 
 void MainFrame::SetStatus(const wxString& status) {
-    statusText_->SetLabel("Status: " + status);
+    SetStatusText(HumanizeStatus(status), 0);
+}
+
+wxString MainFrame::HumanizeStatus(const wxString& status) const {
+    const wxString s = status.Lower();
+    if (s.IsEmpty()) {
+        return "Disconnected";
+    }
+    if (s.Contains("welcome received") || s == "connected" || s == "reconnected") {
+        return "Connected";
+    }
+    if (s.StartsWith("reconnecting in") || s.StartsWith("reconnect attempt") || s.Contains("retry")) {
+        return "Reconnecting...";
+    }
+    if (s.Contains("transmitting")) {
+        return "Transmitting";
+    }
+    if (s.Contains("sending call")) {
+        return "Sending call signal...";
+    }
+    if (s.Contains("tx stopped")) {
+        return "Transmission stopped by server";
+    }
+    if (s.Contains("connect failed")) {
+        return "Unable to connect";
+    }
+    if (s.Contains("protocol mismatch") || s.Contains("missing samplerate")) {
+        return "Incompatible server protocol";
+    }
+    if (s.Contains("ws ended") || s.Contains("udp ended") || s.Contains("keepalive timeout") || s.Contains("connection lost")) {
+        return "Connection lost";
+    }
+    if (s.Contains("audio initialized")) {
+        return "Ready";
+    }
+    if (s == "disconnected") {
+        return "Disconnected";
+    }
+    if (s == "settings applied") {
+        return "Settings applied";
+    }
+    if (s == "profile saved" || s == "profile created" || s == "profile deleted") {
+        return status;
+    }
+    return status;
 }
 
 void MainFrame::SyncRxVolumeUi() {
@@ -1134,12 +1396,13 @@ void MainFrame::UninstallGlobalPttHook() {
 LRESULT CALLBACK MainFrame::GlobalPttKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION && g_mainFrameForPttHook) {
         const auto* data = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+        const int pressedVKey = data ? static_cast<int>(data->vkCode) : 0;
         if (data && g_mainFrameForPttHook->globalPttVKey_ > 0 &&
-            NormalizeHotkeyVKey(static_cast<int>(data->vkCode)) == g_mainFrameForPttHook->globalPttVKey_) {
+            IsPrimaryKeyMatch(g_mainFrameForPttHook->globalPttVKey_, pressedVKey)) {
             const int currentMods = CurrentModifierMask();
             const int requiredMods = g_mainFrameForPttHook->globalPttMods_;
             const bool isKeyUp = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
-            if (!isKeyUp && (currentMods & requiredMods) != requiredMods) {
+            if (!isKeyUp && !AreRequiredModsPressed(requiredMods, currentMods)) {
                 return CallNextHookEx(nullptr, nCode, wParam, lParam);
             }
             if ((wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) && !g_mainFrameForPttHook->globalPttPressed_) {
