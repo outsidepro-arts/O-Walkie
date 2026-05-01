@@ -24,6 +24,9 @@ import (
 	"github.com/hraban/opus"
 )
 
+// buildVersion is overridden by release builds: go build -ldflags "-X main.buildVersion=1.2.3"
+var buildVersion = "dev"
+
 const (
 	defaultSampleRate  = 8000
 	audioChannels      = 1
@@ -2533,6 +2536,8 @@ func main() {
 			log.Fatalf("usage: %s [config-path]", os.Args[0])
 		}
 	}
+
+	log.Printf("o-walkie relay version %s (config %s)", buildVersion, cfgPath)
 
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {

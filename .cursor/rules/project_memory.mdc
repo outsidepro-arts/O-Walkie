@@ -11,6 +11,13 @@ alwaysApply: true
 - Windows client: C++ wxWidgets (`windows-client-cpp`), Boost.Beast, **miniaudio** (vendored), Opus (legacy C# WPF removed).
 - Audio protocol: Opus mono, server handshake with protocol/version/audio params.
 
+## Релизы (перед каждым публичным релизом на GitHub)
+- Создать и запушить аннотированный тег семвер: `vMAJOR.MINOR.PATCH` на нужный коммит (релизный workflow и версии в сборках завязаны на `v*`).
+- **Android:** при загрузке в Google Play убедиться, что `versionCode` **строго больше** последней опубликованной сборки. Обычно берётся из git (`git describe`); если нужно принудительно поднять пол (пересборка того же тега и т.п.) — увеличить `versionCodeFloor` в `android/owalkie-version.properties`. При необходимости задать `-Powalkie.versionCode=` / `OWALKIE_VERSION_NAME` / `OWALKIE_VERSION_CODE` (см. `android/app/build.gradle.kts`).
+- **Windows:** собрать десктоп с тем же тегом в репозитории (CMake/git `describe`) или передать `-DOWALKIE_VERSION_STRING=...` / переменную окружения `OWALKIE_VERSION_STRING`, чтобы заголовок окна и бинарник совпадали с релизом.
+- **Relay (Go):** для релизного бинарника использовать `-ldflags "-X main.buildVersion=MAJOR.MINOR.PATCH"` (как в `.github/workflows/release-on-tag.yml`).
+- После пуша тега проверить GitHub Release: артефакты `owalkie-relay-*-linux-amd64` и `owalkie-android-*-debug.apk` (Windows exe в этот workflow не входит — отдельная локальная/будущая CI-сборка).
+
 ## Current Task
 - Active development is ongoing for both clients in equal priority: Android and Windows (`windows-client-cpp`).
 - Feature policy: all new user-facing or protocol-impacting functionality must be implemented in both clients with parity unless explicitly scoped otherwise.
@@ -19,6 +26,7 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Версионирование релизов: `versionName`/`versionCode` Android из git (`v*` tags) с переопределением `-P`/`OWALKIE_*` и полом `versionCodeFloor` в `android/owalkie-version.properties`; Windows desktop — макрос `OWALKIE_VERSION` из git или `-DOWALKIE_VERSION_STRING`/env; relay логирует `buildVersion` (`-ldflags -X main.buildVersion=...`). Workflow `release-on-tag` собирает Linux relay и debug APK с именем версии из тега и прикрепляет к GitHub Release.
 - Backend: hardened channel mixer runtime against UDP/audio generation crashes — added panic recovery with stack trace, emergency mixer loop restart with backoff, and codec/repeater state reinitialization after failure so relay process stays alive under runtime faults.
 - Backend: mixer emergency restarts now expose a lifetime counter per channel and log `ALERT` when ≥5 restarts occur within 1 minute (throttled to once per 30s per channel) for operator visibility.
 - Backend: UDP keepalive punch now triggers unicast resend of the last mixed frame to that client (after ACK), with a 500ms catch-up age window so joiners mid-transmission get audio immediately even when `udp_hello` races or NAT path differs from WS peer IP.

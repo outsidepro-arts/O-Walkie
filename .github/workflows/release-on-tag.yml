@@ -13,6 +13,54 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set version from tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "## Release ${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tag: \`${TAG}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Build relay binary
+        env:
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+        working-directory: backend
+        run: |
+          go build -trimpath -ldflags "-s -w -X main.buildVersion=${VERSION}" \
+            -o "${GITHUB_WORKSPACE}/owalkie-relay-linux-amd64" ./cmd/relay
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Android debug APK
+        working-directory: android
+        env:
+          OWALKIE_VERSION_NAME: ${{ steps.ver.outputs.VERSION }}
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Stage release assets
+        run: |
+          VERSION="${{ steps.ver.outputs.VERSION }}"
+          cp "${GITHUB_WORKSPACE}/owalkie-relay-linux-amd64" \
+            "${GITHUB_WORKSPACE}/owalkie-relay-${VERSION}-linux-amd64"
+          cp "${GITHUB_WORKSPACE}/android/app/build/outputs/apk/debug/app-debug.apk" \
+            "${GITHUB_WORKSPACE}/owalkie-android-${VERSION}-debug.apk"
+
       - name: Check if release already exists
         id: release_check
         env:
@@ -24,8 +72,12 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+
       - name: Create GitHub release with generated notes
         if: steps.release_check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          files: |
+            owalkie-relay-${{ steps.ver.outputs.VERSION }}-linux-amd64
+            owalkie-android-${{ steps.ver.outputs.VERSION }}-debug.apk

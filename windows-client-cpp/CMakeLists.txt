@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(OWalkieDesktop VERSION 0.1.0 LANGUAGES CXX)
+project(OWalkieDesktop VERSION 0.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -34,6 +34,30 @@ add_executable(owalkie-desktop-cpp WIN32
     src/miniaudio_impl.cpp
 )
 set_target_properties(owalkie-desktop-cpp PROPERTIES OUTPUT_NAME "owalkie-desktop")
+
+get_filename_component(OWALKIE_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+set(_owalkie_desktop_version "0.0.0-dev")
+if(DEFINED ENV{OWALKIE_VERSION_STRING} AND NOT "$ENV{OWALKIE_VERSION_STRING}" STREQUAL "")
+    set(_owalkie_desktop_version "$ENV{OWALKIE_VERSION_STRING}")
+elseif(DEFINED OWALKIE_VERSION_STRING AND NOT "${OWALKIE_VERSION_STRING}" STREQUAL "")
+    set(_owalkie_desktop_version "${OWALKIE_VERSION_STRING}")
+else()
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" describe --tags --match "v*" --long --dirty
+            WORKING_DIRECTORY "${OWALKIE_REPO_ROOT}"
+            OUTPUT_VARIABLE _ow_git_desc
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(NOT "${_ow_git_desc}" STREQUAL "")
+            string(REGEX REPLACE "^v" "" _owalkie_desktop_version "${_ow_git_desc}")
+        endif()
+    endif()
+endif()
+target_compile_definitions(owalkie-desktop-cpp PRIVATE
+    "OWALKIE_VERSION=\"${_owalkie_desktop_version}\"")
 
 target_include_directories(owalkie-desktop-cpp PRIVATE
     src

@@ -21,6 +21,10 @@
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
 
+#ifndef OWALKIE_VERSION
+#define OWALKIE_VERSION "dev"
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -478,7 +482,12 @@ wxString ToWxStatusText(const std::string& msg) {
 } // namespace
 
 MainFrame::MainFrame()
-    : wxFrame(nullptr, wxID_ANY, "O-Walkie Desktop", wxDefaultPosition, wxSize(680, 560)),
+    : wxFrame(
+          nullptr,
+          wxID_ANY,
+          wxString::Format("O-Walkie Desktop (%s)", wxString::FromUTF8(OWALKIE_VERSION)),
+          wxDefaultPosition,
+          wxSize(680, 560)),
       relay_(std::make_unique<RelayClient>()),
       audio_(std::make_unique<AudioEngine>()),
       reconnectTimer_(this) {
