@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
     private var rxActive = false
     private var userRequestedConnection = false
     private var suppressSpinnerReconnect = false
+    private var skipNextConnectedTone = false
     private var scanJob: Job? = null
     private val scanScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val scanClient = OkHttpClient.Builder().retryOnConnectionFailure(true).build()
@@ -100,7 +101,11 @@ class MainActivity : ComponentActivity() {
             lastSignalPercent = signalPercent
 
             if (!prevConnected && wsConnected) {
-                uiSignalPlayer.playConnected()
+                if (skipNextConnectedTone) {
+                    skipNextConnectedTone = false
+                } else {
+                    uiSignalPlayer.playConnected()
+                }
             } else if (!prevProtocolIncompatible && protocolIncompatible) {
                 uiSignalPlayer.playConnectionError()
             } else if (userRequestedConnection && prevConnecting && !wsConnecting && !wsConnected) {
@@ -124,6 +129,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // Activity recreation on orientation change should not look like a fresh connect event.
+        skipNextConnectedTone = savedInstanceState != null
         serverStore = ServerStore(this)
         pttHardwareKeyStore = PttHardwareKeyStore(this)
         bluetoothHeadsetRouteStore = BluetoothHeadsetRouteStore(this)
@@ -239,7 +246,11 @@ class MainActivity : ComponentActivity() {
         // If touch sequence is interrupted (app backgrounded/system overlay), ACTION_UP may never arrive.
         // Force TX release to prevent stuck PTT state.
         stopTransmitUi()
-        sendActivityFocusState(false)
+        // Orientation recreation is not a real background transition; avoid toggling
+        // service focus state which can disturb active network/session timing.
+        if (!isChangingConfigurations) {
+            sendActivityFocusState(false)
+        }
         if (receiverRegistered) {
             unregisterReceiver(statusReceiver)
             receiverRegistered = false
