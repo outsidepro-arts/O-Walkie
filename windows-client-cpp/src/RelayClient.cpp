@@ -9,6 +9,7 @@
 
 #include <boost/asio/connect.hpp>
 #include <boost/beast/core/buffers_to_string.hpp>
+#include <boost/system/error_code.hpp>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -19,8 +20,8 @@ namespace {
 constexpr uint8_t kUdpKeepaliveSignal = 255;
 constexpr uint8_t kUdpKeepaliveAckSignal = 254;
 constexpr int64_t kUdpKeepaliveIntervalNs = 5'000'000'000LL;
-constexpr int64_t kUdpKeepaliveRtxNs = 1'200'000'000LL;
-constexpr int64_t kUdpKeepaliveLostNs = 12'000'000'000LL;
+constexpr int64_t kUdpKeepaliveRtxNs = 1'000'000'000LL;
+constexpr int64_t kUdpKeepaliveLostNs = 8'000'000'000LL;
 }
 
 static int64_t nowNs() {
@@ -33,16 +34,41 @@ RelayClient::RelayClient() : resolver_(ioc_) {}
 RelayClient::~RelayClient() { Disconnect(); }
 
 void RelayClient::CloseSocketsUnblockReaders() {
-    try {
-        if (ws_ && ws_->is_open()) {
-            ws_->close(ws::close_code::abnormal);
-        }
-    } catch (...) {}
+    boost::system::error_code ec;
+    // Unblock threads stuck in blocking udp::receive_from / ws::read before close.
+    // Closing the websocket from another thread while read() is active can trigger
+    // Beast debug assertions and leave the UI thread blocked in join().
     try {
         if (udp_) {
-            udp_->close();
+            udp_->cancel(ec);
         }
     } catch (...) {}
+    ec.clear();
+    try {
+        if (ws_) {
+            ws_->next_layer().cancel(ec);
+        }
+    } catch (...) {}
+    ec.clear();
+    try {
+        if (ws_ && ws_->is_open()) {
+            ws_->close(ws::close_code::going_away, ec);
+        }
+    } catch (...) {}
+    ec.clear();
+    try {
+        if (udp_) {
+            udp_->close(ec);
+        }
+    } catch (...) {}
+}
+
+void RelayClient::SetRepeaterMode(bool enabled) {
+    repeater_ = enabled;
+    json j;
+    j["type"] = "repeater_mode";
+    j["enabled"] = enabled;
+    SendWsJson(j.dump());
 }
 
 void RelayClient::PostConnectionLostOnce() {
@@ -153,8 +179,12 @@ void RelayClient::SendWsJson(const std::string& text) {
     if (!ws_ || !connected_.load()) {
         return;
     }
+    boost::system::error_code ec;
     std::lock_guard<std::mutex> lg(stateMu_);
-    ws_->write(boost::asio::buffer(text));
+    if (!ws_ || !ws_->is_open()) {
+        return;
+    }
+    ws_->write(boost::asio::buffer(text), ec);
 }
 
 void RelayClient::SendOpusFrame(const uint8_t* data, size_t size, uint8_t signal) {
@@ -335,60 +365,70 @@ void RelayClient::HandleWsText(const std::string& text) {
 }
 
 void RelayClient::WsReadLoop() {
-    try {
-        while (connected_.load() && !stopRequested_.load()) {
-            boost::beast::flat_buffer buffer;
-            ws_->read(buffer);
-            auto text = boost::beast::buffers_to_string(buffer.data());
-            HandleWsText(text);
+    boost::system::error_code ec;
+    while (connected_.load() && !stopRequested_.load()) {
+        if (!ws_ || !ws_->is_open()) {
+            break;
         }
-    } catch (const std::exception& ex) {
-        connected_.store(false);
-        CloseSocketsUnblockReaders();
-        if (!stopRequested_.load()) {
-            if (onStatus_) {
-                onStatus_(std::string("WS ended: ") + ex.what());
+        boost::beast::flat_buffer buffer;
+        ws_->read(buffer, ec);
+        if (ec) {
+            connected_.store(false);
+            if (!stopRequested_.load()) {
+                CloseSocketsUnblockReaders();
+                if (onStatus_) {
+                    onStatus_(std::string("WS ended: ") + ec.message());
+                }
+                PostConnectionLostOnce();
             }
-            PostConnectionLostOnce();
+            return;
         }
+        const auto text = boost::beast::buffers_to_string(buffer.data());
+        HandleWsText(text);
     }
 }
 
 void RelayClient::UdpReadLoop() {
-    try {
-        std::array<uint8_t, 1500> data{};
-        while (connected_.load() && !stopRequested_.load()) {
-            udp::endpoint ep;
-            std::size_t n = udp_->receive_from(boost::asio::buffer(data), ep);
-            if (n >= 9) {
-                const uint32_t sid = (static_cast<uint32_t>(data[0]) << 24) | (static_cast<uint32_t>(data[1]) << 16) |
-                    (static_cast<uint32_t>(data[2]) << 8) | static_cast<uint32_t>(data[3]);
-                const uint32_t seq = (static_cast<uint32_t>(data[4]) << 24) | (static_cast<uint32_t>(data[5]) << 16) |
-                    (static_cast<uint32_t>(data[6]) << 8) | static_cast<uint32_t>(data[7]);
-                const uint8_t signal = data[8];
-                if (sid == cfg_.sessionId && seq == 0 && signal == kUdpKeepaliveAckSignal) {
-                    lastInboundNs_.store(nowNs());
-                    udpKeepalivePendingSinceNs_.store(0);
-                    continue;
+    boost::system::error_code ec;
+    std::array<uint8_t, 1500> data{};
+    while (connected_.load() && !stopRequested_.load()) {
+        if (!udp_) {
+            break;
+        }
+        udp::endpoint ep;
+        const std::size_t n = udp_->receive_from(boost::asio::buffer(data), ep, 0, ec);
+        if (ec) {
+            connected_.store(false);
+            if (!stopRequested_.load()) {
+                CloseSocketsUnblockReaders();
+                if (onStatus_) {
+                    onStatus_(std::string("UDP ended: ") + ec.message());
                 }
+                PostConnectionLostOnce();
             }
-            if (n <= 9) continue;
-            lastInboundNs_.store(nowNs());
-            udpKeepalivePendingSinceNs_.store(0);
-            std::vector<uint8_t> opus(n - 9);
-            std::memcpy(opus.data(), data.data() + 9, n - 9);
-            if (onOpusFrame_) {
-                onOpusFrame_(opus);
+            return;
+        }
+        if (n >= 9) {
+            const uint32_t sid = (static_cast<uint32_t>(data[0]) << 24) | (static_cast<uint32_t>(data[1]) << 16) |
+                (static_cast<uint32_t>(data[2]) << 8) | static_cast<uint32_t>(data[3]);
+            const uint32_t seq = (static_cast<uint32_t>(data[4]) << 24) | (static_cast<uint32_t>(data[5]) << 16) |
+                (static_cast<uint32_t>(data[6]) << 8) | static_cast<uint32_t>(data[7]);
+            const uint8_t signal = data[8];
+            if (sid == cfg_.sessionId && seq == 0 && signal == kUdpKeepaliveAckSignal) {
+                lastInboundNs_.store(nowNs());
+                udpKeepalivePendingSinceNs_.store(0);
+                continue;
             }
         }
-    } catch (...) {
-        connected_.store(false);
-        CloseSocketsUnblockReaders();
-        if (!stopRequested_.load()) {
-            if (onStatus_) {
-                onStatus_("UDP ended");
-            }
-            PostConnectionLostOnce();
+        if (n <= 9) {
+            continue;
+        }
+        lastInboundNs_.store(nowNs());
+        udpKeepalivePendingSinceNs_.store(0);
+        std::vector<uint8_t> opus(n - 9);
+        std::memcpy(opus.data(), data.data() + 9, n - 9);
+        if (onOpusFrame_) {
+            onOpusFrame_(opus);
         }
     }
 }

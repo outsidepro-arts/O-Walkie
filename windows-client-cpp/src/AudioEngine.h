@@ -51,6 +51,8 @@ public:
 
     void SetPreferredInputDevice(int indexOrMinusOneForDefault);
     void SetPreferredOutputDevice(int indexOrMinusOneForDefault);
+    /// Incoming (RX) stream gain, 0–200 (%), same semantics as Android `RxVolumeStore`.
+    void SetRxVolumePercent(int percent);
     void SetRogerPatternId(std::string patternId);
     void SetCallPatternId(std::string patternId);
     std::string RogerPatternId() const;
@@ -133,6 +135,7 @@ private:
     std::atomic<int64_t> rxResumeAtNs_{0};
     std::atomic<int64_t> lastInboundNs_{0};
     std::atomic<int64_t> lastTxCollisionToneNs_{0};
+    std::atomic<int> rxVolumePercent_{100};
 
     EncodedFrameCallback onEncodedFrame_;
     StatusCallback onStatus_;

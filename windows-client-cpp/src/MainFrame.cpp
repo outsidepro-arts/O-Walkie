@@ -11,6 +11,7 @@
 #include <wx/choice.h>
 #include <wx/filename.h>
 #include <wx/gauge.h>
+#include <wx/slider.h>
 #include <wx/dialog.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
@@ -371,6 +372,7 @@ MainFrame::MainFrame()
     LoadAllSettings();
     UpdateMicLevelIndicatorVisibility();
     ApplyAudioSettingsToEngine();
+    SyncRxVolumeUi();
     UpdateProfileControlsEnabled();
 
     CallAfter([this] {
@@ -515,6 +517,7 @@ void MainFrame::LoadAllSettings() {
                 globalPttVKey_ = j.value("ptt_hotkey_vkey", 0);
                 globalPttMods_ = j.value("ptt_hotkey_mods", 0);
                 showMicLevelIndicator_ = j.value("show_mic_level_indicator", false);
+                rxVolumePercent_ = j.value("rx_volume_percent", 100);
             }
         }
     } catch (...) {
@@ -560,6 +563,7 @@ void MainFrame::SaveAudioSettings() {
     j["ptt_hotkey_vkey"] = globalPttVKey_;
     j["ptt_hotkey_mods"] = globalPttMods_;
     j["show_mic_level_indicator"] = showMicLevelIndicator_;
+    j["rx_volume_percent"] = std::clamp(rxVolumePercent_, 0, 200);
     try {
         std::ofstream out(AudioSettingsPath().utf8_string());
         if (out) {
@@ -613,16 +617,29 @@ void MainFrame::SyncActiveProfileFromUi() {
 }
 
 void MainFrame::UpdateProfileControlsEnabled() {
-    const bool idle = !connected_ && !userWantsSession_;
-    profileChoice_->Enable(idle);
-    saveProfileBtn_->Enable(idle);
-    newProfileBtn_->Enable(idle);
-    deleteProfileBtn_->Enable(idle && profiles_.size() > 1);
-    hostCtrl_->Enable(idle);
-    wsPortCtrl_->Enable(idle);
-    udpPortCtrl_->Enable(idle);
-    channelCtrl_->Enable(idle);
-    repeaterCheck_->Enable(idle);
+    const bool sess = connected_ || userWantsSession_;
+    profileChoice_->Enable(!sess);
+    saveProfileBtn_->Enable(!sess);
+    newProfileBtn_->Enable(!sess);
+    deleteProfileBtn_->Enable(!sess && profiles_.size() > 1);
+    if (connectionNameCtrl_) {
+        connectionNameCtrl_->SetEditable(!sess);
+    }
+    if (hostCtrl_) {
+        hostCtrl_->SetEditable(!sess);
+    }
+    if (wsPortCtrl_) {
+        wsPortCtrl_->SetEditable(!sess);
+    }
+    if (udpPortCtrl_) {
+        udpPortCtrl_->SetEditable(!sess);
+    }
+    if (channelCtrl_) {
+        channelCtrl_->SetEditable(!sess);
+    }
+    if (repeaterCheck_) {
+        repeaterCheck_->Enable(true);
+    }
 }
 
 void MainFrame::OnProfileChoice(wxCommandEvent&) {
@@ -808,6 +825,18 @@ void MainFrame::BuildUi() {
     channelCtrl_->SetName("Channel");
     grid->Add(channelCtrl_, 1, wxEXPAND);
 
+    auto* labRx = new wxStaticText(panel, wxID_ANY, "Incoming volume");
+    SkipKeyboardFocus(labRx);
+    grid->Add(labRx, 0, wxALIGN_CENTER_VERTICAL);
+    auto* rxRow = new wxBoxSizer(wxHORIZONTAL);
+    rxVolumeSlider_ = new wxSlider(panel, wxID_ANY, rxVolumePercent_, 0, 200, wxDefaultPosition, wxSize(200, -1));
+    rxVolumeSlider_->SetName("Incoming volume");
+    rxVolumeValueText_ = new wxStaticText(panel, wxID_ANY, wxString::Format("%d%%", rxVolumePercent_));
+    SkipKeyboardFocus(rxVolumeValueText_);
+    rxRow->Add(rxVolumeSlider_, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+    rxRow->Add(rxVolumeValueText_, 0, wxALIGN_CENTER_VERTICAL);
+    grid->Add(rxRow, 1, wxEXPAND);
+
     root->Add(grid, 0, wxEXPAND | wxALL, 12);
 
     auto* audioBar = new wxBoxSizer(wxHORIZONTAL);
@@ -858,7 +887,8 @@ void MainFrame::BuildUi() {
     wsPortCtrl_->MoveAfterInTabOrder(hostCtrl_);
     udpPortCtrl_->MoveAfterInTabOrder(wsPortCtrl_);
     channelCtrl_->MoveAfterInTabOrder(udpPortCtrl_);
-    settingsBtn_->MoveAfterInTabOrder(channelCtrl_);
+    rxVolumeSlider_->MoveAfterInTabOrder(channelCtrl_);
+    settingsBtn_->MoveAfterInTabOrder(rxVolumeSlider_);
     repeaterCheck_->MoveAfterInTabOrder(settingsBtn_);
     connectBtn_->MoveAfterInTabOrder(repeaterCheck_);
     pttBtn_->MoveAfterInTabOrder(connectBtn_);
@@ -878,10 +908,45 @@ void MainFrame::BindUi() {
     pttBtn_->Bind(wxEVT_KEY_DOWN, &MainFrame::OnPttButtonKeyDown, this);
     pttBtn_->Bind(wxEVT_KEY_UP, &MainFrame::OnPttButtonKeyUp, this);
     callBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnCallSignalClicked, this);
+    rxVolumeSlider_->Bind(wxEVT_SLIDER, &MainFrame::OnRxVolumeSlider, this);
+    repeaterCheck_->Bind(wxEVT_CHECKBOX, &MainFrame::OnRepeaterToggled, this);
 }
 
 void MainFrame::SetStatus(const wxString& status) {
     statusText_->SetLabel("Status: " + status);
+}
+
+void MainFrame::SyncRxVolumeUi() {
+    if (!rxVolumeSlider_ || !rxVolumeValueText_) {
+        return;
+    }
+    rxVolumePercent_ = std::clamp(rxVolumePercent_, 0, 200);
+    rxVolumeSlider_->SetValue(rxVolumePercent_);
+    rxVolumeValueText_->SetLabel(wxString::Format("%d%%", rxVolumePercent_));
+    audio_->SetRxVolumePercent(rxVolumePercent_);
+}
+
+void MainFrame::OnRxVolumeSlider(wxCommandEvent&) {
+    if (!rxVolumeSlider_) {
+        return;
+    }
+    rxVolumePercent_ = std::clamp(rxVolumeSlider_->GetValue(), 0, 200);
+    if (rxVolumeValueText_) {
+        rxVolumeValueText_->SetLabel(wxString::Format("%d%%", rxVolumePercent_));
+    }
+    audio_->SetRxVolumePercent(rxVolumePercent_);
+    SaveAudioSettings();
+}
+
+void MainFrame::OnRepeaterToggled(wxCommandEvent&) {
+    const bool v = repeaterCheck_ && repeaterCheck_->GetValue();
+    if (activeProfileIndex_ >= 0 && activeProfileIndex_ < static_cast<int>(profiles_.size())) {
+        profiles_[static_cast<size_t>(activeProfileIndex_)].repeater = v;
+        SaveProfilesToDisk();
+    }
+    if (connected_) {
+        relay_->SetRepeaterMode(v);
+    }
 }
 
 void MainFrame::UpdateMicLevelIndicatorVisibility() {
@@ -1009,6 +1074,7 @@ void MainFrame::ApplyAudioSettingsToEngine() {
     audio_->SetPreferredOutputDevice(selectedOutputDeviceId_);
     audio_->SetRogerPatternId(selectedRogerPatternId_);
     audio_->SetCallPatternId(selectedCallPatternId_);
+    audio_->SetRxVolumePercent(rxVolumePercent_);
 }
 
 void MainFrame::OnSettingsClicked(wxCommandEvent&) {

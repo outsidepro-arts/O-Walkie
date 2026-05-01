@@ -20,6 +20,7 @@ class wxGauge;
 class wxStaticText;
 class wxTextCtrl;
 class wxCheckBox;
+class wxSlider;
 class wxDialog;
 
 struct ServerProfile {
@@ -72,6 +73,9 @@ private:
     void ApplyAudioSettingsToEngine();
     void OnSettingsClicked(wxCommandEvent& event);
     void UpdateMicLevelIndicatorVisibility();
+    void SyncRxVolumeUi();
+    void OnRxVolumeSlider(wxCommandEvent& event);
+    void OnRepeaterToggled(wxCommandEvent& event);
 
     void ScheduleReconnect();
     void StopReconnectTimer();
@@ -104,6 +108,8 @@ private:
     wxButton* callBtn_ = nullptr;
     wxStaticText* statusText_ = nullptr;
     wxGauge* signalGauge_ = nullptr;
+    wxSlider* rxVolumeSlider_ = nullptr;
+    wxStaticText* rxVolumeValueText_ = nullptr;
 
     std::unique_ptr<RelayClient> relay_;
     std::unique_ptr<AudioEngine> audio_;
@@ -118,6 +124,7 @@ private:
     int globalPttVKey_ = 0;
     int globalPttMods_ = 0;
     bool showMicLevelIndicator_ = false;
+    int rxVolumePercent_ = 100;
     bool globalPttPressed_ = false;
 #ifdef _WIN32
     void* globalPttHook_ = nullptr;

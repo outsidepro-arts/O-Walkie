@@ -53,6 +53,9 @@ void AudioEngine::PlaybackCallback(ma_device* pDevice, void* pOutput, const void
 namespace {
 constexpr int kRogerTailMs = 40;
 constexpr int kUiSignalPlaybackRate = 44100;
+constexpr int kRxVolumeMinPercent = 0;
+constexpr int kRxVolumeMaxPercent = 200;
+constexpr int kRxVolumeDefaultPercent = 100;
 
 struct WavPcm {
     std::vector<int16_t> samples;
@@ -940,6 +943,11 @@ void AudioEngine::DrainCaptureFifoOpus() {
     }
 }
 
+void AudioEngine::SetRxVolumePercent(int percent) {
+    const int p = std::clamp(percent, kRxVolumeMinPercent, kRxVolumeMaxPercent);
+    rxVolumePercent_.store(p, std::memory_order_relaxed);
+}
+
 void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
     if (opus.empty()) {
         return;
@@ -973,6 +981,15 @@ void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
     const int decoded = opus_decode(decoder_, opus.data(), static_cast<int>(opus.size()), pcm.data(), frame, 0);
     if (decoded <= 0) {
         return;
+    }
+
+    const int pct = rxVolumePercent_.load(std::memory_order_relaxed);
+    if (pct != kRxVolumeDefaultPercent) {
+        const double gain = static_cast<double>(pct) / 100.0;
+        for (auto& s : pcm) {
+            const int v = static_cast<int>(std::lround(static_cast<double>(s) * gain));
+            s = static_cast<int16_t>(std::clamp(v, -32768, 32767));
+        }
     }
 
     QueuePcmForPlaybackLocked(pcm);

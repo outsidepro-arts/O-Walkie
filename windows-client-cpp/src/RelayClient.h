@@ -49,6 +49,8 @@ public:
 
     void SendOpusFrame(const uint8_t* data, size_t size, uint8_t signal);
     void SendTxEofBurst();
+    /// Updates server repeater flag when already connected (WS message).
+    void SetRepeaterMode(bool enabled);
 
     void SetStatusCallback(StatusCallback cb) { onStatus_ = std::move(cb); }
     void SetConnectedCallback(ConnectedCallback cb) { onConnected_ = std::move(cb); }
