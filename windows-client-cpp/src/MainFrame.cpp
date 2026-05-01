@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <fstream>
 #include <string>
 #include <thread>
@@ -30,6 +31,38 @@
 #endif
 
 namespace {
+
+// Fixed anti-spam for rapid PTT taps (matches Android PttRateLimiter policy).
+constexpr int64_t kPttSpamWindowMs = 600;
+constexpr int kPttSpamMaxStarts = 3;
+
+class PttSpamGuard {
+public:
+    bool TryAcquire() {
+        const int64_t now = NowMs();
+        Prune(now);
+        if (static_cast<int>(times_.size()) >= kPttSpamMaxStarts) return false;
+        times_.push_back(now);
+        return true;
+    }
+
+private:
+    static int64_t NowMs() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
+
+    void Prune(int64_t nowMs) {
+        while (!times_.empty() && nowMs - times_.front() >= kPttSpamWindowMs) {
+            times_.pop_front();
+        }
+    }
+
+    std::deque<int64_t> times_{};
+};
+
+PttSpamGuard g_pttSpamGuard;
 
 #ifdef _WIN32
 MainFrame* g_mainFrameForPttHook = nullptr;
@@ -1315,6 +1348,9 @@ void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
 
 void MainFrame::BeginPttTx() {
     if (!connected_ || audio_->IsSignalStreaming() || audio_->IsTransmitting()) {
+        return;
+    }
+    if (!g_pttSpamGuard.TryAcquire()) {
         return;
     }
     audio_->PlayPttPressSignal();

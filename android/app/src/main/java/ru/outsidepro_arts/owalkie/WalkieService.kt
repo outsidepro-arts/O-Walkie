@@ -922,6 +922,11 @@ class WalkieService : Service() {
         localCallPlaybackJob?.cancel()
         localCallPlaybackJob = null
         if (transmitting.getAndSet(true)) return
+        if (!PttRateLimiter.tryAcquire()) {
+            transmitting.set(false)
+            broadcastStatus(currentSignalByte())
+            return
+        }
         val micOption = microphoneConfigStore.getSelectedOption()
         ensureVoiceAudioProfile(useBluetoothHeadset || micOption.preferBluetooth)
         localPttPressPlaybackJob?.cancel()

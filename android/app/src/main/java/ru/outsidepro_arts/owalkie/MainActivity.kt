@@ -77,6 +77,8 @@ class MainActivity : ComponentActivity() {
     private var userRequestedConnection = false
     private var suppressSpinnerReconnect = false
     private var skipNextConnectedTone = false
+    /** Hold-to-talk: finger is down; release must send PTT_RELEASE even if STATUS has not arrived yet. */
+    private var holdPttFingerDown = false
     private var scanJob: Job? = null
     private val scanScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val scanClient = OkHttpClient.Builder().retryOnConnectionFailure(true).build()
@@ -157,13 +159,14 @@ class MainActivity : ComponentActivity() {
             } else {
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
+                        holdPttFingerDown = true
                         startTransmitUi()
                         true
                     }
 
                     MotionEvent.ACTION_UP,
                     MotionEvent.ACTION_CANCEL -> {
-                        stopTransmitUi()
+                        endHoldPttGesture()
                         true
                     }
 
@@ -245,7 +248,15 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         // If touch sequence is interrupted (app backgrounded/system overlay), ACTION_UP may never arrive.
         // Force TX release to prevent stuck PTT state.
-        stopTransmitUi()
+        if (holdPttFingerDown) {
+            holdPttFingerDown = false
+            sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
+            binding.callButton.isEnabled = wsConnected
+            updatePttLabel()
+            updateStatusChips()
+        } else {
+            stopTransmitUi()
+        }
         // Orientation recreation is not a real background transition; avoid toggling
         // service focus state which can disturb active network/session timing.
         if (!isChangingConfigurations) {
@@ -353,9 +364,17 @@ class MainActivity : ComponentActivity() {
     private fun startTransmitUi() {
         if (transmitting) return
         if (!wsConnected) return
-        transmitting = true
         sendServiceAction(WalkieService.ACTION_PTT_PRESS)
         binding.callButton.isEnabled = false
+        updatePttLabel()
+        updateStatusChips()
+    }
+
+    private fun endHoldPttGesture() {
+        if (!holdPttFingerDown) return
+        holdPttFingerDown = false
+        sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
+        binding.callButton.isEnabled = wsConnected
         updatePttLabel()
         updateStatusChips()
     }
@@ -370,7 +389,6 @@ class MainActivity : ComponentActivity() {
 
     private fun stopTransmitUi() {
         if (!transmitting) return
-        transmitting = false
         sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
         binding.callButton.isEnabled = wsConnected
         updatePttLabel()

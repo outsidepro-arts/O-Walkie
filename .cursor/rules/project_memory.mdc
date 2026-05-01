@@ -26,6 +26,7 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Клиенты: защита от PTT-спама — не более 3 стартов передачи за скользящие 600 ms (`PttRateLimiter` в Android `WalkieService` + `PttSpamGuard` в `MainFrame.cpp` для Windows); hold-to-talk в `MainActivity` шлёт `PTT_RELEASE` по жесту (`endHoldPttGesture`) без дублирования с `stopTransmitUi` при `onStop`.
 - Версионирование релизов: `versionName`/`versionCode` Android из git (`v*` tags) с переопределением `-P`/`OWALKIE_*` и полом `versionCodeFloor` в `android/owalkie-version.properties`; Windows desktop — макрос `OWALKIE_VERSION` из git или `-DOWALKIE_VERSION_STRING`/env; relay логирует `buildVersion` (`-ldflags -X main.buildVersion=...`). Workflow `release-on-tag` собирает Linux relay и debug APK с именем версии из тега и прикрепляет к GitHub Release.
 - Backend: hardened channel mixer runtime against UDP/audio generation crashes — added panic recovery with stack trace, emergency mixer loop restart with backoff, and codec/repeater state reinitialization after failure so relay process stays alive under runtime faults.
 - Backend: mixer emergency restarts now expose a lifetime counter per channel and log `ALERT` when ≥5 restarts occur within 1 minute (throttled to once per 30s per channel) for operator visibility.
