@@ -137,10 +137,10 @@ class WalkieService : Service() {
         private const val UDP_RECV_TIMEOUT_BACKGROUND_MS = 10000
         private const val UDP_KEEPALIVE_SIGNAL = 255
         private const val UDP_KEEPALIVE_ACK_SIGNAL = 254
-        private const val UDP_KEEPALIVE_RTX_FOREGROUND_MS = 1200L
-        private const val UDP_KEEPALIVE_RTX_BACKGROUND_MS = 4000L
-        private const val UDP_KEEPALIVE_LOST_FOREGROUND_MS = 12000L
-        private const val UDP_KEEPALIVE_LOST_BACKGROUND_MS = 30000L
+        private const val UDP_KEEPALIVE_RTX_FOREGROUND_MS = 1000L
+        private const val UDP_KEEPALIVE_RTX_BACKGROUND_MS = 2000L
+        private const val UDP_KEEPALIVE_LOST_FOREGROUND_MS = 8000L
+        private const val UDP_KEEPALIVE_LOST_BACKGROUND_MS = 10000L
         private const val SIGNAL_POLL_INTERVAL_FOREGROUND_MS = 1000L
         private const val SIGNAL_POLL_INTERVAL_BACKGROUND_MS = 5000L
         private const val SIGNAL_REFRESH_INTERVAL_FOREGROUND_MS = 1000L
