@@ -27,6 +27,7 @@ release/
 
 # C++ desktop client local build
 windows-client-cpp/build/
+windows-client-cpp/build-*/
 windows-client-cpp/*.exe
 windows-client-cpp/*.dll
 debug-*.log
