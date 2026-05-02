@@ -320,8 +320,9 @@ public:
         const std::string& selectedCallId,
         int globalPttVKey,
         int globalPttMods,
-        bool showMicLevelIndicator)
-        : wxDialog(parent, wxID_ANY, "Settings", wxDefaultPosition, wxSize(520, 320), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+        bool showMicLevelIndicator,
+        bool pttToggleMode)
+        : wxDialog(parent, wxID_ANY, "Settings", wxDefaultPosition, wxSize(520, 360), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
           inputDevices_(inputDevices),
           outputDevices_(outputDevices),
           rogerPatterns_(rogerPatterns),
@@ -375,6 +376,10 @@ public:
         pttRow->Add(pttCaptureBtn_, 0, wxRIGHT, 8);
         pttRow->Add(pttClearBtn_, 0);
         grid->Add(pttRow, 1, wxEXPAND);
+        grid->Add(new wxStaticText(this, wxID_ANY, "PTT toggle mode"), 0, wxALIGN_CENTER_VERTICAL);
+        pttToggleCheck_ = new wxCheckBox(this, wxID_ANY, "Tap or hotkey press toggles transmit on/off");
+        pttToggleCheck_->SetValue(pttToggleMode);
+        grid->Add(pttToggleCheck_, 1, wxEXPAND);
         grid->Add(new wxStaticText(this, wxID_ANY, "Microphone level indicator"), 0, wxALIGN_CENTER_VERTICAL);
         micLevelCheck_ = new wxCheckBox(this, wxID_ANY, "Show VU meter");
         micLevelCheck_->SetValue(showMicLevelIndicator);
@@ -413,6 +418,7 @@ public:
     int SelectedGlobalPttVKey() const { return selectedPttVKey_; }
     int SelectedGlobalPttMods() const { return selectedPttMods_; }
     bool ShowMicLevelIndicator() const { return micLevelCheck_ && micLevelCheck_->GetValue(); }
+    bool PttToggleMode() const { return pttToggleCheck_ && pttToggleCheck_->GetValue(); }
 
 private:
     static void SelectById(wxChoice* c, const std::vector<int>& ids, int id) {
@@ -462,6 +468,7 @@ private:
     wxStaticText* pttKeyLabel_ = nullptr;
     wxButton* pttCaptureBtn_ = nullptr;
     wxButton* pttClearBtn_ = nullptr;
+    wxCheckBox* pttToggleCheck_ = nullptr;
     wxCheckBox* micLevelCheck_ = nullptr;
     std::vector<int> inputIds_;
     std::vector<int> outputIds_;
@@ -524,8 +531,7 @@ MainFrame::MainFrame()
             }
             connectBtn_->SetLabel((connected || userWantsSession_) ? "Disconnect" : "Connect");
             ResetPttReleaseBurstGuard();
-            SyncPttButtonForBurstGuard();
-            callBtn_->Enable(connected);
+            RefreshPttUi();
             UpdateProfileControlsEnabled();
             // Guard path: if transport dropped but loss callback was missed/raced,
             // keep reconnect loop alive as long as user still wants the session.
@@ -571,6 +577,7 @@ MainFrame::MainFrame()
     ApplyAudioSettingsToEngine();
     SyncRxVolumeUi();
     UpdateProfileControlsEnabled();
+    RefreshPttUi();
 
     CallAfter([this] {
         if (hostCtrl_) {
@@ -713,6 +720,7 @@ void MainFrame::LoadAllSettings() {
                 selectedCallPatternId_ = j.value("call_pattern_id", std::string("call_variant_1"));
                 globalPttVKey_ = j.value("ptt_hotkey_vkey", 0);
                 globalPttMods_ = j.value("ptt_hotkey_mods", 0);
+                pttToggleMode_ = j.value("ptt_toggle_mode", false);
                 showMicLevelIndicator_ = j.value("show_mic_level_indicator", false);
                 rxVolumePercent_ = j.value("rx_volume_percent", 100);
             }
@@ -759,6 +767,7 @@ void MainFrame::SaveAudioSettings() {
     j["call_pattern_id"] = selectedCallPatternId_;
     j["ptt_hotkey_vkey"] = globalPttVKey_;
     j["ptt_hotkey_mods"] = globalPttMods_;
+    j["ptt_toggle_mode"] = pttToggleMode_;
     j["show_mic_level_indicator"] = showMicLevelIndicator_;
     j["rx_volume_percent"] = std::clamp(rxVolumePercent_, 0, 200);
     try {
@@ -990,12 +999,12 @@ void MainFrame::OnRelayConnectionLost() {
     ResetPttReleaseBurstGuard();
     audio_->StopTransmit();
     globalPttPressed_ = false;
+    globalPttToggleHookDown_ = false;
     connected_ = false;
     audio_->PlayConnectionErrorSignal();
-    pttBtn_->Enable(false);
-    callBtn_->Enable(false);
     connectBtn_->SetLabel(userWantsSession_ ? "Disconnect" : "Connect");
     UpdateProfileControlsEnabled();
+    RefreshPttUi();
 
     if (!userWantsSession_) {
         SetStatus("Disconnected");
@@ -1146,6 +1155,7 @@ void MainFrame::BindUi() {
     pttBtn_->Bind(wxEVT_LEAVE_WINDOW, &MainFrame::OnPttUp, this);
     pttBtn_->Bind(wxEVT_KEY_DOWN, &MainFrame::OnPttButtonKeyDown, this);
     pttBtn_->Bind(wxEVT_KEY_UP, &MainFrame::OnPttButtonKeyUp, this);
+    pttBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnPttButtonClicked, this);
     callBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnCallSignalClicked, this);
     rxVolumeSlider_->Bind(wxEVT_SLIDER, &MainFrame::OnRxVolumeSlider, this);
     repeaterCheck_->Bind(wxEVT_CHECKBOX, &MainFrame::OnRepeaterToggled, this);
@@ -1254,9 +1264,10 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
         ResetPttReleaseBurstGuard();
         connected_ = false;
         connectBtn_->SetLabel("Connect");
-        pttBtn_->Enable(false);
-        callBtn_->Enable(false);
+        globalPttPressed_ = false;
+        globalPttToggleHookDown_ = false;
         UpdateProfileControlsEnabled();
+        RefreshPttUi();
         SetStatus("Disconnected");
         return;
     }
@@ -1282,16 +1293,28 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
 }
 
 void MainFrame::OnPttDown(wxMouseEvent& event) {
+    if (pttToggleMode_) {
+        event.Skip();
+        return;
+    }
     BeginPttTx();
     event.Skip();
 }
 
 void MainFrame::OnPttUp(wxMouseEvent& event) {
+    if (pttToggleMode_) {
+        event.Skip();
+        return;
+    }
     EndPttTx();
     event.Skip();
 }
 
 void MainFrame::OnPttButtonKeyDown(wxKeyEvent& event) {
+    if (pttToggleMode_) {
+        event.Skip();
+        return;
+    }
     if (event.GetKeyCode() == WXK_SPACE && connected_) {
         BeginPttTx();
         return;
@@ -1300,11 +1323,22 @@ void MainFrame::OnPttButtonKeyDown(wxKeyEvent& event) {
 }
 
 void MainFrame::OnPttButtonKeyUp(wxKeyEvent& event) {
+    if (pttToggleMode_) {
+        event.Skip();
+        return;
+    }
     if (event.GetKeyCode() == WXK_SPACE && connected_) {
         EndPttTx();
         return;
     }
     event.Skip();
+}
+
+void MainFrame::OnPttButtonClicked(wxCommandEvent&) {
+    if (!pttToggleMode_) {
+        return;
+    }
+    TogglePttTx();
 }
 
 void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
@@ -1323,21 +1357,25 @@ void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
 
 void MainFrame::BeginPttTx() {
     if (!connected_ || audio_->IsSignalStreaming() || audio_->IsTransmitting()) {
+        RefreshPttUi();
         return;
     }
     if (pttReleaseBurstBlocked_.load(std::memory_order_relaxed)) {
         ExtendPttReleaseBurstDecayTimer();
         CallAfter([this] { SetStatus("PTT paused — too many quick releases"); });
+        RefreshPttUi();
         return;
     }
     audio_->PlayPttPressSignal();
     if (audio_->StartTransmit()) {
         SetStatus("Transmitting");
     }
+    RefreshPttUi();
 }
 
 void MainFrame::EndPttTx() {
     if (!connected_ || !audio_->IsTransmitting()) {
+        RefreshPttUi();
         return;
     }
     RecordPttReleaseBurst();
@@ -1346,6 +1384,37 @@ void MainFrame::EndPttTx() {
     audio_->StreamRogerSignal();
     relay_->SendTxEofBurst();
     SetStatus("Connected");
+    RefreshPttUi();
+}
+
+void MainFrame::TogglePttTx() {
+    if (!connected_) {
+        return;
+    }
+    if (audio_->IsTransmitting()) {
+        EndPttTx();
+    } else {
+        BeginPttTx();
+    }
+}
+
+void MainFrame::RefreshPttUi() {
+    if (!pttBtn_) {
+        return;
+    }
+    const bool burstBlocked = pttReleaseBurstBlocked_.load(std::memory_order_relaxed);
+    const bool allowPtt = connected_ && !burstBlocked;
+    pttBtn_->Enable(allowPtt);
+    if (!allowPtt) {
+        pttBtn_->SetLabel("PTT unavailable");
+    } else if (pttToggleMode_) {
+        pttBtn_->SetLabel(audio_->IsTransmitting() ? "Stop talking" : "Start talking");
+    } else {
+        pttBtn_->SetLabel("Hold to Talk");
+    }
+    if (callBtn_) {
+        callBtn_->Enable(connected_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming());
+    }
 }
 
 void MainFrame::ResetPttReleaseBurstGuard() {
@@ -1355,11 +1424,7 @@ void MainFrame::ResetPttReleaseBurstGuard() {
 }
 
 void MainFrame::SyncPttButtonForBurstGuard() {
-    if (!pttBtn_) {
-        return;
-    }
-    const bool allow = connected_ && !pttReleaseBurstBlocked_.load(std::memory_order_relaxed);
-    pttBtn_->Enable(allow);
+    RefreshPttUi();
 }
 
 void MainFrame::ArmPttReleaseBurstDecay(const uint64_t scheduleTicket) {
@@ -1402,6 +1467,7 @@ void MainFrame::RecordPttReleaseBurst() {
 void MainFrame::OnTxStop() {
     audio_->StopTransmit();
     SetStatus("TX stopped by server");
+    RefreshPttUi();
 }
 
 void MainFrame::PopulateAudioDeviceChoices() {
@@ -1431,7 +1497,8 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
         selectedCallPatternId_,
         globalPttVKey_,
         globalPttMods_,
-        showMicLevelIndicator_);
+        showMicLevelIndicator_,
+        pttToggleMode_);
     if (dlg.ShowModal() != wxID_OK) {
         return;
     }
@@ -1442,9 +1509,17 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
     globalPttVKey_ = dlg.SelectedGlobalPttVKey();
     globalPttMods_ = dlg.SelectedGlobalPttMods();
     showMicLevelIndicator_ = dlg.ShowMicLevelIndicator();
+    const bool newToggle = dlg.PttToggleMode();
+    if (pttToggleMode_ && !newToggle && audio_->IsTransmitting()) {
+        EndPttTx();
+    }
+    pttToggleMode_ = newToggle;
+    globalPttPressed_ = false;
+    globalPttToggleHookDown_ = false;
     UpdateMicLevelIndicatorVisibility();
     ApplyAudioSettingsToEngine();
     SaveAudioSettings();
+    RefreshPttUi();
     SetStatus("Settings applied");
 }
 
@@ -1476,6 +1551,17 @@ LRESULT CALLBACK MainFrame::GlobalPttKeyboardProc(int nCode, WPARAM wParam, LPAR
             const int requiredMods = g_mainFrameForPttHook->globalPttMods_;
             const bool isKeyUp = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
             if (!isKeyUp && !AreRequiredModsPressed(requiredMods, currentMods)) {
+                return CallNextHookEx(nullptr, nCode, wParam, lParam);
+            }
+            if (g_mainFrameForPttHook->pttToggleMode_) {
+                if ((wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)) {
+                    if (!g_mainFrameForPttHook->globalPttToggleHookDown_) {
+                        g_mainFrameForPttHook->globalPttToggleHookDown_ = true;
+                        g_mainFrameForPttHook->CallAfter([frame = g_mainFrameForPttHook] { frame->TogglePttTx(); });
+                    }
+                } else if (isKeyUp) {
+                    g_mainFrameForPttHook->globalPttToggleHookDown_ = false;
+                }
                 return CallNextHookEx(nullptr, nCode, wParam, lParam);
             }
             if ((wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) && !g_mainFrameForPttHook->globalPttPressed_) {

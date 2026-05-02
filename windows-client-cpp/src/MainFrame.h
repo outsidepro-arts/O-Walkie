@@ -85,6 +85,9 @@ private:
     void StartReconnectAttemptAsync();
     void BeginPttTx();
     void EndPttTx();
+    void TogglePttTx();
+    void RefreshPttUi();
+    void OnPttButtonClicked(wxCommandEvent& event);
     void RecordPttReleaseBurst();
     void ExtendPttReleaseBurstDecayTimer();
     void ResetPttReleaseBurstGuard();
@@ -129,9 +132,11 @@ private:
     std::string selectedCallPatternId_ = "call_variant_1";
     int globalPttVKey_ = 0;
     int globalPttMods_ = 0;
+    bool pttToggleMode_ = false;
     bool showMicLevelIndicator_ = false;
     int rxVolumePercent_ = 100;
     bool globalPttPressed_ = false;
+    bool globalPttToggleHookDown_ = false;
 #ifdef _WIN32
     void* globalPttHook_ = nullptr;
 #endif
