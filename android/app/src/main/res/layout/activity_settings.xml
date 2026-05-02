@@ -94,11 +94,11 @@
             android:text="@string/play_signal_button" />
 
         <Button
-            android:id="@+id/deleteRogerButton"
+            android:id="@+id/editRogerButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
-            android:text="@string/delete_signal_button"
+            android:text="@string/edit_signal_button"
             android:visibility="gone" />
 
         <Button
@@ -136,11 +136,11 @@
             android:text="@string/play_signal_button" />
 
         <Button
-            android:id="@+id/deleteCallingButton"
+            android:id="@+id/editCallingButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
-            android:text="@string/delete_signal_button"
+            android:text="@string/edit_signal_button"
             android:visibility="gone" />
 
         <Button

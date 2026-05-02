@@ -46,7 +46,8 @@
     <string name="common_ok">Ок</string>
     <string name="common_reset">Сбросить</string>
     <string name="play_signal_button">Проиграть</string>
-    <string name="delete_signal_button">Удалить</string>
+    <string name="delete_signal_button">Удалить сигнал</string>
+    <string name="edit_signal_button">Редактировать</string>
     <string name="delete_signal_confirm">Удалить выбранный пользовательский сигнал?</string>
     <string name="roger_no_signal_option">Нет сигнала</string>
     <string name="roger_signal_label">Сигнал Роджер</string>
@@ -56,6 +57,7 @@
     <string name="call_custom_title">Свой сигнал вызова</string>
     <string name="call_signal">Вызов</string>
     <string name="roger_custom_title">Свой сигнал</string>
+    <string name="edit_signal_title">Редактировать сигнал</string>
     <string name="roger_name_hint">Название сигнала</string>
     <string name="roger_points_label">Список точек частот</string>
     <string name="roger_new_point_title">Новая точка</string>
@@ -65,7 +67,7 @@
     <string name="roger_points_total_too_long">Суммарная длина сигнала слишком большая для выбранного режима</string>
     <string name="roger_point_pause">Пауза</string>
     <string name="roger_point_hz_format">%1$d Гц</string>
-    <string name="delete_point_button">Удалить</string>
+    <string name="delete_point_button">Удалить точку</string>
     <string name="calling_repeat_count_label">Количество повторов</string>
     <string name="calling_repeat_count_hint">Количество повторов</string>
     <string name="calling_repeat_count_invalid">Введите количество повторов больше нуля</string>

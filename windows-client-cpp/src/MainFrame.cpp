@@ -355,10 +355,12 @@ wxStdDialogButtonSizer* NewTranslatedOkCancelSizer(wxDialog* dlg) {
 
 constexpr int kMaxRogerCustomSignalMs = 1000;
 constexpr int kMaxCallCustomSignalMs = 5000;
+/// Returned from SignalPatternEditorDialog when user confirms delete (settings must call DeleteCustom*).
+constexpr int kPatternEditorModalDeleted = 9001;
 
 class SignalPatternEditorDialog final : public wxDialog {
 public:
-    SignalPatternEditorDialog(wxWindow* parent, AudioEngine* audio, bool callKind)
+    SignalPatternEditorDialog(wxWindow* parent, AudioEngine* audio, bool callKind, const SignalPattern* editOf = nullptr)
         : wxDialog(parent, wxID_ANY,
                    callKind ? _("Custom calling signal") : _("Custom Roger signal"),
                    wxDefaultPosition, wxSize(440, 400),
@@ -384,18 +386,36 @@ public:
         }
         auto* row = new wxBoxSizer(wxHORIZONTAL);
         addBtn_ = new wxButton(this, wxID_ANY, _("Add segment"));
-        removeBtn_ = new wxButton(this, wxID_ANY, _("Remove"));
+        removeBtn_ = new wxButton(this, wxID_ANY, _("Delete point"));
         playBtn_ = new wxButton(this, wxID_ANY, _("Play"));
+        deleteBtn_ = new wxButton(this, wxID_ANY, _("Delete signal"));
         row->Add(addBtn_, 0, wxRIGHT, 8);
         row->Add(removeBtn_, 0, wxRIGHT, 8);
-        row->Add(playBtn_, 0);
+        row->Add(playBtn_, 0, wxRIGHT, 8);
+        row->Add(deleteBtn_, 0);
         root->Add(row, 0, wxBOTTOM, 8);
         root->Add(NewTranslatedOkCancelSizer(this), 0, wxEXPAND);
         SetSizerAndFit(root);
 
+        if (editOf && !editOf->id.empty()) {
+            editingId_ = editOf->id;
+            nameCtrl_->SetValue(wxString::FromUTF8(editOf->name));
+            points_ = editOf->points;
+            if (callKind_) {
+                repeatSpin_->SetValue(1);
+            }
+            RefreshList();
+            deleteBtn_->Show();
+            SetTitle(_("Edit signal"));
+        } else {
+            editingId_.clear();
+            deleteBtn_->Hide();
+        }
+
         addBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnAdd, this);
         removeBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnRemove, this);
         playBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnPlay, this);
+        deleteBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnDeleteClicked, this);
         Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnTrySave, this, wxID_OK);
     }
 
@@ -512,6 +532,18 @@ private:
         }
     }
 
+    void OnDeleteClicked(wxCommandEvent&) {
+        if (editingId_.empty()) {
+            return;
+        }
+        wxMessageDialog confirm(
+            this, _("Delete selected custom signal?"), _("Confirm"), wxYES_NO | wxICON_QUESTION | wxCENTER);
+        if (confirm.ShowModal() != wxID_YES) {
+            return;
+        }
+        EndModal(kPatternEditorModalDeleted);
+    }
+
     std::vector<SignalPatternPoint> BuildRepeatedPoints() const {
         const int rep = RepeatCountOr1();
         if (rep <= 1) {
@@ -545,6 +577,7 @@ private:
             return;
         }
         saved_ = {};
+        saved_.id = editingId_;
         saved_.name = nameWx.utf8_string();
         saved_.points = BuildRepeatedPoints();
         saved_.appendTail = !callKind_;
@@ -558,8 +591,10 @@ private:
     wxButton* addBtn_ = nullptr;
     wxButton* removeBtn_ = nullptr;
     wxButton* playBtn_ = nullptr;
+    wxButton* deleteBtn_ = nullptr;
     AudioEngine* audio_ = nullptr;
     bool callKind_ = false;
+    std::string editingId_;
     std::vector<SignalPatternPoint> points_;
     SignalPattern saved_;
 };
@@ -628,11 +663,13 @@ public:
         }
         rogerRow->Add(rogerChoice_, 1, wxEXPAND | wxRIGHT, 8);
         rogerPlayBtn_ = new wxButton(this, wxID_ANY, _("Play"));
+        rogerEditBtn_ = new wxButton(this, wxID_ANY, _("Edit"));
         rogerCustomBtn_ = new wxButton(this, wxID_ANY, _("Custom"));
-        rogerDeleteBtn_ = new wxButton(this, wxID_ANY, _("Delete"));
         rogerRow->Add(rogerPlayBtn_, 0, wxRIGHT, 8);
-        rogerRow->Add(rogerCustomBtn_, 0, wxRIGHT, 8);
-        rogerRow->Add(rogerDeleteBtn_, 0);
+        auto* rogerEditThenCustom = new wxBoxSizer(wxHORIZONTAL);
+        rogerEditThenCustom->Add(rogerEditBtn_, 0, wxRIGHT, 8);
+        rogerEditThenCustom->Add(rogerCustomBtn_, 0);
+        rogerRow->Add(rogerEditThenCustom, 0);
         grid->Add(rogerRow, 1, wxEXPAND);
 
         grid->Add(new wxStaticText(this, wxID_ANY, _("Call pattern")), 0, wxALIGN_CENTER_VERTICAL);
@@ -644,11 +681,13 @@ public:
         }
         callRow->Add(callChoice_, 1, wxEXPAND | wxRIGHT, 8);
         callPlayBtn_ = new wxButton(this, wxID_ANY, _("Play"));
+        callEditBtn_ = new wxButton(this, wxID_ANY, _("Edit"));
         callCustomBtn_ = new wxButton(this, wxID_ANY, _("Custom"));
-        callDeleteBtn_ = new wxButton(this, wxID_ANY, _("Delete"));
         callRow->Add(callPlayBtn_, 0, wxRIGHT, 8);
-        callRow->Add(callCustomBtn_, 0, wxRIGHT, 8);
-        callRow->Add(callDeleteBtn_, 0);
+        auto* callEditThenCustom = new wxBoxSizer(wxHORIZONTAL);
+        callEditThenCustom->Add(callEditBtn_, 0, wxRIGHT, 8);
+        callEditThenCustom->Add(callCustomBtn_, 0);
+        callRow->Add(callEditThenCustom, 0);
         grid->Add(callRow, 1, wxEXPAND);
 
         grid->Add(new wxStaticText(this, wxID_ANY, _("Global PTT key")), 0, wxALIGN_CENTER_VERTICAL);
@@ -672,6 +711,7 @@ public:
         root->Add(grid, 1, wxEXPAND | wxALL, 12);
         root->Add(NewTranslatedOkCancelSizer(this), 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         SetSizerAndFit(root);
+        SetLayoutDirection(wxLayout_LeftToRight);
 
         SelectById(inputChoice_, inputIds_, selectedInputId);
         SelectById(outputChoice_, outputIds_, selectedOutputId);
@@ -720,33 +760,51 @@ public:
                 ReloadRogerCallChoicesFromHost();
             }
         });
-        rogerDeleteBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-            if (!host_) {
+        rogerEditBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            if (!host_ || !host_->AudioEnginePtr()) {
                 return;
             }
             const std::string id = PickString(rogerChoice_, rogerIds_);
             if (id.empty() || MainFrame::IsBuiltInRogerPatternId(id)) {
                 return;
             }
-            if (wxMessageBox(_("Delete selected custom signal?"), _("Confirm"), wxYES_NO | wxICON_QUESTION, this) != wxYES) {
+            const SignalPattern* p = FindPatternById(rogerPatterns_, id);
+            if (!p) {
                 return;
             }
-            host_->DeleteCustomRogerPattern(id);
-            ReloadRogerCallChoicesFromHost();
+            SignalPattern copy = *p;
+            SignalPatternEditorDialog ed(this, host_->AudioEnginePtr(), false, &copy);
+            const int r = ed.ShowModal();
+            if (r == kPatternEditorModalDeleted) {
+                host_->DeleteCustomRogerPattern(id);
+                ReloadRogerCallChoicesFromHost();
+            } else if (r == wxID_OK) {
+                host_->UpsertCustomRogerPattern(ed.TakeSavedPattern());
+                ReloadRogerCallChoicesFromHost();
+            }
         });
-        callDeleteBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-            if (!host_) {
+        callEditBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            if (!host_ || !host_->AudioEnginePtr()) {
                 return;
             }
             const std::string id = PickString(callChoice_, callIds_);
             if (id.empty() || MainFrame::IsBuiltInCallPatternId(id)) {
                 return;
             }
-            if (wxMessageBox(_("Delete selected custom signal?"), _("Confirm"), wxYES_NO | wxICON_QUESTION, this) != wxYES) {
+            const SignalPattern* p = FindPatternById(callPatterns_, id);
+            if (!p) {
                 return;
             }
-            host_->DeleteCustomCallPattern(id);
-            ReloadRogerCallChoicesFromHost();
+            SignalPattern copy = *p;
+            SignalPatternEditorDialog ed(this, host_->AudioEnginePtr(), true, &copy);
+            const int r = ed.ShowModal();
+            if (r == kPatternEditorModalDeleted) {
+                host_->DeleteCustomCallPattern(id);
+                ReloadRogerCallChoicesFromHost();
+            } else if (r == wxID_OK) {
+                host_->UpsertCustomCallPattern(ed.TakeSavedPattern());
+                ReloadRogerCallChoicesFromHost();
+            }
         });
 
         UpdatePatternDeleteButtons();
@@ -795,8 +853,8 @@ private:
     void UpdatePatternDeleteButtons() {
         const std::string rid = PickString(rogerChoice_, rogerIds_);
         const std::string cid = PickString(callChoice_, callIds_);
-        rogerDeleteBtn_->Enable(!rid.empty() && !MainFrame::IsBuiltInRogerPatternId(rid));
-        callDeleteBtn_->Enable(!cid.empty() && !MainFrame::IsBuiltInCallPatternId(cid));
+        rogerEditBtn_->Enable(!rid.empty() && !MainFrame::IsBuiltInRogerPatternId(rid));
+        callEditBtn_->Enable(!cid.empty() && !MainFrame::IsBuiltInCallPatternId(cid));
     }
 
     static const SignalPattern* FindPatternById(const std::vector<SignalPattern>& list, const std::string& id) {
@@ -881,9 +939,9 @@ private:
     wxButton* rogerPlayBtn_ = nullptr;
     wxButton* callPlayBtn_ = nullptr;
     wxButton* rogerCustomBtn_ = nullptr;
-    wxButton* rogerDeleteBtn_ = nullptr;
+    wxButton* rogerEditBtn_ = nullptr;
     wxButton* callCustomBtn_ = nullptr;
-    wxButton* callDeleteBtn_ = nullptr;
+    wxButton* callEditBtn_ = nullptr;
     wxStaticText* pttKeyLabel_ = nullptr;
     wxButton* pttCaptureBtn_ = nullptr;
     wxButton* pttClearBtn_ = nullptr;
@@ -1179,6 +1237,21 @@ static std::string NewCustomPatternId() {
 
 void MainFrame::UpsertCustomRogerPattern(SignalPattern pattern) {
     pattern.appendTail = true;
+    if (!pattern.id.empty()) {
+        for (auto& existing : customRogerPatterns_) {
+            if (existing.id == pattern.id) {
+                existing.name = std::move(pattern.name);
+                existing.points = std::move(pattern.points);
+                existing.appendTail = true;
+                selectedRogerPatternId_ = existing.id;
+                SaveCustomSignalPatternsToDisk();
+                ApplyCustomPatternsToEngine();
+                audio_->SetRogerPatternId(selectedRogerPatternId_);
+                SaveAudioSettings();
+                return;
+            }
+        }
+    }
     for (auto& existing : customRogerPatterns_) {
         if (PatternNameAsciiIEq(existing.name, pattern.name)) {
             pattern.id = existing.id;
@@ -1204,6 +1277,21 @@ void MainFrame::UpsertCustomRogerPattern(SignalPattern pattern) {
 
 void MainFrame::UpsertCustomCallPattern(SignalPattern pattern) {
     pattern.appendTail = false;
+    if (!pattern.id.empty()) {
+        for (auto& existing : customCallPatterns_) {
+            if (existing.id == pattern.id) {
+                existing.name = std::move(pattern.name);
+                existing.points = std::move(pattern.points);
+                existing.appendTail = false;
+                selectedCallPatternId_ = existing.id;
+                SaveCustomSignalPatternsToDisk();
+                ApplyCustomPatternsToEngine();
+                audio_->SetCallPatternId(selectedCallPatternId_);
+                SaveAudioSettings();
+                return;
+            }
+        }
+    }
     for (auto& existing : customCallPatterns_) {
         if (PatternNameAsciiIEq(existing.name, pattern.name)) {
             pattern.id = existing.id;

@@ -23,6 +23,9 @@ msgstr "Свой сигнал вызова"
 msgid "Custom Roger signal"
 msgstr "Свой сигнал"
 
+msgid "Edit signal"
+msgstr "Редактировать сигнал"
+
 msgid "Name"
 msgstr "Название"
 
@@ -35,8 +38,11 @@ msgstr "Количество повторов"
 msgid "Add segment"
 msgstr "Добавить сегмент"
 
-msgid "Remove"
-msgstr "Удалить"
+msgid "Delete point"
+msgstr "Удалить точку"
+
+msgid "Delete signal"
+msgstr "Удалить сигнал"
 
 msgid "Play"
 msgstr "Проиграть"
@@ -103,6 +109,9 @@ msgstr "Отмена"
 
 msgid "Delete"
 msgstr "Удалить"
+
+msgid "Edit"
+msgstr "Редактировать"
 
 msgid "Repeat count must be at least 1."
 msgstr "Число повторов должно быть не меньше 1."

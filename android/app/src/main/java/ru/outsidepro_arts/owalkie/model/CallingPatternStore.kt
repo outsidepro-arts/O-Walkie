@@ -43,6 +43,18 @@ class CallingPatternStore(context: Context) {
         return pattern
     }
 
+    fun updateCustomPattern(patternId: String, name: String, points: List<RogerPoint>): Boolean {
+        val cleanedName = name.trim()
+        if (cleanedName.isEmpty() || points.isEmpty()) return false
+        val custom = loadCustomPatterns().toMutableList()
+        val idx = custom.indexOfFirst { it.id == patternId }
+        if (idx < 0) return false
+        custom[idx] = custom[idx].copy(name = cleanedName, points = points)
+        saveCustomPatterns(custom)
+        setSelectedPattern(patternId)
+        return true
+    }
+
     fun deleteCustomPattern(patternId: String): Boolean {
         val custom = loadCustomPatterns().toMutableList()
         val removed = custom.removeAll { it.id == patternId }

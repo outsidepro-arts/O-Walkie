@@ -20,6 +20,7 @@ class RogerPatternEditorActivity : ComponentActivity() {
         private const val MAX_ROGER_DURATION_MS = 1000
         private const val MAX_CALLING_DURATION_MS = 5000
         const val EXTRA_SIGNAL_KIND = "signalKind"
+        private const val EXTRA_EDIT_PATTERN_ID = "editPatternId"
         const val SIGNAL_KIND_ROGER = "roger"
         const val SIGNAL_KIND_CALLING = "calling"
 
@@ -27,12 +28,16 @@ class RogerPatternEditorActivity : ComponentActivity() {
             Intent(context, RogerPatternEditorActivity::class.java).apply {
                 putExtra(EXTRA_SIGNAL_KIND, signalKind)
             }
+
+        fun intentEdit(context: Context, signalKind: String, patternId: String): Intent =
+            intent(context, signalKind).putExtra(EXTRA_EDIT_PATTERN_ID, patternId)
     }
 
     private lateinit var signalNameInput: EditText
     private lateinit var pointsList: ListView
     private lateinit var addPointButton: Button
     private lateinit var playPatternButton: Button
+    private lateinit var deletePatternButton: Button
     private lateinit var saveButton: Button
     private lateinit var cancelButton: Button
     private lateinit var repeatCountLabel: TextView
@@ -40,17 +45,19 @@ class RogerPatternEditorActivity : ComponentActivity() {
     private lateinit var rogerPatternStore: RogerPatternStore
     private lateinit var callingPatternStore: CallingPatternStore
     private var signalKind: String = SIGNAL_KIND_ROGER
+    private var editPatternId: String? = null
     private val points = mutableListOf<RogerPoint>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_roger_pattern_editor)
         signalKind = intent.getStringExtra(EXTRA_SIGNAL_KIND) ?: SIGNAL_KIND_ROGER
+        editPatternId = intent.getStringExtra(EXTRA_EDIT_PATTERN_ID)
         title = getString(
-            if (signalKind == SIGNAL_KIND_CALLING) {
-                R.string.call_custom_title
-            } else {
-                R.string.roger_custom_title
+            when {
+                editPatternId != null -> R.string.edit_signal_title
+                signalKind == SIGNAL_KIND_CALLING -> R.string.call_custom_title
+                else -> R.string.roger_custom_title
             },
         )
         rogerPatternStore = RogerPatternStore(this)
@@ -60,6 +67,7 @@ class RogerPatternEditorActivity : ComponentActivity() {
         pointsList = findViewById(R.id.pointsListView)
         addPointButton = findViewById(R.id.addPointButton)
         playPatternButton = findViewById(R.id.playPatternButton)
+        deletePatternButton = findViewById(R.id.deletePatternButton)
         saveButton = findViewById(R.id.savePatternButton)
         cancelButton = findViewById(R.id.cancelPatternButton)
         repeatCountLabel = findViewById(R.id.repeatCountLabel)
@@ -71,13 +79,55 @@ class RogerPatternEditorActivity : ComponentActivity() {
             repeatCountInput.setText("1")
         }
 
+        applyEditModeIfNeeded()
+
         addPointButton.setOnClickListener { showAddPointDialog() }
         playPatternButton.setOnClickListener {
             SignalPreviewPlayer.playPattern(buildSignalPointsForPlayback())
         }
+        deletePatternButton.setOnClickListener { confirmDeleteEditedPattern() }
         saveButton.setOnClickListener { savePattern() }
         cancelButton.setOnClickListener { finish() }
         refreshPointsList()
+    }
+
+    private fun applyEditModeIfNeeded() {
+        val id = editPatternId ?: run {
+            deletePatternButton.visibility = android.view.View.GONE
+            return
+        }
+        val pattern = when (signalKind) {
+            SIGNAL_KIND_CALLING -> callingPatternStore.getAllPatterns().firstOrNull { it.id == id }
+            else -> rogerPatternStore.getAllPatterns().firstOrNull { it.id == id }
+        }
+        if (pattern == null || pattern.builtIn) {
+            editPatternId = null
+            deletePatternButton.visibility = android.view.View.GONE
+            return
+        }
+        signalNameInput.setText(pattern.name)
+        points.clear()
+        points.addAll(pattern.points)
+        if (signalKind == SIGNAL_KIND_CALLING) {
+            repeatCountInput.setText("1")
+        }
+        deletePatternButton.visibility = android.view.View.VISIBLE
+    }
+
+    private fun confirmDeleteEditedPattern() {
+        val id = editPatternId ?: return
+        AlertDialog.Builder(this)
+            .setMessage(R.string.delete_signal_confirm)
+            .setPositiveButton(R.string.common_ok) { _, _ ->
+                when (signalKind) {
+                    SIGNAL_KIND_CALLING -> callingPatternStore.deleteCustomPattern(id)
+                    else -> rogerPatternStore.deleteCustomPattern(id)
+                }
+                setResult(RESULT_OK)
+                finish()
+            }
+            .setNegativeButton(R.string.roger_cancel, null)
+            .show()
     }
 
     private fun showAddPointDialog() {
@@ -179,10 +229,26 @@ class RogerPatternEditorActivity : ComponentActivity() {
             signalNameInput.error = getString(R.string.roger_points_total_too_long)
             return
         }
-        if (signalKind == SIGNAL_KIND_CALLING) {
-            callingPatternStore.saveCustomPattern(name, buildRepeatedPoints(repeatCount))
+        val editId = editPatternId
+        if (editId != null) {
+            val ok = when (signalKind) {
+                SIGNAL_KIND_CALLING -> callingPatternStore.updateCustomPattern(
+                    editId,
+                    name,
+                    buildRepeatedPoints(repeatCount),
+                )
+                else -> rogerPatternStore.updateCustomPattern(editId, name, points.toList())
+            }
+            if (!ok) {
+                Toast.makeText(this, R.string.roger_name_required, Toast.LENGTH_SHORT).show()
+                return
+            }
         } else {
-            rogerPatternStore.saveCustomPattern(name, points.toList())
+            if (signalKind == SIGNAL_KIND_CALLING) {
+                callingPatternStore.saveCustomPattern(name, buildRepeatedPoints(repeatCount))
+            } else {
+                rogerPatternStore.saveCustomPattern(name, points.toList())
+            }
         }
         setResult(RESULT_OK)
         finish()

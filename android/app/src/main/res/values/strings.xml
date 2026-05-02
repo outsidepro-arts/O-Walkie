@@ -46,7 +46,8 @@
     <string name="common_ok">OK</string>
     <string name="common_reset">Reset</string>
     <string name="play_signal_button">Play</string>
-    <string name="delete_signal_button">Delete</string>
+    <string name="delete_signal_button">Delete signal</string>
+    <string name="edit_signal_button">Edit</string>
     <string name="delete_signal_confirm">Delete selected custom signal?</string>
     <string name="roger_no_signal_option">No signal</string>
     <string name="roger_signal_label">Roger signal</string>
@@ -56,6 +57,7 @@
     <string name="call_custom_title">Custom calling signal</string>
     <string name="call_signal">Call</string>
     <string name="roger_custom_title">Custom signal</string>
+    <string name="edit_signal_title">Edit signal</string>
     <string name="roger_name_hint">Signal name</string>
     <string name="roger_points_label">Frequency points</string>
     <string name="roger_new_point_title">New point</string>
@@ -65,7 +67,7 @@
     <string name="roger_points_total_too_long">Total signal length is too long for this mode</string>
     <string name="roger_point_pause">Pause</string>
     <string name="roger_point_hz_format">%1$d Hz</string>
-    <string name="delete_point_button">Delete</string>
+    <string name="delete_point_button">Delete point</string>
     <string name="calling_repeat_count_label">Repeat count</string>
     <string name="calling_repeat_count_hint">Repeat count</string>
     <string name="calling_repeat_count_invalid">Enter repeat count greater than zero</string>
