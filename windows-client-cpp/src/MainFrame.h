@@ -38,6 +38,19 @@ public:
     MainFrame();
     ~MainFrame() override;
 
+    AudioEngine* AudioEnginePtr() { return audio_.get(); }
+    std::string SelectedRogerPatternId() const { return selectedRogerPatternId_; }
+    std::string SelectedCallPatternId() const { return selectedCallPatternId_; }
+    std::vector<SignalPattern> MergedRogerPatternsForUi() const;
+    std::vector<SignalPattern> MergedCallPatternsForUi() const;
+    void UpsertCustomRogerPattern(SignalPattern pattern);
+    void UpsertCustomCallPattern(SignalPattern pattern);
+    bool DeleteCustomRogerPattern(const std::string& id);
+    bool DeleteCustomCallPattern(const std::string& id);
+    static wxString CustomSignalPatternsPath();
+    static bool IsBuiltInRogerPatternId(const std::string& id);
+    static bool IsBuiltInCallPatternId(const std::string& id);
+
 private:
     void BuildUi();
     void BindUi();
@@ -54,6 +67,9 @@ private:
     void OnRelayConnectionLost();
 
     void LoadAllSettings();
+    void LoadCustomSignalPatternsFromDisk();
+    void SaveCustomSignalPatternsToDisk() const;
+    void ApplyCustomPatternsToEngine();
     void SaveAudioSettings();
     void SaveProfilesToDisk();
     static wxString UserDataDir();
@@ -130,6 +146,8 @@ private:
     int selectedOutputDeviceId_ = -1;
     std::string selectedRogerPatternId_ = "variant_1";
     std::string selectedCallPatternId_ = "call_variant_1";
+    std::vector<SignalPattern> customRogerPatterns_;
+    std::vector<SignalPattern> customCallPatterns_;
     int globalPttVKey_ = 0;
     int globalPttMods_ = 0;
     bool pttToggleMode_ = false;

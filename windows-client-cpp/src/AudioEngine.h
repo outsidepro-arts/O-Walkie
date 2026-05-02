@@ -70,6 +70,9 @@ public:
     void PlayManualConnectStartSignal();
     void PlayManualDisconnectSignal();
     void PlayPttPressSignal();
+    /// Local preview (e.g. custom pattern editor); does not touch relay state.
+    void PlaySignalPatternPreview(const SignalPattern& pattern);
+    void SetCustomSignalPatterns(std::vector<SignalPattern> roger, std::vector<SignalPattern> call);
 
     void OnIncomingOpusFrame(const std::vector<uint8_t>& opus);
 
@@ -126,6 +129,8 @@ private:
     int preferredOutputDevice_ = -1;
     std::string rogerPatternId_ = "variant_1";
     std::string callPatternId_ = "call_variant_1";
+    std::vector<SignalPattern> customRogerPatterns_;
+    std::vector<SignalPattern> customCallPatterns_;
 
     std::vector<int16_t> captureFifo_;
     std::vector<uint8_t> opusScratch_;

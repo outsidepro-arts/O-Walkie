@@ -496,6 +496,11 @@ const SignalPattern* AudioEngine::FindRogerPatternLocked() const {
             return &p;
         }
     }
+    for (const auto& p : customRogerPatterns_) {
+        if (p.id == rogerPatternId_) {
+            return &p;
+        }
+    }
     return &RogerPatterns().front();
 }
 
@@ -505,7 +510,29 @@ const SignalPattern* AudioEngine::FindCallPatternLocked() const {
             return &p;
         }
     }
+    for (const auto& p : customCallPatterns_) {
+        if (p.id == callPatternId_) {
+            return &p;
+        }
+    }
     return &CallPatterns().front();
+}
+
+void AudioEngine::SetCustomSignalPatterns(std::vector<SignalPattern> roger, std::vector<SignalPattern> call) {
+    std::lock_guard<std::mutex> lg(mu_);
+    customRogerPatterns_ = std::move(roger);
+    customCallPatterns_ = std::move(call);
+}
+
+void AudioEngine::PlaySignalPatternPreview(const SignalPattern& pattern) {
+    if (pattern.points.empty()) {
+        return;
+    }
+    const auto pcm = GenerateSignalPcm(kLocalSignalSynthesisRate, pattern);
+    if (pcm.empty()) {
+        return;
+    }
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
 }
 
 std::vector<int16_t> AudioEngine::GenerateSignalPcm(int sampleRate, const SignalPattern& pattern) {

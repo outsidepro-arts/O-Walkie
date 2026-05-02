@@ -1,11 +1,12 @@
 #include "MainFrame.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <fstream>
 #include <thread>
 #include <string>
-#include <thread>
 
 #include <nlohmann/json.hpp>
 
@@ -16,8 +17,11 @@
 #include <wx/gauge.h>
 #include <wx/slider.h>
 #include <wx/dialog.h>
+#include <wx/listbox.h>
+#include <wx/msgdlg.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
+#include <wx/spinctrl.h>
 #include <wx/stdpaths.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
@@ -29,6 +33,18 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+
+static bool PatternNameAsciiIEq(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
 
 namespace {
 
@@ -306,27 +322,240 @@ void SkipKeyboardFocus(wxWindow* w) {
     }
 }
 
+constexpr int kMaxRogerCustomSignalMs = 1000;
+constexpr int kMaxCallCustomSignalMs = 5000;
+
+class SignalPatternEditorDialog final : public wxDialog {
+public:
+    SignalPatternEditorDialog(wxWindow* parent, AudioEngine* audio, bool callKind)
+        : wxDialog(parent, wxID_ANY,
+                   callKind ? "Custom calling signal" : "Custom Roger signal",
+                   wxDefaultPosition, wxSize(440, 400),
+                   wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+          audio_(audio),
+          callKind_(callKind) {
+        auto* root = new wxBoxSizer(wxVERTICAL);
+        root->Add(new wxStaticText(this, wxID_ANY, "Name"), 0, wxBOTTOM, 4);
+        nameCtrl_ = new wxTextCtrl(this, wxID_ANY);
+        root->Add(nameCtrl_, 0, wxEXPAND | wxBOTTOM, 8);
+        root->Add(new wxStaticText(this, wxID_ANY, "Segments (Hz and ms; frequency 0 = pause)"), 0, wxBOTTOM, 4);
+        listBox_ = new wxListBox(this, wxID_ANY);
+        root->Add(listBox_, 1, wxEXPAND | wxBOTTOM, 8);
+        repeatLabel_ = new wxStaticText(this, wxID_ANY, "Repeat count");
+        repeatSpin_ = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, 500, 1);
+        auto* repeatRow = new wxBoxSizer(wxHORIZONTAL);
+        repeatRow->Add(repeatLabel_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+        repeatRow->Add(repeatSpin_, 0);
+        root->Add(repeatRow, 0, wxBOTTOM, 8);
+        if (!callKind_) {
+            repeatLabel_->Hide();
+            repeatSpin_->Hide();
+        }
+        auto* row = new wxBoxSizer(wxHORIZONTAL);
+        addBtn_ = new wxButton(this, wxID_ANY, "Add segment");
+        removeBtn_ = new wxButton(this, wxID_ANY, "Remove");
+        playBtn_ = new wxButton(this, wxID_ANY, "Play");
+        row->Add(addBtn_, 0, wxRIGHT, 8);
+        row->Add(removeBtn_, 0, wxRIGHT, 8);
+        row->Add(playBtn_, 0);
+        root->Add(row, 0, wxBOTTOM, 8);
+        root->Add(CreateSeparatedButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND);
+        SetSizerAndFit(root);
+
+        addBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnAdd, this);
+        removeBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnRemove, this);
+        playBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnPlay, this);
+        Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnTrySave, this, wxID_OK);
+    }
+
+    SignalPattern TakeSavedPattern() { return std::move(saved_); }
+
+private:
+    int CycleDurationMs() const {
+        int s = 0;
+        for (const auto& p : points_) {
+            s += p.durationMs;
+        }
+        return s;
+    }
+
+    int RepeatCountOr1() const { return callKind_ ? std::max(1, repeatSpin_->GetValue()) : 1; }
+
+    int EffectiveTotalMs() const { return CycleDurationMs() * RepeatCountOr1(); }
+
+    void RefreshList() {
+        listBox_->Clear();
+        for (size_t i = 0; i < points_.size(); ++i) {
+            const auto& pt = points_[i];
+            wxString line = wxString::Format("%d. ", static_cast<int>(i + 1));
+            if (pt.freqHz <= 0.0) {
+                line += "Pause";
+            } else {
+                line += wxString::Format("%.2f Hz", pt.freqHz);
+            }
+            line += wxString::Format(" / %d ms", pt.durationMs);
+            listBox_->Append(line);
+        }
+    }
+
+    bool AppendPointFromInputs(double freqHz, int durationMs, wxString& errOut) {
+        if (durationMs <= 0) {
+            errOut = "Duration must be positive.";
+            return false;
+        }
+        if (freqHz < 0.0) {
+            errOut = "Frequency cannot be negative.";
+            return false;
+        }
+        const int repeat = RepeatCountOr1();
+        const int cycleAfter = CycleDurationMs() + durationMs;
+        const int limit = callKind_ ? kMaxCallCustomSignalMs : kMaxRogerCustomSignalMs;
+        if (cycleAfter * repeat > limit) {
+            errOut = "Total duration would exceed limit.";
+            return false;
+        }
+        points_.push_back({freqHz, durationMs});
+        RefreshList();
+        return true;
+    }
+
+    void OnAdd(wxCommandEvent&) {
+        wxDialog dlg(this, wxID_ANY, "New segment", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
+        auto* sz = new wxBoxSizer(wxVERTICAL);
+        auto* fRow = new wxBoxSizer(wxHORIZONTAL);
+        fRow->Add(new wxStaticText(&dlg, wxID_ANY, "Frequency (Hz)"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+        auto* fCtrl = new wxTextCtrl(&dlg, wxID_ANY, "1000");
+        fRow->Add(fCtrl, 1, wxEXPAND);
+        sz->Add(fRow, 0, wxEXPAND | wxALL, 8);
+        auto* dRow = new wxBoxSizer(wxHORIZONTAL);
+        dRow->Add(new wxStaticText(&dlg, wxID_ANY, "Duration (ms)"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+        auto* dCtrl = new wxTextCtrl(&dlg, wxID_ANY, "50");
+        dRow->Add(dCtrl, 1, wxEXPAND);
+        sz->Add(dRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+        sz->Add(dlg.CreateSeparatedButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND | wxALL, 8);
+        dlg.SetSizerAndFit(sz);
+        if (dlg.ShowModal() != wxID_OK) {
+            return;
+        }
+        double freq = 0;
+        if (!fCtrl->GetValue().ToDouble(&freq)) {
+            wxMessageBox("Invalid frequency.", "Invalid", wxOK | wxICON_WARNING, this);
+            return;
+        }
+        long durL = 0;
+        if (!dCtrl->GetValue().ToLong(&durL)) {
+            wxMessageBox("Duration must be an integer.", "Invalid", wxOK | wxICON_WARNING, this);
+            return;
+        }
+        wxString err;
+        if (!AppendPointFromInputs(freq, static_cast<int>(durL), err)) {
+            wxMessageBox(err, "Invalid", wxOK | wxICON_WARNING, this);
+        }
+    }
+
+    void OnRemove(wxCommandEvent&) {
+        const int sel = listBox_->GetSelection();
+        if (sel == wxNOT_FOUND || sel < 0 || static_cast<size_t>(sel) >= points_.size()) {
+            return;
+        }
+        points_.erase(points_.begin() + sel);
+        RefreshList();
+    }
+
+    void OnPlay(wxCommandEvent&) {
+        if (points_.empty()) {
+            wxMessageBox("Add at least one segment.", "Preview", wxOK | wxICON_INFORMATION, this);
+            return;
+        }
+        if (callKind_ && repeatSpin_->GetValue() < 1) {
+            wxMessageBox("Invalid repeat count.", "Preview", wxOK | wxICON_WARNING, this);
+            return;
+        }
+        SignalPattern pat;
+        pat.id.clear();
+        pat.name.clear();
+        pat.points = BuildRepeatedPoints();
+        pat.appendTail = !callKind_;
+        if (!pat.points.empty() && audio_) {
+            audio_->PlaySignalPatternPreview(pat);
+        }
+    }
+
+    std::vector<SignalPatternPoint> BuildRepeatedPoints() const {
+        const int rep = RepeatCountOr1();
+        if (rep <= 1) {
+            return points_;
+        }
+        std::vector<SignalPatternPoint> out;
+        out.reserve(points_.size() * static_cast<size_t>(rep));
+        for (int r = 0; r < rep; ++r) {
+            out.insert(out.end(), points_.begin(), points_.end());
+        }
+        return out;
+    }
+
+    void OnTrySave(wxCommandEvent&) {
+        const wxString nameWx = nameCtrl_->GetValue().Trim();
+        if (nameWx.empty()) {
+            wxMessageBox("Name is required.", "Save", wxOK | wxICON_WARNING, this);
+            return;
+        }
+        if (points_.empty()) {
+            wxMessageBox("Add at least one segment.", "Save", wxOK | wxICON_WARNING, this);
+            return;
+        }
+        if (callKind_ && repeatSpin_->GetValue() < 1) {
+            wxMessageBox("Repeat count must be at least 1.", "Save", wxOK | wxICON_WARNING, this);
+            return;
+        }
+        const int total = EffectiveTotalMs();
+        if (total > (callKind_ ? kMaxCallCustomSignalMs : kMaxRogerCustomSignalMs)) {
+            wxMessageBox("Total duration exceeds limit.", "Save", wxOK | wxICON_WARNING, this);
+            return;
+        }
+        saved_ = {};
+        saved_.name = nameWx.utf8_string();
+        saved_.points = BuildRepeatedPoints();
+        saved_.appendTail = !callKind_;
+        EndModal(wxID_OK);
+    }
+
+    wxTextCtrl* nameCtrl_ = nullptr;
+    wxListBox* listBox_ = nullptr;
+    wxSpinCtrl* repeatSpin_ = nullptr;
+    wxStaticText* repeatLabel_ = nullptr;
+    wxButton* addBtn_ = nullptr;
+    wxButton* removeBtn_ = nullptr;
+    wxButton* playBtn_ = nullptr;
+    AudioEngine* audio_ = nullptr;
+    bool callKind_ = false;
+    std::vector<SignalPatternPoint> points_;
+    SignalPattern saved_;
+};
+
 class SettingsDialog final : public wxDialog {
 public:
     SettingsDialog(
         wxWindow* parent,
+        MainFrame* host,
         const std::vector<NamedAudioDevice>& inputDevices,
         const std::vector<NamedAudioDevice>& outputDevices,
         int selectedInputId,
         int selectedOutputId,
-        const std::vector<SignalPattern>& rogerPatterns,
-        const std::vector<SignalPattern>& callPatterns,
+        std::vector<SignalPattern> rogerPatterns,
+        std::vector<SignalPattern> callPatterns,
         const std::string& selectedRogerId,
         const std::string& selectedCallId,
         int globalPttVKey,
         int globalPttMods,
         bool showMicLevelIndicator,
         bool pttToggleMode)
-        : wxDialog(parent, wxID_ANY, "Settings", wxDefaultPosition, wxSize(520, 360), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+        : wxDialog(parent, wxID_ANY, "Settings", wxDefaultPosition, wxSize(580, 420), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+          host_(host),
           inputDevices_(inputDevices),
           outputDevices_(outputDevices),
-          rogerPatterns_(rogerPatterns),
-          callPatterns_(callPatterns) {
+          rogerPatterns_(std::move(rogerPatterns)),
+          callPatterns_(std::move(callPatterns)) {
         auto* root = new wxBoxSizer(wxVERTICAL);
         auto* grid = new wxFlexGridSizer(2, 8, 10);
         grid->AddGrowableCol(1, 1);
@@ -352,20 +581,32 @@ public:
         grid->Add(outputChoice_, 1, wxEXPAND);
 
         grid->Add(new wxStaticText(this, wxID_ANY, "Roger pattern"), 0, wxALIGN_CENTER_VERTICAL);
+        auto* rogerRow = new wxBoxSizer(wxHORIZONTAL);
         rogerChoice_ = new wxChoice(this, wxID_ANY);
         for (const auto& p : rogerPatterns_) {
             rogerChoice_->Append(wxString::FromUTF8(p.name));
             rogerIds_.push_back(p.id);
         }
-        grid->Add(rogerChoice_, 1, wxEXPAND);
+        rogerRow->Add(rogerChoice_, 1, wxEXPAND | wxRIGHT, 8);
+        rogerCustomBtn_ = new wxButton(this, wxID_ANY, "Custom");
+        rogerDeleteBtn_ = new wxButton(this, wxID_ANY, "Delete");
+        rogerRow->Add(rogerCustomBtn_, 0, wxRIGHT, 8);
+        rogerRow->Add(rogerDeleteBtn_, 0);
+        grid->Add(rogerRow, 1, wxEXPAND);
 
         grid->Add(new wxStaticText(this, wxID_ANY, "Call pattern"), 0, wxALIGN_CENTER_VERTICAL);
+        auto* callRow = new wxBoxSizer(wxHORIZONTAL);
         callChoice_ = new wxChoice(this, wxID_ANY);
         for (const auto& p : callPatterns_) {
             callChoice_->Append(wxString::FromUTF8(p.name));
             callIds_.push_back(p.id);
         }
-        grid->Add(callChoice_, 1, wxEXPAND);
+        callRow->Add(callChoice_, 1, wxEXPAND | wxRIGHT, 8);
+        callCustomBtn_ = new wxButton(this, wxID_ANY, "Custom");
+        callDeleteBtn_ = new wxButton(this, wxID_ANY, "Delete");
+        callRow->Add(callCustomBtn_, 0, wxRIGHT, 8);
+        callRow->Add(callDeleteBtn_, 0);
+        grid->Add(callRow, 1, wxEXPAND);
 
         grid->Add(new wxStaticText(this, wxID_ANY, "Global PTT key"), 0, wxALIGN_CENTER_VERTICAL);
         auto* pttRow = new wxBoxSizer(wxHORIZONTAL);
@@ -409,6 +650,60 @@ public:
             selectedPttMods_ = 0;
             pttKeyLabel_->SetLabel("Not set");
         });
+
+        rogerChoice_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { UpdatePatternDeleteButtons(); });
+        callChoice_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { UpdatePatternDeleteButtons(); });
+
+        rogerCustomBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            if (!host_ || !host_->AudioEnginePtr()) {
+                return;
+            }
+            SignalPatternEditorDialog ed(this, host_->AudioEnginePtr(), false);
+            if (ed.ShowModal() == wxID_OK) {
+                host_->UpsertCustomRogerPattern(ed.TakeSavedPattern());
+                ReloadRogerCallChoicesFromHost();
+            }
+        });
+        callCustomBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            if (!host_ || !host_->AudioEnginePtr()) {
+                return;
+            }
+            SignalPatternEditorDialog ed(this, host_->AudioEnginePtr(), true);
+            if (ed.ShowModal() == wxID_OK) {
+                host_->UpsertCustomCallPattern(ed.TakeSavedPattern());
+                ReloadRogerCallChoicesFromHost();
+            }
+        });
+        rogerDeleteBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            if (!host_) {
+                return;
+            }
+            const std::string id = PickString(rogerChoice_, rogerIds_);
+            if (id.empty() || MainFrame::IsBuiltInRogerPatternId(id)) {
+                return;
+            }
+            if (wxMessageBox("Delete selected custom signal?", "Confirm", wxYES_NO | wxICON_QUESTION, this) != wxYES) {
+                return;
+            }
+            host_->DeleteCustomRogerPattern(id);
+            ReloadRogerCallChoicesFromHost();
+        });
+        callDeleteBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            if (!host_) {
+                return;
+            }
+            const std::string id = PickString(callChoice_, callIds_);
+            if (id.empty() || MainFrame::IsBuiltInCallPatternId(id)) {
+                return;
+            }
+            if (wxMessageBox("Delete selected custom signal?", "Confirm", wxYES_NO | wxICON_QUESTION, this) != wxYES) {
+                return;
+            }
+            host_->DeleteCustomCallPattern(id);
+            ReloadRogerCallChoicesFromHost();
+        });
+
+        UpdatePatternDeleteButtons();
     }
 
     int SelectedInputId() const { return PickId(inputChoice_, inputIds_); }
@@ -421,6 +716,36 @@ public:
     bool PttToggleMode() const { return pttToggleCheck_ && pttToggleCheck_->GetValue(); }
 
 private:
+    void ReloadRogerCallChoicesFromHost() {
+        if (!host_) {
+            return;
+        }
+        rogerPatterns_ = host_->MergedRogerPatternsForUi();
+        callPatterns_ = host_->MergedCallPatternsForUi();
+        rogerChoice_->Clear();
+        rogerIds_.clear();
+        for (const auto& p : rogerPatterns_) {
+            rogerChoice_->Append(wxString::FromUTF8(p.name));
+            rogerIds_.push_back(p.id);
+        }
+        callChoice_->Clear();
+        callIds_.clear();
+        for (const auto& p : callPatterns_) {
+            callChoice_->Append(wxString::FromUTF8(p.name));
+            callIds_.push_back(p.id);
+        }
+        SelectByString(rogerChoice_, rogerIds_, host_->SelectedRogerPatternId());
+        SelectByString(callChoice_, callIds_, host_->SelectedCallPatternId());
+        UpdatePatternDeleteButtons();
+    }
+
+    void UpdatePatternDeleteButtons() {
+        const std::string rid = PickString(rogerChoice_, rogerIds_);
+        const std::string cid = PickString(callChoice_, callIds_);
+        rogerDeleteBtn_->Enable(!rid.empty() && !MainFrame::IsBuiltInRogerPatternId(rid));
+        callDeleteBtn_->Enable(!cid.empty() && !MainFrame::IsBuiltInCallPatternId(cid));
+    }
+
     static void SelectById(wxChoice* c, const std::vector<int>& ids, int id) {
         int sel = 0;
         for (size_t i = 0; i < ids.size(); ++i) {
@@ -457,14 +782,19 @@ private:
     }
 
 private:
+    MainFrame* host_ = nullptr;
     const std::vector<NamedAudioDevice>& inputDevices_;
     const std::vector<NamedAudioDevice>& outputDevices_;
-    const std::vector<SignalPattern>& rogerPatterns_;
-    const std::vector<SignalPattern>& callPatterns_;
+    std::vector<SignalPattern> rogerPatterns_;
+    std::vector<SignalPattern> callPatterns_;
     wxChoice* inputChoice_ = nullptr;
     wxChoice* outputChoice_ = nullptr;
     wxChoice* rogerChoice_ = nullptr;
     wxChoice* callChoice_ = nullptr;
+    wxButton* rogerCustomBtn_ = nullptr;
+    wxButton* rogerDeleteBtn_ = nullptr;
+    wxButton* callCustomBtn_ = nullptr;
+    wxButton* callDeleteBtn_ = nullptr;
     wxStaticText* pttKeyLabel_ = nullptr;
     wxButton* pttCaptureBtn_ = nullptr;
     wxButton* pttClearBtn_ = nullptr;
@@ -617,6 +947,226 @@ wxString MainFrame::LegacyConnectionPath() {
     return wxFileName(UserDataDir(), wxString("connection.json")).GetFullPath();
 }
 
+wxString MainFrame::CustomSignalPatternsPath() {
+    return wxFileName(UserDataDir(), wxString("custom_signal_patterns.json")).GetFullPath();
+}
+
+bool MainFrame::IsBuiltInRogerPatternId(const std::string& id) {
+    return id == "none" || id == "variant_1" || id == "variant_2" || id == "variant_3";
+}
+
+bool MainFrame::IsBuiltInCallPatternId(const std::string& id) {
+    return id == "call_variant_1" || id == "call_variant_2" || id == "call_variant_3";
+}
+
+std::vector<SignalPattern> MainFrame::MergedRogerPatternsForUi() const {
+    std::vector<SignalPattern> out;
+    for (const auto& p : AudioEngine::RogerPatterns()) {
+        out.push_back(p);
+    }
+    out.insert(out.end(), customRogerPatterns_.begin(), customRogerPatterns_.end());
+    return out;
+}
+
+std::vector<SignalPattern> MainFrame::MergedCallPatternsForUi() const {
+    std::vector<SignalPattern> out;
+    for (const auto& p : AudioEngine::CallPatterns()) {
+        out.push_back(p);
+    }
+    out.insert(out.end(), customCallPatterns_.begin(), customCallPatterns_.end());
+    return out;
+}
+
+void MainFrame::ApplyCustomPatternsToEngine() {
+    audio_->SetCustomSignalPatterns(customRogerPatterns_, customCallPatterns_);
+}
+
+void MainFrame::LoadCustomSignalPatternsFromDisk() {
+    customRogerPatterns_.clear();
+    customCallPatterns_.clear();
+    try {
+        const wxString path = CustomSignalPatternsPath();
+        if (!wxFileName::FileExists(path)) {
+            return;
+        }
+        std::ifstream in(path.utf8_string());
+        if (!in) {
+            return;
+        }
+        nlohmann::json j;
+        in >> j;
+        for (const auto& item : j.value("roger", nlohmann::json::array())) {
+            SignalPattern p;
+            p.id = item.value("id", std::string{});
+            p.name = item.value("name", std::string{});
+            p.appendTail = true;
+            for (const auto& pt : item.value("points", nlohmann::json::array())) {
+                SignalPatternPoint q;
+                q.freqHz = pt.value("freqHz", 0.0);
+                q.durationMs = pt.value("durationMs", 0);
+                p.points.push_back(q);
+            }
+            if (!p.id.empty() && !p.points.empty()) {
+                customRogerPatterns_.push_back(std::move(p));
+            }
+        }
+        for (const auto& item : j.value("call", nlohmann::json::array())) {
+            SignalPattern p;
+            p.id = item.value("id", std::string{});
+            p.name = item.value("name", std::string{});
+            p.appendTail = false;
+            for (const auto& pt : item.value("points", nlohmann::json::array())) {
+                SignalPatternPoint q;
+                q.freqHz = pt.value("freqHz", 0.0);
+                q.durationMs = pt.value("durationMs", 0);
+                p.points.push_back(q);
+            }
+            if (!p.id.empty() && !p.points.empty()) {
+                customCallPatterns_.push_back(std::move(p));
+            }
+        }
+    } catch (...) {
+        customRogerPatterns_.clear();
+        customCallPatterns_.clear();
+    }
+}
+
+void MainFrame::SaveCustomSignalPatternsToDisk() const {
+    try {
+        nlohmann::json j;
+        nlohmann::json arrRoger = nlohmann::json::array();
+        for (const auto& p : customRogerPatterns_) {
+            nlohmann::json o;
+            o["id"] = p.id;
+            o["name"] = p.name;
+            nlohmann::json pts = nlohmann::json::array();
+            for (const auto& q : p.points) {
+                nlohmann::json ptj;
+                ptj["freqHz"] = q.freqHz;
+                ptj["durationMs"] = q.durationMs;
+                pts.push_back(ptj);
+            }
+            o["points"] = pts;
+            arrRoger.push_back(o);
+        }
+        j["roger"] = arrRoger;
+        nlohmann::json arrCall = nlohmann::json::array();
+        for (const auto& p : customCallPatterns_) {
+            nlohmann::json o;
+            o["id"] = p.id;
+            o["name"] = p.name;
+            nlohmann::json pts = nlohmann::json::array();
+            for (const auto& q : p.points) {
+                nlohmann::json ptj;
+                ptj["freqHz"] = q.freqHz;
+                ptj["durationMs"] = q.durationMs;
+                pts.push_back(ptj);
+            }
+            o["points"] = pts;
+            arrCall.push_back(o);
+        }
+        j["call"] = arrCall;
+        std::ofstream out(CustomSignalPatternsPath().utf8_string());
+        if (out) {
+            out << j.dump(2);
+        }
+    } catch (...) {
+    }
+}
+
+static std::string NewCustomPatternId() {
+#ifdef _WIN32
+    return "custom_" + std::to_string(GetTickCount64());
+#else
+    return "custom_" + std::to_string(
+        static_cast<unsigned long long>(std::chrono::steady_clock::now().time_since_epoch().count()));
+#endif
+}
+
+void MainFrame::UpsertCustomRogerPattern(SignalPattern pattern) {
+    pattern.appendTail = true;
+    for (auto& existing : customRogerPatterns_) {
+        if (PatternNameAsciiIEq(existing.name, pattern.name)) {
+            pattern.id = existing.id;
+            existing = std::move(pattern);
+            selectedRogerPatternId_ = existing.id;
+            SaveCustomSignalPatternsToDisk();
+            ApplyCustomPatternsToEngine();
+            audio_->SetRogerPatternId(selectedRogerPatternId_);
+            SaveAudioSettings();
+            return;
+        }
+    }
+    if (pattern.id.empty()) {
+        pattern.id = NewCustomPatternId();
+    }
+    customRogerPatterns_.push_back(std::move(pattern));
+    selectedRogerPatternId_ = customRogerPatterns_.back().id;
+    SaveCustomSignalPatternsToDisk();
+    ApplyCustomPatternsToEngine();
+    audio_->SetRogerPatternId(selectedRogerPatternId_);
+    SaveAudioSettings();
+}
+
+void MainFrame::UpsertCustomCallPattern(SignalPattern pattern) {
+    pattern.appendTail = false;
+    for (auto& existing : customCallPatterns_) {
+        if (PatternNameAsciiIEq(existing.name, pattern.name)) {
+            pattern.id = existing.id;
+            existing = std::move(pattern);
+            selectedCallPatternId_ = existing.id;
+            SaveCustomSignalPatternsToDisk();
+            ApplyCustomPatternsToEngine();
+            audio_->SetCallPatternId(selectedCallPatternId_);
+            SaveAudioSettings();
+            return;
+        }
+    }
+    if (pattern.id.empty()) {
+        pattern.id = NewCustomPatternId();
+    }
+    customCallPatterns_.push_back(std::move(pattern));
+    selectedCallPatternId_ = customCallPatterns_.back().id;
+    SaveCustomSignalPatternsToDisk();
+    ApplyCustomPatternsToEngine();
+    audio_->SetCallPatternId(selectedCallPatternId_);
+    SaveAudioSettings();
+}
+
+bool MainFrame::DeleteCustomRogerPattern(const std::string& id) {
+    const auto it = std::remove_if(
+        customRogerPatterns_.begin(), customRogerPatterns_.end(), [&](const SignalPattern& p) { return p.id == id; });
+    if (it == customRogerPatterns_.end()) {
+        return false;
+    }
+    customRogerPatterns_.erase(it, customRogerPatterns_.end());
+    if (selectedRogerPatternId_ == id) {
+        selectedRogerPatternId_ = "none";
+        audio_->SetRogerPatternId(selectedRogerPatternId_);
+        SaveAudioSettings();
+    }
+    SaveCustomSignalPatternsToDisk();
+    ApplyCustomPatternsToEngine();
+    return true;
+}
+
+bool MainFrame::DeleteCustomCallPattern(const std::string& id) {
+    const auto it = std::remove_if(
+        customCallPatterns_.begin(), customCallPatterns_.end(), [&](const SignalPattern& p) { return p.id == id; });
+    if (it == customCallPatterns_.end()) {
+        return false;
+    }
+    customCallPatterns_.erase(it, customCallPatterns_.end());
+    if (selectedCallPatternId_ == id) {
+        selectedCallPatternId_ = "call_variant_1";
+        audio_->SetCallPatternId(selectedCallPatternId_);
+        SaveAudioSettings();
+    }
+    SaveCustomSignalPatternsToDisk();
+    ApplyCustomPatternsToEngine();
+    return true;
+}
+
 void MainFrame::MigrateLegacyConnectionJsonIfNeeded() {
     if (wxFileName::FileExists(ProfilesPath())) {
         return;
@@ -727,6 +1277,8 @@ void MainFrame::LoadAllSettings() {
         }
     } catch (...) {
     }
+    LoadCustomSignalPatternsFromDisk();
+    ApplyCustomPatternsToEngine();
 }
 
 void MainFrame::SaveProfilesToDisk() {
@@ -1485,14 +2037,17 @@ void MainFrame::ApplyAudioSettingsToEngine() {
 
 void MainFrame::OnSettingsClicked(wxCommandEvent&) {
     PopulateAudioDeviceChoices();
+    LoadCustomSignalPatternsFromDisk();
+    ApplyCustomPatternsToEngine();
     SettingsDialog dlg(
+        this,
         this,
         inputDevices_,
         outputDevices_,
         selectedInputDeviceId_,
         selectedOutputDeviceId_,
-        AudioEngine::RogerPatterns(),
-        AudioEngine::CallPatterns(),
+        MergedRogerPatternsForUi(),
+        MergedCallPatternsForUi(),
         selectedRogerPatternId_,
         selectedCallPatternId_,
         globalPttVKey_,
