@@ -557,9 +557,10 @@ type channelMixer struct {
 	mixerRestartWindow     []time.Time
 	mixerRestartLastAlert  time.Time
 
-	lastFrameMu      sync.RWMutex
-	lastFramePayload []byte
-	lastFrameAt      time.Time
+	lastFrameMu              sync.RWMutex
+	lastFramePayload         []byte
+	lastFrameAt              time.Time
+	lastFrameExcludedSession uint32 // broadcastMixed exclude for lastFramePayload; 0 = not excluded
 }
 
 type repeaterSession struct {
@@ -965,33 +966,42 @@ func (m *channelMixer) clearRepeaterState(sessionID uint32) {
 	delete(m.repeaterState, sessionID)
 }
 
-func (m *channelMixer) rememberLatestFrame(payload []byte) {
+func (m *channelMixer) rememberLatestFrame(payload []byte, broadcastExcludeSession uint32) {
 	if len(payload) == 0 {
 		return
 	}
 	m.lastFrameMu.Lock()
 	m.lastFramePayload = append(m.lastFramePayload[:0], payload...)
 	m.lastFrameAt = time.Now()
+	m.lastFrameExcludedSession = broadcastExcludeSession
 	m.lastFrameMu.Unlock()
 }
 
-func (m *channelMixer) latestFramePayload(maxAge time.Duration) []byte {
+// latestFrameSnapshot returns the last mixed UDP payload and the broadcast exclude session
+// used when it was produced (single lock — payload and metadata stay consistent).
+func (m *channelMixer) latestFrameSnapshot(maxAge time.Duration) (payload []byte, excludedSession uint32) {
 	m.lastFrameMu.RLock()
 	defer m.lastFrameMu.RUnlock()
 	if len(m.lastFramePayload) == 0 {
-		return nil
+		return nil, 0
 	}
 	if maxAge > 0 && time.Since(m.lastFrameAt) > maxAge {
-		return nil
+		return nil, 0
 	}
 	out := make([]byte, len(m.lastFramePayload))
 	copy(out, m.lastFramePayload)
-	return out
+	return out, m.lastFrameExcludedSession
 }
 
 func (m *channelMixer) sendLatestFrameToParticipant(sessionID uint32) {
-	payload := m.latestFramePayload(mixerCatchupFrameMaxAge)
+	payload, excluded := m.latestFrameSnapshot(mixerCatchupFrameMaxAge)
 	if len(payload) == 0 {
+		return
+	}
+	// Solo TX: broadcastMixed skips the active speaker to prevent self-echo.
+	// Keepalive catch-up must not unicast that frame back — clients treat inbound UDP
+	// during local TX as parallel-transmit (vibration / desktop buzz).
+	if excluded != 0 && excluded == sessionID {
 		return
 	}
 	m.hub.sendToClient(sessionID, payload)
@@ -1166,6 +1176,7 @@ func (m *channelMixer) resetAfterLoopFailure() {
 	m.lastFrameMu.Lock()
 	m.lastFramePayload = nil
 	m.lastFrameAt = time.Time{}
+	m.lastFrameExcludedSession = 0
 	m.lastFrameMu.Unlock()
 }
 
@@ -1364,7 +1375,6 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	binary.BigEndian.PutUint32(header[4:8], m.seq)
 	header[8] = uint8(ctx.AvgSignalByte)
 	payload := append(header, opusBuf[:n]...)
-	m.rememberLatestFrame(payload)
 	exclude := uint32(0)
 	if len(activeSpeakers) == 1 {
 		exclude = activeSpeakers[0]
@@ -1380,6 +1390,7 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 			exclude = m.lastSingleSpeaker
 		}
 	}
+	m.rememberLatestFrame(payload, exclude)
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
 }
 
