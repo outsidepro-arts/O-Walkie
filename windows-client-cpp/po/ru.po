@@ -83,6 +83,9 @@ msgstr "Добавьте хотя бы один сегмент."
 msgid "Preview"
 msgstr "Прослушивание"
 
+msgid "Nothing to play for this pattern."
+msgstr "Для этого сигнала нечего проиграть."
+
 msgid "Invalid repeat count."
 msgstr "Некорректное число повторов."
 

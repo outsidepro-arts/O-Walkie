@@ -582,7 +582,7 @@ public:
         bool showMicLevelIndicator,
         bool pttToggleMode,
         const std::string& uiLanguage)
-        : wxDialog(parent, wxID_ANY, _("Settings"), wxDefaultPosition, wxSize(580, 420), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+        : wxDialog(parent, wxID_ANY, _("Settings"), wxDefaultPosition, wxSize(640, 420), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
           host_(host),
           inputDevices_(inputDevices),
           outputDevices_(outputDevices),
@@ -627,8 +627,10 @@ public:
             rogerIds_.push_back(p.id);
         }
         rogerRow->Add(rogerChoice_, 1, wxEXPAND | wxRIGHT, 8);
+        rogerPlayBtn_ = new wxButton(this, wxID_ANY, _("Play"));
         rogerCustomBtn_ = new wxButton(this, wxID_ANY, _("Custom"));
         rogerDeleteBtn_ = new wxButton(this, wxID_ANY, _("Delete"));
+        rogerRow->Add(rogerPlayBtn_, 0, wxRIGHT, 8);
         rogerRow->Add(rogerCustomBtn_, 0, wxRIGHT, 8);
         rogerRow->Add(rogerDeleteBtn_, 0);
         grid->Add(rogerRow, 1, wxEXPAND);
@@ -641,8 +643,10 @@ public:
             callIds_.push_back(p.id);
         }
         callRow->Add(callChoice_, 1, wxEXPAND | wxRIGHT, 8);
+        callPlayBtn_ = new wxButton(this, wxID_ANY, _("Play"));
         callCustomBtn_ = new wxButton(this, wxID_ANY, _("Custom"));
         callDeleteBtn_ = new wxButton(this, wxID_ANY, _("Delete"));
+        callRow->Add(callPlayBtn_, 0, wxRIGHT, 8);
         callRow->Add(callCustomBtn_, 0, wxRIGHT, 8);
         callRow->Add(callDeleteBtn_, 0);
         grid->Add(callRow, 1, wxEXPAND);
@@ -692,6 +696,9 @@ public:
 
         rogerChoice_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { UpdatePatternDeleteButtons(); });
         callChoice_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { UpdatePatternDeleteButtons(); });
+
+        rogerPlayBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { PlayRogerPreview(); });
+        callPlayBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { PlayCallPreview(); });
 
         rogerCustomBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             if (!host_ || !host_->AudioEnginePtr()) {
@@ -792,6 +799,41 @@ private:
         callDeleteBtn_->Enable(!cid.empty() && !MainFrame::IsBuiltInCallPatternId(cid));
     }
 
+    static const SignalPattern* FindPatternById(const std::vector<SignalPattern>& list, const std::string& id) {
+        for (const auto& p : list) {
+            if (p.id == id) {
+                return &p;
+            }
+        }
+        return nullptr;
+    }
+
+    void PlayRogerPreview() {
+        if (!host_ || !host_->AudioEnginePtr()) {
+            return;
+        }
+        const std::string id = PickString(rogerChoice_, rogerIds_);
+        const SignalPattern* pat = FindPatternById(rogerPatterns_, id);
+        if (!pat || pat->points.empty()) {
+            wxMessageBox(_("Nothing to play for this pattern."), _("Preview"), wxOK | wxICON_INFORMATION, this);
+            return;
+        }
+        host_->AudioEnginePtr()->PlaySignalPatternPreview(*pat);
+    }
+
+    void PlayCallPreview() {
+        if (!host_ || !host_->AudioEnginePtr()) {
+            return;
+        }
+        const std::string id = PickString(callChoice_, callIds_);
+        const SignalPattern* pat = FindPatternById(callPatterns_, id);
+        if (!pat || pat->points.empty()) {
+            wxMessageBox(_("Nothing to play for this pattern."), _("Preview"), wxOK | wxICON_INFORMATION, this);
+            return;
+        }
+        host_->AudioEnginePtr()->PlaySignalPatternPreview(*pat);
+    }
+
     static void SelectById(wxChoice* c, const std::vector<int>& ids, int id) {
         int sel = 0;
         for (size_t i = 0; i < ids.size(); ++i) {
@@ -827,7 +869,6 @@ private:
         return ids[static_cast<size_t>(i)];
     }
 
-private:
     MainFrame* host_ = nullptr;
     const std::vector<NamedAudioDevice>& inputDevices_;
     const std::vector<NamedAudioDevice>& outputDevices_;
@@ -837,6 +878,8 @@ private:
     wxChoice* outputChoice_ = nullptr;
     wxChoice* rogerChoice_ = nullptr;
     wxChoice* callChoice_ = nullptr;
+    wxButton* rogerPlayBtn_ = nullptr;
+    wxButton* callPlayBtn_ = nullptr;
     wxButton* rogerCustomBtn_ = nullptr;
     wxButton* rogerDeleteBtn_ = nullptr;
     wxButton* callCustomBtn_ = nullptr;
