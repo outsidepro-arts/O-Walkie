@@ -708,24 +708,27 @@ bool AudioEngine::StreamRogerSignal() {
         std::lock_guard<std::mutex> lg(mu_);
         streamRate = sampleRate_;
         const SignalPattern* pattern = FindRogerPatternLocked();
-        if (!pattern || pattern->points.empty()) {
-            signalStreaming_.store(false);
-            return false;
-        }
-        const auto localRoger = GenerateSignalPcm(kLocalSignalSynthesisRate, *pattern);
-        remotePcm = ResampleLinear(localRoger, kLocalSignalSynthesisRate, streamRate);
+
         std::vector<int16_t> pttRelease = LoadSoundFromExeDir("selfttdown_002", kLocalSignalSynthesisRate);
         if (pttRelease.empty()) {
             AppendTone(pttRelease, kLocalSignalSynthesisRate, 760.0, 28, 0.18);
             AppendSilence(pttRelease, kLocalSignalSynthesisRate, 18);
         }
-        localPcm.reserve(pttRelease.size() + localRoger.size());
-        localPcm.insert(localPcm.end(), pttRelease.begin(), pttRelease.end());
-        auto rogerLocal = ApplyGain(localRoger, 0.9);
-        localPcm.insert(localPcm.end(), rogerLocal.begin(), rogerLocal.end());
+        localPcm = std::move(pttRelease);
+
+        if (pattern && !pattern->points.empty()) {
+            const auto localRoger = GenerateSignalPcm(kLocalSignalSynthesisRate, *pattern);
+            remotePcm = ResampleLinear(localRoger, kLocalSignalSynthesisRate, streamRate);
+            auto rogerLocal = ApplyGain(localRoger, 0.9);
+            localPcm.reserve(localPcm.size() + rogerLocal.size());
+            localPcm.insert(localPcm.end(), rogerLocal.begin(), rogerLocal.end());
+        }
     }
     PlayOneShotHighQuality(localPcm, kLocalSignalSynthesisRate);
-    const bool ok = StreamGeneratedSignal(remotePcm);
+    bool ok = true;
+    if (!remotePcm.empty()) {
+        ok = StreamGeneratedSignal(remotePcm);
+    }
     ScheduleRxResumeHoldoff();
     signalStreaming_.store(false);
     return ok;
