@@ -73,6 +73,7 @@ class MainActivity : ComponentActivity() {
     private var protocolIncompatible = false
     private var busyModeEnabled = false
     private var busyRxActive = false
+    private var pttBurstPressBlocked = false
     private var rxActive = false
     private var userRequestedConnection = false
     private var suppressSpinnerReconnect = false
@@ -98,6 +99,7 @@ class MainActivity : ComponentActivity() {
             protocolIncompatible = intent.getBooleanExtra(WalkieService.EXTRA_PROTOCOL_ERROR, false)
             busyModeEnabled = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_MODE, false)
             busyRxActive = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_RX_ACTIVE, false)
+            pttBurstPressBlocked = intent.getBooleanExtra(WalkieService.EXTRA_PTT_BURST_PRESS_BLOCKED, false)
             rxActive = intent.getBooleanExtra(WalkieService.EXTRA_RX_ACTIVE, false)
             val signalPercent = ((signal / 255.0) * 100.0).toInt().coerceIn(0, 100)
             lastSignalPercent = signalPercent
@@ -915,7 +917,7 @@ class MainActivity : ComponentActivity() {
 
     private fun updatePttAvailability() {
         val blockedByBusyMode = busyModeEnabled && busyRxActive && !transmitting
-        val enabled = wsConnected && !blockedByBusyMode
+        val enabled = wsConnected && !blockedByBusyMode && !pttBurstPressBlocked
         binding.pttButton.isEnabled = enabled
         binding.callButton.isEnabled = enabled && !transmitting
         binding.pttButton.alpha = if (enabled) 1.0f else 0.5f

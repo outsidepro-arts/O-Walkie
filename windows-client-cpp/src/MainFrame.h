@@ -85,6 +85,10 @@ private:
     void StartReconnectAttemptAsync();
     void BeginPttTx();
     void EndPttTx();
+    void RecordPttReleaseBurst();
+    void ExtendPttReleaseBurstDecayTimer();
+    void ResetPttReleaseBurstGuard();
+    void SyncPttButtonForBurstGuard();
 
 #ifdef _WIN32
     void InstallGlobalPttHook();
@@ -140,4 +144,10 @@ private:
     std::atomic<bool> reconnectAttemptInFlight_{false};
     int reconnectAttemptSeq_ = 0;
     std::atomic<uint64_t> reconnectScheduleTicket_{0};
+
+    std::atomic<uint64_t> pttReleaseBurstTimerTicket_{0};
+    std::atomic<int> pttReleaseBurstCount_{0};
+    std::atomic<bool> pttReleaseBurstBlocked_{false};
+
+    void ArmPttReleaseBurstDecay(uint64_t scheduleTicket);
 };

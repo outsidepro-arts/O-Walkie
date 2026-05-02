@@ -92,6 +92,7 @@ class WalkieService : Service() {
         const val EXTRA_RX_ACTIVE = "rxActive"
         const val EXTRA_TX_ACTIVE = "txActive"
         const val EXTRA_CALL_ACTIVE = "callActive"
+        const val EXTRA_PTT_BURST_PRESS_BLOCKED = "pttBurstPressBlocked"
         const val EXTRA_DEBUG_WS_RECONNECT_COUNT = "debugWsReconnectCount"
         const val EXTRA_DEBUG_UDP_RECOVERY_COUNT = "debugUdpRecoveryCount"
         const val EXTRA_DEBUG_LAST_UDP_GAP_MS = "debugLastUdpGapMs"
@@ -122,6 +123,9 @@ class WalkieService : Service() {
         private const val DEFAULT_PACKET_MS = 20
         private const val PROTOCOL_VERSION = 2
         private const val ROGER_TAIL_MS = 40
+        /** Quiet period before burst counter / block clears; refreshed on each release and while blocked on each press attempt. */
+        private const val PTT_RELEASE_BURST_TIMER_MS = 1000L
+        private const val PTT_RELEASE_BURST_BLOCK_THRESHOLD = 3
         private const val CALL_LOCAL_GAIN_DB = -10.0
         private const val PLAYBACK_BUFFER_FRAMES = 2
         private const val UDP_KEEPALIVE_IDLE_INTERVAL_SEC = 12L
@@ -223,6 +227,10 @@ class WalkieService : Service() {
     private val busyLastRxAtNs = AtomicLong(0L)
     private val lastInboundUdpAtNs = AtomicLong(0L)
     private val lastTxCollisionVibrateAtNs = AtomicLong(0L)
+
+    private val pttReleaseBurstCount = AtomicInteger(0)
+    private val pttReleaseBurstPressBlocked = AtomicBoolean(false)
+    private var pttReleaseBurstResetJob: Job? = null
     private val lastOutboundUdpAtNs = AtomicLong(0L)
     private val lastUdpKeepaliveSentAtNs = AtomicLong(0L)
     private val udpKeepalivePendingSinceNs = AtomicLong(0L)
@@ -391,6 +399,7 @@ class WalkieService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        resetPttReleaseBurstGuard()
         transmitting.set(false)
         txJob?.cancel()
         rogerJob?.cancel()
@@ -891,6 +900,37 @@ class WalkieService : Service() {
         ensurePlaybackLoop()
     }
 
+    private fun resetPttReleaseBurstGuard() {
+        pttReleaseBurstResetJob?.cancel()
+        pttReleaseBurstResetJob = null
+        pttReleaseBurstCount.set(0)
+        pttReleaseBurstPressBlocked.set(false)
+    }
+
+    /** Schedules (or refreshes) decay: after [PTT_RELEASE_BURST_TIMER_MS] quiet, counter and block clear. */
+    private fun schedulePttReleaseBurstDecay() {
+        pttReleaseBurstResetJob?.cancel()
+        pttReleaseBurstResetJob = serviceScope.launch {
+            delay(PTT_RELEASE_BURST_TIMER_MS)
+            pttReleaseBurstCount.set(0)
+            pttReleaseBurstPressBlocked.set(false)
+            broadcastStatus(currentSignalByte())
+        }
+    }
+
+    /**
+     * Each completed release increments count; from [PTT_RELEASE_BURST_BLOCK_THRESHOLD] onward presses are blocked.
+     * Decay timer restarts on every release; while blocked, rejected presses also restart the timer so spam delays unblock.
+     */
+    private fun recordPttReleaseBurstGuard() {
+        val n = pttReleaseBurstCount.incrementAndGet()
+        if (n >= PTT_RELEASE_BURST_BLOCK_THRESHOLD) {
+            pttReleaseBurstPressBlocked.set(true)
+        }
+        schedulePttReleaseBurstDecay()
+        broadcastStatus(currentSignalByte())
+    }
+
     private fun vibrateTxCollision() {
         runCatching {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -922,8 +962,9 @@ class WalkieService : Service() {
         localCallPlaybackJob?.cancel()
         localCallPlaybackJob = null
         if (transmitting.getAndSet(true)) return
-        if (!PttRateLimiter.tryAcquire()) {
+        if (pttReleaseBurstPressBlocked.get()) {
             transmitting.set(false)
+            schedulePttReleaseBurstDecay()
             broadcastStatus(currentSignalByte())
             return
         }
@@ -950,6 +991,7 @@ class WalkieService : Service() {
 
     private fun onPttRelease() {
         if (!transmitting.getAndSet(false)) return
+        recordPttReleaseBurstGuard()
         scheduleRxResumeHoldoff()
         if (rogerStreaming.getAndSet(true)) return
         localRogerPlaybackJob?.cancel()
@@ -1426,6 +1468,7 @@ class WalkieService : Service() {
             putExtra(EXTRA_RX_ACTIVE, rxActive.get())
             putExtra(EXTRA_TX_ACTIVE, transmitting.get() || rogerStreaming.get() || callStreaming.get())
             putExtra(EXTRA_CALL_ACTIVE, callStreaming.get())
+            putExtra(EXTRA_PTT_BURST_PRESS_BLOCKED, pttReleaseBurstPressBlocked.get())
             putExtra(EXTRA_DEBUG_WS_RECONNECT_COUNT, wsReconnectCount.get())
             putExtra(EXTRA_DEBUG_UDP_RECOVERY_COUNT, udpRecoveryCount.get())
             putExtra(EXTRA_DEBUG_LAST_UDP_GAP_MS, lastObservedUdpGapMs.get())
@@ -1829,6 +1872,7 @@ class WalkieService : Service() {
     }
 
     private fun cancelConnection() {
+        resetPttReleaseBurstGuard()
         transmitting.set(false)
         rogerStreaming.set(false)
         callStreaming.set(false)

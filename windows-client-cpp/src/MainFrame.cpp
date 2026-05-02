@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
-#include <deque>
 #include <fstream>
+#include <thread>
 #include <string>
 #include <thread>
 
@@ -32,37 +32,9 @@
 
 namespace {
 
-// Fixed anti-spam for rapid PTT taps (matches Android PttRateLimiter policy).
-constexpr int64_t kPttSpamWindowMs = 600;
-constexpr int kPttSpamMaxStarts = 3;
-
-class PttSpamGuard {
-public:
-    bool TryAcquire() {
-        const int64_t now = NowMs();
-        Prune(now);
-        if (static_cast<int>(times_.size()) >= kPttSpamMaxStarts) return false;
-        times_.push_back(now);
-        return true;
-    }
-
-private:
-    static int64_t NowMs() {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::steady_clock::now().time_since_epoch())
-            .count();
-    }
-
-    void Prune(int64_t nowMs) {
-        while (!times_.empty() && nowMs - times_.front() >= kPttSpamWindowMs) {
-            times_.pop_front();
-        }
-    }
-
-    std::deque<int64_t> times_{};
-};
-
-PttSpamGuard g_pttSpamGuard;
+// Release-burst anti-spam (aligned with Android WalkieService): quiet window before reset; refreshed on release and on blocked press.
+constexpr int kPttReleaseBurstTimerMs = 1000;
+constexpr int kPttReleaseBurstBlockThreshold = 3;
 
 #ifdef _WIN32
 MainFrame* g_mainFrameForPttHook = nullptr;
@@ -551,7 +523,8 @@ MainFrame::MainFrame()
                 StopReconnectTimer();
             }
             connectBtn_->SetLabel((connected || userWantsSession_) ? "Disconnect" : "Connect");
-            pttBtn_->Enable(connected);
+            ResetPttReleaseBurstGuard();
+            SyncPttButtonForBurstGuard();
             callBtn_->Enable(connected);
             UpdateProfileControlsEnabled();
             // Guard path: if transport dropped but loss callback was missed/raced,
@@ -1014,6 +987,7 @@ void MainFrame::StartReconnectAttemptAsync() {
 }
 
 void MainFrame::OnRelayConnectionLost() {
+    ResetPttReleaseBurstGuard();
     audio_->StopTransmit();
     globalPttPressed_ = false;
     connected_ = false;
@@ -1277,6 +1251,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
         audio_->PlayManualDisconnectSignal();
         audio_->StopTransmit();
         relay_->Disconnect();
+        ResetPttReleaseBurstGuard();
         connected_ = false;
         connectBtn_->SetLabel("Connect");
         pttBtn_->Enable(false);
@@ -1350,7 +1325,9 @@ void MainFrame::BeginPttTx() {
     if (!connected_ || audio_->IsSignalStreaming() || audio_->IsTransmitting()) {
         return;
     }
-    if (!g_pttSpamGuard.TryAcquire()) {
+    if (pttReleaseBurstBlocked_.load(std::memory_order_relaxed)) {
+        ExtendPttReleaseBurstDecayTimer();
+        CallAfter([this] { SetStatus("PTT paused — too many quick releases"); });
         return;
     }
     audio_->PlayPttPressSignal();
@@ -1363,6 +1340,7 @@ void MainFrame::EndPttTx() {
     if (!connected_ || !audio_->IsTransmitting()) {
         return;
     }
+    RecordPttReleaseBurst();
     audio_->StopTransmit();
     audio_->ScheduleRxResumeHoldoff();
     audio_->StreamRogerSignal();
@@ -1370,6 +1348,56 @@ void MainFrame::EndPttTx() {
     SetStatus("Connected");
 }
 
+void MainFrame::ResetPttReleaseBurstGuard() {
+    pttReleaseBurstTimerTicket_.fetch_add(1, std::memory_order_relaxed);
+    pttReleaseBurstCount_.store(0, std::memory_order_relaxed);
+    pttReleaseBurstBlocked_.store(false, std::memory_order_relaxed);
+}
+
+void MainFrame::SyncPttButtonForBurstGuard() {
+    if (!pttBtn_) {
+        return;
+    }
+    const bool allow = connected_ && !pttReleaseBurstBlocked_.load(std::memory_order_relaxed);
+    pttBtn_->Enable(allow);
+}
+
+void MainFrame::ArmPttReleaseBurstDecay(const uint64_t scheduleTicket) {
+    std::thread([this, scheduleTicket] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kPttReleaseBurstTimerMs));
+        this->CallAfter([this, scheduleTicket] {
+            if (pttReleaseBurstTimerTicket_.load(std::memory_order_relaxed) != scheduleTicket) {
+                return;
+            }
+            pttReleaseBurstCount_.store(0, std::memory_order_relaxed);
+            pttReleaseBurstBlocked_.store(false, std::memory_order_relaxed);
+            SyncPttButtonForBurstGuard();
+            if (connected_) {
+                SetStatus("Connected");
+            }
+        });
+    }).detach();
+}
+
+void MainFrame::ExtendPttReleaseBurstDecayTimer() {
+    const uint64_t ticket = pttReleaseBurstTimerTicket_.fetch_add(1, std::memory_order_relaxed) + 1;
+    ArmPttReleaseBurstDecay(ticket);
+}
+
+void MainFrame::RecordPttReleaseBurst() {
+    const uint64_t myTicket = pttReleaseBurstTimerTicket_.fetch_add(1, std::memory_order_relaxed) + 1;
+    const int n = pttReleaseBurstCount_.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n >= kPttReleaseBurstBlockThreshold) {
+        pttReleaseBurstBlocked_.store(true, std::memory_order_relaxed);
+    }
+    ArmPttReleaseBurstDecay(myTicket);
+    CallAfter([this] {
+        SyncPttButtonForBurstGuard();
+        if (pttReleaseBurstBlocked_.load(std::memory_order_relaxed)) {
+            SetStatus("PTT paused — too many quick releases");
+        }
+    });
+}
 
 void MainFrame::OnTxStop() {
     audio_->StopTransmit();
