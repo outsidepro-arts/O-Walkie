@@ -15,6 +15,7 @@
 #include <wx/choice.h>
 #include <wx/filename.h>
 #include <wx/gauge.h>
+#include <wx/intl.h>
 #include <wx/slider.h>
 #include <wx/dialog.h>
 #include <wx/listbox.h>
@@ -46,6 +47,10 @@ static bool PatternNameAsciiIEq(const std::string& a, const std::string& b) {
     return true;
 }
 
+static std::string OwTranslatePatternDisplayName(const std::string& name) {
+    return wxGetTranslation(wxString::FromUTF8(name)).utf8_string();
+}
+
 namespace {
 
 // Release-burst anti-spam (aligned with Android WalkieService): quiet window before reset; refreshed on release and on blocked press.
@@ -70,7 +75,7 @@ int NormalizeHotkeyVKey(int vkey) {
 
 std::string VKeyToDisplayName(int vkey) {
     if (vkey <= 0) {
-        return "Not set";
+        return wxGetTranslation("Not set").utf8_string();
     }
     const UINT scan = MapVirtualKeyA(static_cast<UINT>(vkey), MAPVK_VK_TO_VSC);
     LONG lParam = static_cast<LONG>(scan << 16);
@@ -167,18 +172,36 @@ int StripPrimaryModifierFamily(int mods, int vkey) {
 
 std::string PttComboToDisplayName(int vkey, int mods) {
     if (vkey <= 0) {
-        return "Not set";
+        return wxGetTranslation("Not set").utf8_string();
     }
     std::string out;
-    if ((mods & kPttModLCtrl) != 0) out += "Left Ctrl+";
-    if ((mods & kPttModRCtrl) != 0) out += "Right Ctrl+";
-    if ((mods & (kPttModLCtrl | kPttModRCtrl)) == 0 && (mods & kPttModCtrl) != 0) out += "Ctrl+";
-    if ((mods & kPttModLAlt) != 0) out += "Left Alt+";
-    if ((mods & kPttModRAlt) != 0) out += "Right Alt+";
-    if ((mods & (kPttModLAlt | kPttModRAlt)) == 0 && (mods & kPttModAlt) != 0) out += "Alt+";
-    if ((mods & kPttModLShift) != 0) out += "Left Shift+";
-    if ((mods & kPttModRShift) != 0) out += "Right Shift+";
-    if ((mods & (kPttModLShift | kPttModRShift)) == 0 && (mods & kPttModShift) != 0) out += "Shift+";
+    if ((mods & kPttModLCtrl) != 0) {
+        out += wxGetTranslation("Left Ctrl+").utf8_string();
+    }
+    if ((mods & kPttModRCtrl) != 0) {
+        out += wxGetTranslation("Right Ctrl+").utf8_string();
+    }
+    if ((mods & (kPttModLCtrl | kPttModRCtrl)) == 0 && (mods & kPttModCtrl) != 0) {
+        out += wxGetTranslation("Ctrl+").utf8_string();
+    }
+    if ((mods & kPttModLAlt) != 0) {
+        out += wxGetTranslation("Left Alt+").utf8_string();
+    }
+    if ((mods & kPttModRAlt) != 0) {
+        out += wxGetTranslation("Right Alt+").utf8_string();
+    }
+    if ((mods & (kPttModLAlt | kPttModRAlt)) == 0 && (mods & kPttModAlt) != 0) {
+        out += wxGetTranslation("Alt+").utf8_string();
+    }
+    if ((mods & kPttModLShift) != 0) {
+        out += wxGetTranslation("Left Shift+").utf8_string();
+    }
+    if ((mods & kPttModRShift) != 0) {
+        out += wxGetTranslation("Right Shift+").utf8_string();
+    }
+    if ((mods & (kPttModLShift | kPttModRShift)) == 0 && (mods & kPttModShift) != 0) {
+        out += wxGetTranslation("Shift+").utf8_string();
+    }
     out += VKeyToDisplayName(vkey);
     return out;
 }
@@ -220,11 +243,11 @@ bool AreRequiredModsPressed(int required, int current) {
 class HotkeyCaptureDialog final : public wxDialog {
 public:
     HotkeyCaptureDialog(wxWindow* parent)
-        : wxDialog(parent, wxID_ANY, "Press key combination", wxDefaultPosition, wxSize(380, 140),
+        : wxDialog(parent, wxID_ANY, _("Press key combination"), wxDefaultPosition, wxSize(380, 140),
                    wxDEFAULT_DIALOG_STYLE | wxSTAY_ON_TOP) {
         auto* root = new wxBoxSizer(wxVERTICAL);
-        auto* hint = new wxStaticText(this, wxID_ANY, "Press any key or key combination (with Ctrl/Alt/Shift).");
-        keyText_ = new wxStaticText(this, wxID_ANY, "Waiting...");
+        auto* hint = new wxStaticText(this, wxID_ANY, _("Press any key or key combination (with Ctrl/Alt/Shift)."));
+        keyText_ = new wxStaticText(this, wxID_ANY, _("Waiting..."));
         root->Add(hint, 0, wxALL, 12);
         root->Add(keyText_, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
         SetSizerAndFit(root);
@@ -322,6 +345,14 @@ void SkipKeyboardFocus(wxWindow* w) {
     }
 }
 
+wxStdDialogButtonSizer* NewTranslatedOkCancelSizer(wxDialog* dlg) {
+    auto* bs = new wxStdDialogButtonSizer;
+    bs->AddButton(new wxButton(dlg, wxID_OK, _("OK")));
+    bs->AddButton(new wxButton(dlg, wxID_CANCEL, _("Cancel")));
+    bs->Realize();
+    return bs;
+}
+
 constexpr int kMaxRogerCustomSignalMs = 1000;
 constexpr int kMaxCallCustomSignalMs = 5000;
 
@@ -329,19 +360,19 @@ class SignalPatternEditorDialog final : public wxDialog {
 public:
     SignalPatternEditorDialog(wxWindow* parent, AudioEngine* audio, bool callKind)
         : wxDialog(parent, wxID_ANY,
-                   callKind ? "Custom calling signal" : "Custom Roger signal",
+                   callKind ? _("Custom calling signal") : _("Custom Roger signal"),
                    wxDefaultPosition, wxSize(440, 400),
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
           audio_(audio),
           callKind_(callKind) {
         auto* root = new wxBoxSizer(wxVERTICAL);
-        root->Add(new wxStaticText(this, wxID_ANY, "Name"), 0, wxBOTTOM, 4);
+        root->Add(new wxStaticText(this, wxID_ANY, _("Name")), 0, wxBOTTOM, 4);
         nameCtrl_ = new wxTextCtrl(this, wxID_ANY);
         root->Add(nameCtrl_, 0, wxEXPAND | wxBOTTOM, 8);
-        root->Add(new wxStaticText(this, wxID_ANY, "Segments (Hz and ms; frequency 0 = pause)"), 0, wxBOTTOM, 4);
+        root->Add(new wxStaticText(this, wxID_ANY, _("Segments (Hz and ms; frequency 0 = pause)")), 0, wxBOTTOM, 4);
         listBox_ = new wxListBox(this, wxID_ANY);
         root->Add(listBox_, 1, wxEXPAND | wxBOTTOM, 8);
-        repeatLabel_ = new wxStaticText(this, wxID_ANY, "Repeat count");
+        repeatLabel_ = new wxStaticText(this, wxID_ANY, _("Repeat count"));
         repeatSpin_ = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, 500, 1);
         auto* repeatRow = new wxBoxSizer(wxHORIZONTAL);
         repeatRow->Add(repeatLabel_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
@@ -352,14 +383,14 @@ public:
             repeatSpin_->Hide();
         }
         auto* row = new wxBoxSizer(wxHORIZONTAL);
-        addBtn_ = new wxButton(this, wxID_ANY, "Add segment");
-        removeBtn_ = new wxButton(this, wxID_ANY, "Remove");
-        playBtn_ = new wxButton(this, wxID_ANY, "Play");
+        addBtn_ = new wxButton(this, wxID_ANY, _("Add segment"));
+        removeBtn_ = new wxButton(this, wxID_ANY, _("Remove"));
+        playBtn_ = new wxButton(this, wxID_ANY, _("Play"));
         row->Add(addBtn_, 0, wxRIGHT, 8);
         row->Add(removeBtn_, 0, wxRIGHT, 8);
         row->Add(playBtn_, 0);
         root->Add(row, 0, wxBOTTOM, 8);
-        root->Add(CreateSeparatedButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND);
+        root->Add(NewTranslatedOkCancelSizer(this), 0, wxEXPAND);
         SetSizerAndFit(root);
 
         addBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnAdd, this);
@@ -389,29 +420,29 @@ private:
             const auto& pt = points_[i];
             wxString line = wxString::Format("%d. ", static_cast<int>(i + 1));
             if (pt.freqHz <= 0.0) {
-                line += "Pause";
+                line += _("Pause");
             } else {
-                line += wxString::Format("%.2f Hz", pt.freqHz);
+                line += wxString::Format(_("%.2f Hz"), pt.freqHz);
             }
-            line += wxString::Format(" / %d ms", pt.durationMs);
+            line += wxString::Format(_(" / %d ms"), pt.durationMs);
             listBox_->Append(line);
         }
     }
 
     bool AppendPointFromInputs(double freqHz, int durationMs, wxString& errOut) {
         if (durationMs <= 0) {
-            errOut = "Duration must be positive.";
+            errOut = _("Duration must be positive.");
             return false;
         }
         if (freqHz < 0.0) {
-            errOut = "Frequency cannot be negative.";
+            errOut = _("Frequency cannot be negative.");
             return false;
         }
         const int repeat = RepeatCountOr1();
         const int cycleAfter = CycleDurationMs() + durationMs;
         const int limit = callKind_ ? kMaxCallCustomSignalMs : kMaxRogerCustomSignalMs;
         if (cycleAfter * repeat > limit) {
-            errOut = "Total duration would exceed limit.";
+            errOut = _("Total duration would exceed limit.");
             return false;
         }
         points_.push_back({freqHz, durationMs});
@@ -420,36 +451,36 @@ private:
     }
 
     void OnAdd(wxCommandEvent&) {
-        wxDialog dlg(this, wxID_ANY, "New segment", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
+        wxDialog dlg(this, wxID_ANY, _("New segment"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
         auto* sz = new wxBoxSizer(wxVERTICAL);
         auto* fRow = new wxBoxSizer(wxHORIZONTAL);
-        fRow->Add(new wxStaticText(&dlg, wxID_ANY, "Frequency (Hz)"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+        fRow->Add(new wxStaticText(&dlg, wxID_ANY, _("Frequency (Hz)")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
         auto* fCtrl = new wxTextCtrl(&dlg, wxID_ANY, "1000");
         fRow->Add(fCtrl, 1, wxEXPAND);
         sz->Add(fRow, 0, wxEXPAND | wxALL, 8);
         auto* dRow = new wxBoxSizer(wxHORIZONTAL);
-        dRow->Add(new wxStaticText(&dlg, wxID_ANY, "Duration (ms)"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+        dRow->Add(new wxStaticText(&dlg, wxID_ANY, _("Duration (ms)")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
         auto* dCtrl = new wxTextCtrl(&dlg, wxID_ANY, "50");
         dRow->Add(dCtrl, 1, wxEXPAND);
         sz->Add(dRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
-        sz->Add(dlg.CreateSeparatedButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND | wxALL, 8);
+        sz->Add(NewTranslatedOkCancelSizer(&dlg), 0, wxEXPAND | wxALL, 8);
         dlg.SetSizerAndFit(sz);
         if (dlg.ShowModal() != wxID_OK) {
             return;
         }
         double freq = 0;
         if (!fCtrl->GetValue().ToDouble(&freq)) {
-            wxMessageBox("Invalid frequency.", "Invalid", wxOK | wxICON_WARNING, this);
+            wxMessageBox(_("Invalid frequency."), _("Invalid"), wxOK | wxICON_WARNING, this);
             return;
         }
         long durL = 0;
         if (!dCtrl->GetValue().ToLong(&durL)) {
-            wxMessageBox("Duration must be an integer.", "Invalid", wxOK | wxICON_WARNING, this);
+            wxMessageBox(_("Duration must be an integer."), _("Invalid"), wxOK | wxICON_WARNING, this);
             return;
         }
         wxString err;
         if (!AppendPointFromInputs(freq, static_cast<int>(durL), err)) {
-            wxMessageBox(err, "Invalid", wxOK | wxICON_WARNING, this);
+            wxMessageBox(err, _("Invalid"), wxOK | wxICON_WARNING, this);
         }
     }
 
@@ -464,11 +495,11 @@ private:
 
     void OnPlay(wxCommandEvent&) {
         if (points_.empty()) {
-            wxMessageBox("Add at least one segment.", "Preview", wxOK | wxICON_INFORMATION, this);
+            wxMessageBox(_("Add at least one segment."), _("Preview"), wxOK | wxICON_INFORMATION, this);
             return;
         }
         if (callKind_ && repeatSpin_->GetValue() < 1) {
-            wxMessageBox("Invalid repeat count.", "Preview", wxOK | wxICON_WARNING, this);
+            wxMessageBox(_("Invalid repeat count."), _("Preview"), wxOK | wxICON_WARNING, this);
             return;
         }
         SignalPattern pat;
@@ -497,20 +528,20 @@ private:
     void OnTrySave(wxCommandEvent&) {
         const wxString nameWx = nameCtrl_->GetValue().Trim();
         if (nameWx.empty()) {
-            wxMessageBox("Name is required.", "Save", wxOK | wxICON_WARNING, this);
+            wxMessageBox(_("Name is required."), _("Save"), wxOK | wxICON_WARNING, this);
             return;
         }
         if (points_.empty()) {
-            wxMessageBox("Add at least one segment.", "Save", wxOK | wxICON_WARNING, this);
+            wxMessageBox(_("Add at least one segment."), _("Save"), wxOK | wxICON_WARNING, this);
             return;
         }
         if (callKind_ && repeatSpin_->GetValue() < 1) {
-            wxMessageBox("Repeat count must be at least 1.", "Save", wxOK | wxICON_WARNING, this);
+            wxMessageBox(_("Repeat count must be at least 1."), _("Save"), wxOK | wxICON_WARNING, this);
             return;
         }
         const int total = EffectiveTotalMs();
         if (total > (callKind_ ? kMaxCallCustomSignalMs : kMaxRogerCustomSignalMs)) {
-            wxMessageBox("Total duration exceeds limit.", "Save", wxOK | wxICON_WARNING, this);
+            wxMessageBox(_("Total duration exceeds limit."), _("Save"), wxOK | wxICON_WARNING, this);
             return;
         }
         saved_ = {};
@@ -549,8 +580,9 @@ public:
         int globalPttVKey,
         int globalPttMods,
         bool showMicLevelIndicator,
-        bool pttToggleMode)
-        : wxDialog(parent, wxID_ANY, "Settings", wxDefaultPosition, wxSize(580, 420), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+        bool pttToggleMode,
+        const std::string& uiLanguage)
+        : wxDialog(parent, wxID_ANY, _("Settings"), wxDefaultPosition, wxSize(580, 420), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
           host_(host),
           inputDevices_(inputDevices),
           outputDevices_(outputDevices),
@@ -560,9 +592,16 @@ public:
         auto* grid = new wxFlexGridSizer(2, 8, 10);
         grid->AddGrowableCol(1, 1);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, "Microphone"), 0, wxALIGN_CENTER_VERTICAL);
+        grid->Add(new wxStaticText(this, wxID_ANY, _("Display language")), 0, wxALIGN_CENTER_VERTICAL);
+        langChoice_ = new wxChoice(this, wxID_ANY);
+        langChoice_->Append(_("English"));
+        langChoice_->Append(_("Russian"));
+        langChoice_->SetSelection(uiLanguage == "ru" ? 1 : 0);
+        grid->Add(langChoice_, 1, wxEXPAND);
+
+        grid->Add(new wxStaticText(this, wxID_ANY, _("Microphone")), 0, wxALIGN_CENTER_VERTICAL);
         inputChoice_ = new wxChoice(this, wxID_ANY);
-        inputChoice_->Append("System default");
+        inputChoice_->Append(_("System default"));
         inputIds_.push_back(-1);
         for (const auto& d : inputDevices_) {
             inputChoice_->Append(wxString::FromUTF8(d.name));
@@ -570,9 +609,9 @@ public:
         }
         grid->Add(inputChoice_, 1, wxEXPAND);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, "Speaker"), 0, wxALIGN_CENTER_VERTICAL);
+        grid->Add(new wxStaticText(this, wxID_ANY, _("Speaker")), 0, wxALIGN_CENTER_VERTICAL);
         outputChoice_ = new wxChoice(this, wxID_ANY);
-        outputChoice_->Append("System default");
+        outputChoice_->Append(_("System default"));
         outputIds_.push_back(-1);
         for (const auto& d : outputDevices_) {
             outputChoice_->Append(wxString::FromUTF8(d.name));
@@ -580,7 +619,7 @@ public:
         }
         grid->Add(outputChoice_, 1, wxEXPAND);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, "Roger pattern"), 0, wxALIGN_CENTER_VERTICAL);
+        grid->Add(new wxStaticText(this, wxID_ANY, _("Roger pattern")), 0, wxALIGN_CENTER_VERTICAL);
         auto* rogerRow = new wxBoxSizer(wxHORIZONTAL);
         rogerChoice_ = new wxChoice(this, wxID_ANY);
         for (const auto& p : rogerPatterns_) {
@@ -588,13 +627,13 @@ public:
             rogerIds_.push_back(p.id);
         }
         rogerRow->Add(rogerChoice_, 1, wxEXPAND | wxRIGHT, 8);
-        rogerCustomBtn_ = new wxButton(this, wxID_ANY, "Custom");
-        rogerDeleteBtn_ = new wxButton(this, wxID_ANY, "Delete");
+        rogerCustomBtn_ = new wxButton(this, wxID_ANY, _("Custom"));
+        rogerDeleteBtn_ = new wxButton(this, wxID_ANY, _("Delete"));
         rogerRow->Add(rogerCustomBtn_, 0, wxRIGHT, 8);
         rogerRow->Add(rogerDeleteBtn_, 0);
         grid->Add(rogerRow, 1, wxEXPAND);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, "Call pattern"), 0, wxALIGN_CENTER_VERTICAL);
+        grid->Add(new wxStaticText(this, wxID_ANY, _("Call pattern")), 0, wxALIGN_CENTER_VERTICAL);
         auto* callRow = new wxBoxSizer(wxHORIZONTAL);
         callChoice_ = new wxChoice(this, wxID_ANY);
         for (const auto& p : callPatterns_) {
@@ -602,32 +641,32 @@ public:
             callIds_.push_back(p.id);
         }
         callRow->Add(callChoice_, 1, wxEXPAND | wxRIGHT, 8);
-        callCustomBtn_ = new wxButton(this, wxID_ANY, "Custom");
-        callDeleteBtn_ = new wxButton(this, wxID_ANY, "Delete");
+        callCustomBtn_ = new wxButton(this, wxID_ANY, _("Custom"));
+        callDeleteBtn_ = new wxButton(this, wxID_ANY, _("Delete"));
         callRow->Add(callCustomBtn_, 0, wxRIGHT, 8);
         callRow->Add(callDeleteBtn_, 0);
         grid->Add(callRow, 1, wxEXPAND);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, "Global PTT key"), 0, wxALIGN_CENTER_VERTICAL);
+        grid->Add(new wxStaticText(this, wxID_ANY, _("Global PTT key")), 0, wxALIGN_CENTER_VERTICAL);
         auto* pttRow = new wxBoxSizer(wxHORIZONTAL);
         pttKeyLabel_ = new wxStaticText(this, wxID_ANY, wxString::FromUTF8(PttComboToDisplayName(globalPttVKey, globalPttMods)));
-        pttCaptureBtn_ = new wxButton(this, wxID_ANY, "Assign key");
-        pttClearBtn_ = new wxButton(this, wxID_ANY, "Clear");
+        pttCaptureBtn_ = new wxButton(this, wxID_ANY, _("Assign key"));
+        pttClearBtn_ = new wxButton(this, wxID_ANY, _("Clear"));
         pttRow->Add(pttKeyLabel_, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
         pttRow->Add(pttCaptureBtn_, 0, wxRIGHT, 8);
         pttRow->Add(pttClearBtn_, 0);
         grid->Add(pttRow, 1, wxEXPAND);
-        grid->Add(new wxStaticText(this, wxID_ANY, "PTT toggle mode"), 0, wxALIGN_CENTER_VERTICAL);
-        pttToggleCheck_ = new wxCheckBox(this, wxID_ANY, "Tap or hotkey press toggles transmit on/off");
+        grid->Add(new wxStaticText(this, wxID_ANY, _("PTT toggle mode")), 0, wxALIGN_CENTER_VERTICAL);
+        pttToggleCheck_ = new wxCheckBox(this, wxID_ANY, _("Tap or hotkey press toggles transmit on/off"));
         pttToggleCheck_->SetValue(pttToggleMode);
         grid->Add(pttToggleCheck_, 1, wxEXPAND);
-        grid->Add(new wxStaticText(this, wxID_ANY, "Microphone level indicator"), 0, wxALIGN_CENTER_VERTICAL);
-        micLevelCheck_ = new wxCheckBox(this, wxID_ANY, "Show VU meter");
+        grid->Add(new wxStaticText(this, wxID_ANY, _("Microphone level indicator")), 0, wxALIGN_CENTER_VERTICAL);
+        micLevelCheck_ = new wxCheckBox(this, wxID_ANY, _("Show VU meter"));
         micLevelCheck_->SetValue(showMicLevelIndicator);
         grid->Add(micLevelCheck_, 1, wxEXPAND);
 
         root->Add(grid, 1, wxEXPAND | wxALL, 12);
-        root->Add(CreateSeparatedButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+        root->Add(NewTranslatedOkCancelSizer(this), 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         SetSizerAndFit(root);
 
         SelectById(inputChoice_, inputIds_, selectedInputId);
@@ -648,7 +687,7 @@ public:
         pttClearBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             selectedPttVKey_ = 0;
             selectedPttMods_ = 0;
-            pttKeyLabel_->SetLabel("Not set");
+            pttKeyLabel_->SetLabel(_("Not set"));
         });
 
         rogerChoice_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { UpdatePatternDeleteButtons(); });
@@ -682,7 +721,7 @@ public:
             if (id.empty() || MainFrame::IsBuiltInRogerPatternId(id)) {
                 return;
             }
-            if (wxMessageBox("Delete selected custom signal?", "Confirm", wxYES_NO | wxICON_QUESTION, this) != wxYES) {
+            if (wxMessageBox(_("Delete selected custom signal?"), _("Confirm"), wxYES_NO | wxICON_QUESTION, this) != wxYES) {
                 return;
             }
             host_->DeleteCustomRogerPattern(id);
@@ -696,7 +735,7 @@ public:
             if (id.empty() || MainFrame::IsBuiltInCallPatternId(id)) {
                 return;
             }
-            if (wxMessageBox("Delete selected custom signal?", "Confirm", wxYES_NO | wxICON_QUESTION, this) != wxYES) {
+            if (wxMessageBox(_("Delete selected custom signal?"), _("Confirm"), wxYES_NO | wxICON_QUESTION, this) != wxYES) {
                 return;
             }
             host_->DeleteCustomCallPattern(id);
@@ -704,6 +743,13 @@ public:
         });
 
         UpdatePatternDeleteButtons();
+    }
+
+    std::string SelectedUiLanguage() const {
+        if (!langChoice_) {
+            return "en";
+        }
+        return langChoice_->GetSelection() == 1 ? "ru" : "en";
     }
 
     int SelectedInputId() const { return PickId(inputChoice_, inputIds_); }
@@ -798,6 +844,7 @@ private:
     wxStaticText* pttKeyLabel_ = nullptr;
     wxButton* pttCaptureBtn_ = nullptr;
     wxButton* pttClearBtn_ = nullptr;
+    wxChoice* langChoice_ = nullptr;
     wxCheckBox* pttToggleCheck_ = nullptr;
     wxCheckBox* micLevelCheck_ = nullptr;
     std::vector<int> inputIds_;
@@ -827,7 +874,7 @@ MainFrame::MainFrame()
     : wxFrame(
           nullptr,
           wxID_ANY,
-          wxString::Format("O-Walkie Desktop (%s)", wxString::FromUTF8(OWALKIE_VERSION)),
+          wxString::Format(_("O-Walkie Desktop (%s)"), wxString::FromUTF8(OWALKIE_VERSION)),
           wxDefaultPosition,
           wxSize(680, 560)),
       relay_(std::make_unique<RelayClient>()),
@@ -859,7 +906,7 @@ MainFrame::MainFrame()
                 reconnectBackoffMs_ = 1500;
                 StopReconnectTimer();
             }
-            connectBtn_->SetLabel((connected || userWantsSession_) ? "Disconnect" : "Connect");
+            connectBtn_->SetLabel((connected || userWantsSession_) ? _("Disconnect") : _("Connect"));
             ResetPttReleaseBurstGuard();
             RefreshPttUi();
             UpdateProfileControlsEnabled();
@@ -962,7 +1009,9 @@ bool MainFrame::IsBuiltInCallPatternId(const std::string& id) {
 std::vector<SignalPattern> MainFrame::MergedRogerPatternsForUi() const {
     std::vector<SignalPattern> out;
     for (const auto& p : AudioEngine::RogerPatterns()) {
-        out.push_back(p);
+        SignalPattern q = p;
+        q.name = OwTranslatePatternDisplayName(p.name);
+        out.push_back(std::move(q));
     }
     out.insert(out.end(), customRogerPatterns_.begin(), customRogerPatterns_.end());
     return out;
@@ -971,7 +1020,9 @@ std::vector<SignalPattern> MainFrame::MergedRogerPatternsForUi() const {
 std::vector<SignalPattern> MainFrame::MergedCallPatternsForUi() const {
     std::vector<SignalPattern> out;
     for (const auto& p : AudioEngine::CallPatterns()) {
-        out.push_back(p);
+        SignalPattern q = p;
+        q.name = OwTranslatePatternDisplayName(p.name);
+        out.push_back(std::move(q));
     }
     out.insert(out.end(), customCallPatterns_.begin(), customCallPatterns_.end());
     return out;
@@ -1273,6 +1324,10 @@ void MainFrame::LoadAllSettings() {
                 pttToggleMode_ = j.value("ptt_toggle_mode", false);
                 showMicLevelIndicator_ = j.value("show_mic_level_indicator", false);
                 rxVolumePercent_ = j.value("rx_volume_percent", 100);
+                uiLanguageCode_ = j.value("ui_language", std::string("en"));
+                if (uiLanguageCode_ != "ru") {
+                    uiLanguageCode_ = "en";
+                }
             }
         }
     } catch (...) {
@@ -1322,6 +1377,7 @@ void MainFrame::SaveAudioSettings() {
     j["ptt_toggle_mode"] = pttToggleMode_;
     j["show_mic_level_indicator"] = showMicLevelIndicator_;
     j["rx_volume_percent"] = std::clamp(rxVolumePercent_, 0, 200);
+    j["ui_language"] = uiLanguageCode_;
     try {
         std::ofstream out(AudioSettingsPath().utf8_string());
         if (out) {
@@ -1366,7 +1422,7 @@ void MainFrame::SyncActiveProfileFromUi() {
     p.host = hostCtrl_->GetValue().utf8_string();
     p.name = connectionNameCtrl_->GetValue().utf8_string();
     if (p.name.empty()) {
-        p.name = "Connection";
+        p.name = _("Connection").utf8_string();
     }
     p.wsPort = static_cast<int>(ws);
     p.udpPort = static_cast<int>(udp);
@@ -1424,7 +1480,7 @@ void MainFrame::OnNewProfile(wxCommandEvent&) {
     if (!entered.empty()) {
         p.name = entered.utf8_string();
     } else {
-        p.name = "Connection " + std::to_string(static_cast<int>(profiles_.size()) + 1);
+        p.name = wxString::Format(_("Connection %d"), static_cast<int>(profiles_.size()) + 1).utf8_string();
     }
     p.host = hostCtrl_->GetValue().utf8_string();
     long ws = 0;
@@ -1554,7 +1610,7 @@ void MainFrame::OnRelayConnectionLost() {
     globalPttToggleHookDown_ = false;
     connected_ = false;
     audio_->PlayConnectionErrorSignal();
-    connectBtn_->SetLabel(userWantsSession_ ? "Disconnect" : "Connect");
+    connectBtn_->SetLabel(userWantsSession_ ? _("Disconnect") : _("Connect"));
     UpdateProfileControlsEnabled();
     RefreshPttUi();
 
@@ -1572,21 +1628,21 @@ void MainFrame::BuildUi() {
 
     auto* profileRow = new wxFlexGridSizer(2, 8, 10);
     profileRow->AddGrowableCol(1, 1);
-    profileLabel_ = new wxStaticText(panel, wxID_ANY, "Connections");
+    profileLabel_ = new wxStaticText(panel, wxID_ANY, _("Connections"));
     SkipKeyboardFocus(profileLabel_);
     profileRow->Add(profileLabel_, 0, wxALIGN_CENTER_VERTICAL);
     profileChoice_ = new wxChoice(panel, wxID_ANY);
-    profileChoice_->SetName("Connections");
+    profileChoice_->SetName(_("Connections"));
     profileRow->Add(profileChoice_, 1, wxEXPAND);
     root->Add(profileRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
 
     auto* profileBtns = new wxBoxSizer(wxHORIZONTAL);
-    saveProfileBtn_ = new wxButton(panel, wxID_ANY, "Save");
-    saveProfileBtn_->SetName("Save connection");
-    newProfileBtn_ = new wxButton(panel, wxID_ANY, "New");
-    newProfileBtn_->SetName("New connection");
-    deleteProfileBtn_ = new wxButton(panel, wxID_ANY, "Delete");
-    deleteProfileBtn_->SetName("Delete connection");
+    saveProfileBtn_ = new wxButton(panel, wxID_ANY, _("Save"));
+    saveProfileBtn_->SetName(_("Save connection"));
+    newProfileBtn_ = new wxButton(panel, wxID_ANY, _("New"));
+    newProfileBtn_->SetName(_("New connection"));
+    deleteProfileBtn_ = new wxButton(panel, wxID_ANY, _("Delete"));
+    deleteProfileBtn_->SetName(_("Delete connection"));
     profileBtns->Add(saveProfileBtn_, 0, wxRIGHT, 8);
     profileBtns->Add(newProfileBtn_, 0, wxRIGHT, 8);
     profileBtns->Add(deleteProfileBtn_, 0);
@@ -1595,47 +1651,47 @@ void MainFrame::BuildUi() {
     auto* grid = new wxFlexGridSizer(2, 8, 10);
     grid->AddGrowableCol(1, 1);
 
-    auto* labName = new wxStaticText(panel, wxID_ANY, "Connection name");
+    auto* labName = new wxStaticText(panel, wxID_ANY, _("Connection name"));
     SkipKeyboardFocus(labName);
     grid->Add(labName, 0, wxALIGN_CENTER_VERTICAL);
-    connectionNameCtrl_ = new wxTextCtrl(panel, wxID_ANY, "Default");
-    connectionNameCtrl_->SetName("Connection name");
+    connectionNameCtrl_ = new wxTextCtrl(panel, wxID_ANY, _("Default"));
+    connectionNameCtrl_->SetName(_("Connection name"));
     grid->Add(connectionNameCtrl_, 1, wxEXPAND);
 
-    auto* labHost = new wxStaticText(panel, wxID_ANY, "Server host");
+    auto* labHost = new wxStaticText(panel, wxID_ANY, _("Server host"));
     SkipKeyboardFocus(labHost);
     grid->Add(labHost, 0, wxALIGN_CENTER_VERTICAL);
     hostCtrl_ = new wxTextCtrl(panel, wxID_ANY, "127.0.0.1");
-    hostCtrl_->SetName("Host");
+    hostCtrl_->SetName(_("Host"));
     grid->Add(hostCtrl_, 1, wxEXPAND);
 
-    auto* labWs = new wxStaticText(panel, wxID_ANY, "WebSocket port");
+    auto* labWs = new wxStaticText(panel, wxID_ANY, _("WebSocket port"));
     SkipKeyboardFocus(labWs);
     grid->Add(labWs, 0, wxALIGN_CENTER_VERTICAL);
     wsPortCtrl_ = new wxTextCtrl(panel, wxID_ANY, "5500");
-    wsPortCtrl_->SetName("WebSocket port");
+    wsPortCtrl_->SetName(_("WebSocket port"));
     grid->Add(wsPortCtrl_, 1, wxEXPAND);
 
-    auto* labUdp = new wxStaticText(panel, wxID_ANY, "UDP port");
+    auto* labUdp = new wxStaticText(panel, wxID_ANY, _("UDP port"));
     SkipKeyboardFocus(labUdp);
     grid->Add(labUdp, 0, wxALIGN_CENTER_VERTICAL);
     udpPortCtrl_ = new wxTextCtrl(panel, wxID_ANY, "5505");
-    udpPortCtrl_->SetName("UDP port");
+    udpPortCtrl_->SetName(_("UDP port"));
     grid->Add(udpPortCtrl_, 1, wxEXPAND);
 
-    auto* labCh = new wxStaticText(panel, wxID_ANY, "Channel");
+    auto* labCh = new wxStaticText(panel, wxID_ANY, _("Channel"));
     SkipKeyboardFocus(labCh);
     grid->Add(labCh, 0, wxALIGN_CENTER_VERTICAL);
     channelCtrl_ = new wxTextCtrl(panel, wxID_ANY, "global");
-    channelCtrl_->SetName("Channel");
+    channelCtrl_->SetName(_("Channel"));
     grid->Add(channelCtrl_, 1, wxEXPAND);
 
-    auto* labRx = new wxStaticText(panel, wxID_ANY, "Incoming volume");
+    auto* labRx = new wxStaticText(panel, wxID_ANY, _("Incoming volume"));
     SkipKeyboardFocus(labRx);
     grid->Add(labRx, 0, wxALIGN_CENTER_VERTICAL);
     auto* rxRow = new wxBoxSizer(wxHORIZONTAL);
     rxVolumeSlider_ = new wxSlider(panel, wxID_ANY, rxVolumePercent_, 0, 200, wxDefaultPosition, wxSize(200, -1));
-    rxVolumeSlider_->SetName("Incoming volume");
+    rxVolumeSlider_->SetName(_("Incoming volume"));
     rxVolumeValueText_ = new wxStaticText(panel, wxID_ANY, wxString::Format("%d%%", rxVolumePercent_));
     SkipKeyboardFocus(rxVolumeValueText_);
     rxRow->Add(rxVolumeSlider_, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
@@ -1645,22 +1701,22 @@ void MainFrame::BuildUi() {
     root->Add(grid, 0, wxEXPAND | wxALL, 12);
 
     auto* audioBar = new wxBoxSizer(wxHORIZONTAL);
-    settingsBtn_ = new wxButton(panel, wxID_ANY, "Settings");
-    settingsBtn_->SetName("Open settings");
+    settingsBtn_ = new wxButton(panel, wxID_ANY, _("Settings"));
+    settingsBtn_->SetName(_("Open settings"));
     audioBar->Add(settingsBtn_, 0, wxRIGHT, 10);
     root->Add(audioBar, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
-    repeaterCheck_ = new wxCheckBox(panel, wxID_ANY, "Repeater mode");
-    repeaterCheck_->SetName("Repeater mode");
+    repeaterCheck_ = new wxCheckBox(panel, wxID_ANY, _("Repeater mode"));
+    repeaterCheck_->SetName(_("Repeater mode"));
     root->Add(repeaterCheck_, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     auto* actions = new wxBoxSizer(wxHORIZONTAL);
-    connectBtn_ = new wxButton(panel, wxID_ANY, "Connect");
-    connectBtn_->SetName("Connect or disconnect");
-    pttBtn_ = new wxButton(panel, wxID_ANY, "Hold to Talk");
-    pttBtn_->SetName("Push to talk");
-    callBtn_ = new wxButton(panel, wxID_ANY, "Call");
-    callBtn_->SetName("Call signal");
+    connectBtn_ = new wxButton(panel, wxID_ANY, _("Connect"));
+    connectBtn_->SetName(_("Connect or disconnect"));
+    pttBtn_ = new wxButton(panel, wxID_ANY, _("Hold to Talk"));
+    pttBtn_->SetName(_("Push to talk"));
+    callBtn_ = new wxButton(panel, wxID_ANY, _("Call"));
+    callBtn_->SetName(_("Call signal"));
     pttBtn_->Enable(false);
     callBtn_->Enable(false);
     actions->Add(connectBtn_, 0, wxRIGHT, 10);
@@ -1669,7 +1725,7 @@ void MainFrame::BuildUi() {
     root->Add(actions, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     signalGauge_ = new wxGauge(panel, wxID_ANY, 100, wxDefaultPosition, wxSize(220, -1));
-    signalGauge_->SetName("Transmit level");
+    signalGauge_->SetName(_("Transmit level"));
     SkipKeyboardFocus(signalGauge_);
 
     root->Add(signalGauge_, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
@@ -1720,43 +1776,64 @@ void MainFrame::SetStatus(const wxString& status) {
 wxString MainFrame::HumanizeStatus(const wxString& status) const {
     const wxString s = status.Lower();
     if (s.IsEmpty()) {
-        return "Disconnected";
+        return _("Disconnected");
     }
     if (s.Contains("welcome received") || s == "connected" || s == "reconnected") {
-        return "Connected";
+        return _("Connected");
     }
     if (s.StartsWith("reconnecting in") || s.StartsWith("reconnect attempt") || s.Contains("retry")) {
-        return "Reconnecting...";
+        return _("Reconnecting...");
     }
     if (s.Contains("transmitting")) {
-        return "Transmitting";
+        return _("Transmitting");
     }
     if (s.Contains("sending call")) {
-        return "Sending call signal...";
+        return _("Sending call signal...");
     }
     if (s.Contains("tx stopped")) {
-        return "Transmission stopped by server";
+        return _("Transmission stopped by server");
     }
     if (s.Contains("connect failed")) {
-        return "Unable to connect";
+        return _("Unable to connect");
     }
     if (s.Contains("protocol mismatch") || s.Contains("missing samplerate")) {
-        return "Incompatible server protocol";
+        return _("Incompatible server protocol");
+    }
+    if (s.Contains("connection lost") && s.Contains("retrying")) {
+        return _("Connection lost — retrying");
     }
     if (s.Contains("ws ended") || s.Contains("udp ended") || s.Contains("keepalive timeout") || s.Contains("connection lost")) {
-        return "Connection lost";
+        return _("Connection lost");
     }
     if (s.Contains("audio initialized")) {
-        return "Ready";
+        return _("Ready");
+    }
+    if (s.Contains("miniaudio") && s.Contains("failed")) {
+        return _("Audio failed to initialize");
     }
     if (s == "disconnected") {
-        return "Disconnected";
+        return _("Disconnected");
     }
     if (s == "settings applied") {
-        return "Settings applied";
+        return _("Settings applied");
     }
-    if (s == "profile saved" || s == "profile created" || s == "profile deleted") {
-        return status;
+    if (s == "profile saved") {
+        return _("Profile saved");
+    }
+    if (s == "profile created") {
+        return _("Profile created");
+    }
+    if (s == "profile deleted") {
+        return _("Profile deleted");
+    }
+    if (s == "call signal failed") {
+        return _("Call signal failed");
+    }
+    if (s.Contains("ptt paused")) {
+        return _("PTT paused — too many quick releases");
+    }
+    if (s == "invalid ports") {
+        return _("Invalid ports");
     }
     return status;
 }
@@ -1815,7 +1892,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
         relay_->Disconnect();
         ResetPttReleaseBurstGuard();
         connected_ = false;
-        connectBtn_->SetLabel("Connect");
+        connectBtn_->SetLabel(_("Connect"));
         globalPttPressed_ = false;
         globalPttToggleHookDown_ = false;
         UpdateProfileControlsEnabled();
@@ -1829,7 +1906,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
     audio_->PlayManualConnectStartSignal();
     reconnectBackoffMs_ = 1500;
     UpdateProfileControlsEnabled();
-    connectBtn_->SetLabel("Disconnect");
+    connectBtn_->SetLabel(_("Disconnect"));
 
     if (TryConnectWithCurrentFields()) {
         SaveProfilesToDisk();
@@ -1837,7 +1914,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
         SetStatus("Connected");
     } else {
         userWantsSession_ = false;
-        connectBtn_->SetLabel("Connect");
+        connectBtn_->SetLabel(_("Connect"));
         UpdateProfileControlsEnabled();
         audio_->PlayConnectionErrorSignal();
         SetStatus("Connect failed");
@@ -1958,11 +2035,11 @@ void MainFrame::RefreshPttUi() {
     const bool allowPtt = connected_ && !burstBlocked;
     pttBtn_->Enable(allowPtt);
     if (!allowPtt) {
-        pttBtn_->SetLabel("PTT unavailable");
+        pttBtn_->SetLabel(_("PTT unavailable"));
     } else if (pttToggleMode_) {
-        pttBtn_->SetLabel(audio_->IsTransmitting() ? "Stop talking" : "Start talking");
+        pttBtn_->SetLabel(audio_->IsTransmitting() ? _("Stop talking") : _("Start talking"));
     } else {
-        pttBtn_->SetLabel("Hold to Talk");
+        pttBtn_->SetLabel(_("Hold to Talk"));
     }
     if (callBtn_) {
         callBtn_->Enable(connected_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming());
@@ -2039,6 +2116,7 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
     PopulateAudioDeviceChoices();
     LoadCustomSignalPatternsFromDisk();
     ApplyCustomPatternsToEngine();
+    const std::string langBefore = uiLanguageCode_;
     SettingsDialog dlg(
         this,
         this,
@@ -2053,7 +2131,8 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
         globalPttVKey_,
         globalPttMods_,
         showMicLevelIndicator_,
-        pttToggleMode_);
+        pttToggleMode_,
+        uiLanguageCode_);
     if (dlg.ShowModal() != wxID_OK) {
         return;
     }
@@ -2064,6 +2143,10 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
     globalPttVKey_ = dlg.SelectedGlobalPttVKey();
     globalPttMods_ = dlg.SelectedGlobalPttMods();
     showMicLevelIndicator_ = dlg.ShowMicLevelIndicator();
+    uiLanguageCode_ = dlg.SelectedUiLanguage();
+    if (uiLanguageCode_ != "ru") {
+        uiLanguageCode_ = "en";
+    }
     const bool newToggle = dlg.PttToggleMode();
     if (pttToggleMode_ && !newToggle && audio_->IsTransmitting()) {
         EndPttTx();
@@ -2076,6 +2159,13 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
     SaveAudioSettings();
     RefreshPttUi();
     SetStatus("Settings applied");
+    if (langBefore != uiLanguageCode_) {
+        wxMessageBox(
+            _("Please restart O-Walkie Desktop for the new language to take effect."),
+            _("Language"),
+            wxOK | wxICON_INFORMATION,
+            this);
+    }
 }
 
 #ifdef _WIN32

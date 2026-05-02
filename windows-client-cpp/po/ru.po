@@ -1,0 +1,357 @@
+# Russian translations for O-Walkie Desktop (wxWidgets gettext).
+# Align with Android values-ru/strings.xml where applicable.
+#
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ru\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+msgid "Press key combination"
+msgstr "Нажмите сочетание клавиш"
+
+msgid "Press any key or key combination (with Ctrl/Alt/Shift)."
+msgstr "Нажмите любую клавишу или сочетание (с Ctrl/Alt/Shift)."
+
+msgid "Waiting..."
+msgstr "Ожидание..."
+
+msgid "Custom calling signal"
+msgstr "Свой сигнал вызова"
+
+msgid "Custom Roger signal"
+msgstr "Свой сигнал"
+
+msgid "Name"
+msgstr "Название"
+
+msgid "Segments (Hz and ms; frequency 0 = pause)"
+msgstr "Сегменты (Гц и мс; частота 0 = пауза)"
+
+msgid "Repeat count"
+msgstr "Количество повторов"
+
+msgid "Add segment"
+msgstr "Добавить сегмент"
+
+msgid "Remove"
+msgstr "Удалить"
+
+msgid "Play"
+msgstr "Проиграть"
+
+msgid "Pause"
+msgstr "Пауза"
+
+msgid "%.2f Hz"
+msgstr "%.2f Гц"
+
+msgid " / %d ms"
+msgstr " / %d мс"
+
+msgid "Duration must be positive."
+msgstr "Длительность должна быть больше нуля."
+
+msgid "Frequency cannot be negative."
+msgstr "Частота не может быть отрицательной."
+
+msgid "Total duration would exceed limit."
+msgstr "Суммарная длительность превысит ограничение."
+
+msgid "New segment"
+msgstr "Новый сегмент"
+
+msgid "Frequency (Hz)"
+msgstr "Частота (Гц)"
+
+msgid "Duration (ms)"
+msgstr "Длительность (мс)"
+
+msgid "Invalid frequency."
+msgstr "Некорректная частота."
+
+msgid "Invalid"
+msgstr "Ошибка"
+
+msgid "Duration must be an integer."
+msgstr "Длительность должна быть целым числом."
+
+msgid "Add at least one segment."
+msgstr "Добавьте хотя бы один сегмент."
+
+msgid "Preview"
+msgstr "Прослушивание"
+
+msgid "Invalid repeat count."
+msgstr "Некорректное число повторов."
+
+msgid "Name is required."
+msgstr "Введите название."
+
+msgid "Save"
+msgstr "Сохранить"
+
+msgid "OK"
+msgstr "ОК"
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Delete"
+msgstr "Удалить"
+
+msgid "Repeat count must be at least 1."
+msgstr "Число повторов должно быть не меньше 1."
+
+msgid "Total duration exceeds limit."
+msgstr "Суммарная длительность слишком большая."
+
+msgid "Settings"
+msgstr "Настройки"
+
+msgid "Display language"
+msgstr "Язык интерфейса"
+
+msgid "English"
+msgstr "English"
+
+msgid "Russian"
+msgstr "Русский"
+
+msgid "Microphone"
+msgstr "Микрофон"
+
+msgid "System default"
+msgstr "Системный по умолчанию"
+
+msgid "Speaker"
+msgstr "Динамик"
+
+msgid "Roger pattern"
+msgstr "Сигнал Роджер"
+
+msgid "Custom"
+msgstr "Свой"
+
+msgid "Call pattern"
+msgstr "Сигнал вызова"
+
+msgid "Global PTT key"
+msgstr "Глобальная клавиша PTT"
+
+msgid "Assign key"
+msgstr "Назначить клавишу"
+
+msgid "Clear"
+msgstr "Сбросить"
+
+msgid "PTT toggle mode"
+msgstr "Режим переключателя PTT"
+
+msgid "Tap or hotkey press toggles transmit on/off"
+msgstr "Нажатие по кнопке или горячей клавише включает/выключает передачу"
+
+msgid "Microphone level indicator"
+msgstr "Индикатор уровня микрофона"
+
+msgid "Show VU meter"
+msgstr "Показывать индикатор уровня (VU)"
+
+msgid "Not set"
+msgstr "Не задана"
+
+msgid "Delete selected custom signal?"
+msgstr "Удалить выбранный пользовательский сигнал?"
+
+msgid "Confirm"
+msgstr "Подтверждение"
+
+msgid "O-Walkie Desktop (%s)"
+msgstr "O-Walkie Desktop (%s)"
+
+msgid "Connection"
+msgstr "Подключение"
+
+msgid "Connection %d"
+msgstr "Подключение %d"
+
+msgid "Please restart O-Walkie Desktop for the new language to take effect."
+msgstr "Перезапустите O-Walkie Desktop, чтобы применить новый язык интерфейса."
+
+msgid "Language"
+msgstr "Язык"
+
+msgid "Connections"
+msgstr "Список подключений"
+
+msgid "Save connection"
+msgstr "Сохранить подключение"
+
+msgid "New"
+msgstr "Новый"
+
+msgid "New connection"
+msgstr "Новое подключение"
+
+msgid "Delete connection"
+msgstr "Удалить подключение"
+
+msgid "Connection name"
+msgstr "Название сервера"
+
+msgid "Default"
+msgstr "По умолчанию"
+
+msgid "Server host"
+msgstr "Хост сервера"
+
+msgid "Host"
+msgstr "Хост"
+
+msgid "WebSocket port"
+msgstr "Служебный порт"
+
+msgid "UDP port"
+msgstr "Порт данных"
+
+msgid "Channel"
+msgstr "Канал"
+
+msgid "Incoming volume"
+msgstr "Громкость входящего звука"
+
+msgid "Open settings"
+msgstr "Открыть настройки"
+
+msgid "Repeater mode"
+msgstr "Режим репитера"
+
+msgid "Connect"
+msgstr "Подключиться"
+
+msgid "Connect or disconnect"
+msgstr "Подключиться или отключиться"
+
+msgid "Hold to Talk"
+msgstr "Удерживайте для разговора"
+
+msgid "Push to talk"
+msgstr "Нажмите, чтобы говорить"
+
+msgid "Call"
+msgstr "Вызов"
+
+msgid "Call signal"
+msgstr "Сигнал вызова"
+
+msgid "Transmit level"
+msgstr "Уровень передачи"
+
+msgid "Disconnect"
+msgstr "Отключиться"
+
+msgid "Disconnected"
+msgstr "Отключен"
+
+msgid "Connected"
+msgstr "Подключен"
+
+msgid "Reconnecting..."
+msgstr "Переподключение..."
+
+msgid "Transmitting"
+msgstr "Передача"
+
+msgid "Sending call signal..."
+msgstr "Отправка сигнала вызова..."
+
+msgid "Transmission stopped by server"
+msgstr "Передача остановлена сервером"
+
+msgid "Unable to connect"
+msgstr "Не удалось подключиться"
+
+msgid "Incompatible server protocol"
+msgstr "Несовместимая версия протокола"
+
+msgid "Connection lost — retrying"
+msgstr "Соединение потеряно — повтор"
+
+msgid "Connection lost"
+msgstr "Соединение потеряно"
+
+msgid "Ready"
+msgstr "Готов"
+
+msgid "Audio failed to initialize"
+msgstr "Не удалось инициализировать аудио"
+
+msgid "Settings applied"
+msgstr "Настройки применены"
+
+msgid "Profile saved"
+msgstr "Профиль сохранен"
+
+msgid "Profile created"
+msgstr "Профиль создан"
+
+msgid "Profile deleted"
+msgstr "Профиль удален"
+
+msgid "Call signal failed"
+msgstr "Не удалось отправить вызов"
+
+msgid "PTT paused — too many quick releases"
+msgstr "PTT приостановлена — слишком частые отпускания"
+
+msgid "Invalid ports"
+msgstr "Некорректные порты"
+
+msgid "PTT unavailable"
+msgstr "PTT недоступна"
+
+msgid "Stop talking"
+msgstr "Остановить передачу"
+
+msgid "Start talking"
+msgstr "Начать передачу"
+
+msgid "Left Ctrl+"
+msgstr "Левый Ctrl+"
+
+msgid "Right Ctrl+"
+msgstr "Правый Ctrl+"
+
+msgid "Ctrl+"
+msgstr "Ctrl+"
+
+msgid "Left Alt+"
+msgstr "Левый Alt+"
+
+msgid "Right Alt+"
+msgstr "Правый Alt+"
+
+msgid "Alt+"
+msgstr "Alt+"
+
+msgid "Left Shift+"
+msgstr "Левый Shift+"
+
+msgid "Right Shift+"
+msgstr "Правый Shift+"
+
+msgid "Shift+"
+msgstr "Shift+"
+
+msgid "No signal"
+msgstr "Нет сигнала"
+
+msgid "Variant 1"
+msgstr "Вариант 1"
+
+msgid "Variant 2"
+msgstr "Вариант 2"
+
+msgid "Variant 3"
+msgstr "Вариант 3"

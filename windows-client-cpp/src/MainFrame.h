@@ -153,6 +153,7 @@ private:
     bool pttToggleMode_ = false;
     bool showMicLevelIndicator_ = false;
     int rxVolumePercent_ = 100;
+    std::string uiLanguageCode_{"en"};
     bool globalPttPressed_ = false;
     bool globalPttToggleHookDown_ = false;
 #ifdef _WIN32

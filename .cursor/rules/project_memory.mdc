@@ -8,7 +8,7 @@ alwaysApply: true
 ## Tech Stack
 - Backend: Go relay server (`backend/cmd/relay/main.go`), WebSocket control + UDP audio data.
 - Android client: Kotlin, foreground `WalkieService`, Opus via `kopus`, Gradle Kotlin DSL.
-- Windows client: C++ wxWidgets (`windows-client-cpp`), Boost.Beast, **miniaudio** (vendored), Opus (legacy C# WPF removed).
+- Windows client: C++ wxWidgets (`windows-client-cpp`), Boost.Beast, **miniaudio** (vendored), Opus (legacy C# WPF removed); UI i18n via **gettext** (`wxLocale` + `locale/<lang>/LC_MESSAGES/owalkie.mo`), source language English, `ui_language` (`en`|`ru`) in `audio.json`, language picker in Settings (restart required).
 - Audio protocol: Opus mono, server handshake with protocol/version/audio params.
 
 ## Релизы (перед каждым публичным релизом на GitHub)
@@ -26,6 +26,7 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Windows: **gettext** для интерфейса — каталог `owalkie`, переводы в `windows-client-cpp/po/ru.po` и бинарник `locale/ru/LC_MESSAGES/owalkie.mo` (копируется рядом с exe в POST_BUILD); инициализация до окна в `OwInitAppLocale` / `LocaleInit.cpp`; строки через `_()` / `wxGetTranslation`; выбор языка только в настройках, смена `ui_language` в `audio.json` и напоминание о перезапуске.
 - Backend relay: после UDP keepalive `sendLatestFrameToParticipant` больше не шлёт последний смешанный кадр тому же `sessionID`, для которого этот кадр был исключён из `broadcastMixed` (solo TX / tail exclude) — иначе клиент получал входящий пакет во время своей передачи и ложно срабатывала «TX collision» (вибрация Android / тон на Windows).
 - Клиенты: защита от PTT-спама по **отжатиям** — после ≥3 отжатий блокируем нажатия; таймер тишины **1000 ms** перезапускается на каждом отжатии и **пока заблокировано** — на каждой попытке нажатия (продление до «успокоился»); сброс при обрыве соединения. Android: `EXTRA_PTT_BURST_PRESS_BLOCKED`; hold-to-talk через `endHoldPttGesture` / `onStop`.
 - Windows: режим **PTT toggle** (настройки) — `ptt_toggle_mode` в `audio.json`; кнопка и глобальный хоткей переключают передачу как на Android (`PttHardwareKeyStore` / экранная кнопка); при выключении режима во время TX — сброс передачи; Call недоступен во время TX.

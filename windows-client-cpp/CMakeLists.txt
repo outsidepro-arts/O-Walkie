@@ -28,6 +28,7 @@ pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
 
 add_executable(owalkie-desktop-cpp WIN32
     src/main.cpp
+    src/LocaleInit.cpp
     src/MainFrame.cpp
     src/RelayClient.cpp
     src/AudioEngine.cpp
@@ -89,11 +90,28 @@ set(OWALKIE_MSYS_ROOT "C:/dev/msys64" CACHE PATH "MSYS2 install root (for dist/ 
 if(WIN32 AND MINGW)
     set(_bundle_sh "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-ucrt64-deps.sh")
     set(_copy_sounds_cmake "${CMAKE_CURRENT_SOURCE_DIR}/scripts/copy-android-sounds.cmake")
+    set(_copy_locale_cmake "${CMAKE_CURRENT_SOURCE_DIR}/scripts/copy-desktop-locale.cmake")
+    set(OWALKIE_LOCALE_SRC "${CMAKE_CURRENT_SOURCE_DIR}/locale")
+    if(NOT IS_DIRECTORY "${OWALKIE_LOCALE_SRC}")
+        message(FATAL_ERROR "Desktop locale directory is missing: ${OWALKIE_LOCALE_SRC}")
+    endif()
+    set(_owalkie_required_mo "${OWALKIE_LOCALE_SRC}/ru/LC_MESSAGES/owalkie.mo")
+    if(NOT EXISTS "${_owalkie_required_mo}")
+        message(FATAL_ERROR "Required gettext catalog is missing: ${_owalkie_required_mo}")
+    endif()
     add_custom_command(TARGET owalkie-desktop-cpp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/dist"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:owalkie-desktop-cpp>"
             "${CMAKE_BINARY_DIR}/dist/"
+        COMMAND ${CMAKE_COMMAND}
+            -DLOCALE_SRC_DIR=${OWALKIE_LOCALE_SRC}
+            -DOUT_LOCALE_DIR=$<TARGET_FILE_DIR:owalkie-desktop-cpp>/locale
+            -P "${_copy_locale_cmake}"
+        COMMAND ${CMAKE_COMMAND}
+            -DLOCALE_SRC_DIR=${OWALKIE_LOCALE_SRC}
+            -DOUT_LOCALE_DIR=${CMAKE_BINARY_DIR}/dist/locale
+            -P "${_copy_locale_cmake}"
         COMMAND ${CMAKE_COMMAND}
             -DANDROID_RAW_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../android/app/src/main/res/raw
             -DOUT_SOUNDS_DIR=$<TARGET_FILE_DIR:owalkie-desktop-cpp>/sounds
