@@ -295,10 +295,10 @@ type speakerStreamState struct {
 	lastPCM      []int16
 	missCount    int
 
-	// decoderFlushPending/eofAt: after explicit TX EOF, drop per-session Opus decoder once
-	// the jitter queue has drained, so the next transmission does not inherit decoder tail.
-	decoderFlushPending bool
-	eofAt               time.Time
+	// silenceTailRemain: after explicit UDP EOF, emit this many all-zero PCM frames once the
+	// jitter queue is empty so uplink Opus decoders and the mix see a smooth silence ramp-off
+	// (depth scales with jitter_min_packets).
+	silenceTailRemain int
 }
 
 type speakerJitterBuffer struct {
@@ -569,11 +569,6 @@ type channelMixer struct {
 	lastFramePayload         []byte
 	lastFrameAt              time.Time
 	lastFrameExcludedSession uint32 // broadcastMixed exclude for lastFramePayload; 0 = not excluded
-
-	// lastMixEmittedAt: time of last mixed Opus frame sent to clients. After a gap without
-	// Encode(), the output encoder's internal state can cause a digital glitch on the next
-	// speech frame; reprime the encoder when resuming after silence.
-	lastMixEmittedAt time.Time
 }
 
 type repeaterSession struct {
@@ -681,26 +676,14 @@ func (m *channelMixer) dropDecoder(sessionID uint32) {
 	m.decodersMu.Unlock()
 }
 
-// maybeFlushDecoderAfterEOF drops the per-session Opus decoder after explicit EOF once
-// the jitter buffer is empty and a short settle window has passed, so the next PTT
-// does not inherit PLC/tail state from the previous transmission. Runs before pulling
-// from jitter so we never clear the queue mid-drain.
-func (m *channelMixer) maybeFlushDecoderAfterEOF(sessionID uint32, st *speakerStreamState, now time.Time) {
-	if st == nil || !st.decoderFlushPending {
-		return
+// silenceTailFramesAfterEOF returns how many mixer ticks of zero PCM to inject after the
+// jitter queue drains post-EOF (jitter depth + small margin).
+func (m *channelMixer) silenceTailFramesAfterEOF() int {
+	n := int(m.jitterMinPackets) + 2
+	if n < 4 {
+		n = 4
 	}
-	if st.jitter.pendingCount() != 0 {
-		return
-	}
-	minQuiet := 5 * packetDur
-	if !st.eofAt.IsZero() && now.Sub(st.eofAt) < minQuiet {
-		return
-	}
-	m.dropDecoder(sessionID)
-	st.lastPCM = nil
-	st.missCount = 0
-	st.decoderFlushPending = false
-	st.eofAt = time.Time{}
+	return n
 }
 
 func (m *channelMixer) canAcceptTxPacket(sessionID uint32) bool {
@@ -1164,7 +1147,12 @@ func (m *channelMixer) runLoop() (panicked bool) {
 				st.jitter.reset()
 				st.lastPCM = nil
 				st.missCount = 0
+				st.silenceTailRemain = 0
 				m.dropDecoder(pkt.sessionID)
+			}
+			if st.silenceTailRemain > 0 && st.jitter.pendingCount() == 0 {
+				// New uplink while synthetic tail is running (jitter already drained): real audio wins.
+				st.silenceTailRemain = 0
 			}
 			st.jitter.push(pkt)
 			st.lastPacketAt = now
@@ -1186,8 +1174,7 @@ func (m *channelMixer) runLoop() (panicked bool) {
 				// Force jitter start on EOF so buffered short TX drains now,
 				// instead of sticking until the next long transmission.
 				st.jitter.forceStartFromMinSeq()
-				st.decoderFlushPending = true
-				st.eofAt = time.Now()
+				st.silenceTailRemain = m.silenceTailFramesAfterEOF()
 			}
 			m.markRepeaterEOF(sid)
 			// Keep already buffered packets for a short natural drain, but disable
@@ -1222,17 +1209,6 @@ func (m *channelMixer) resetAfterLoopFailure() {
 	m.lastFrameAt = time.Time{}
 	m.lastFrameExcludedSession = 0
 	m.lastFrameMu.Unlock()
-	m.lastMixEmittedAt = time.Time{}
-}
-
-func (m *channelMixer) reprimeMixOutputEncoder() {
-	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, resolveOpusApplication(configuredOpus.Application))
-	if err != nil {
-		log.Printf("channel %s mix output encoder reprime failed: %v", m.name, err)
-		return
-	}
-	applyOpusEncoderConfig(enc)
-	m.encoder = enc
 }
 
 func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool, now time.Time) {
@@ -1277,7 +1253,6 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		if st == nil {
 			continue
 		}
-		m.maybeFlushDecoderAfterEOF(sessionID, st, now)
 		// If a short burst did not reach jitter start threshold and then paused,
 		// force-start queued packets so they are drained now (even without explicit EOF).
 		if st.jitter.pendingCount() > 0 && !st.jitter.isStarted() && now.Sub(st.lastPacketAt) > packetDur {
@@ -1339,6 +1314,19 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 			} else {
 				// Zero-sample decode behaves like a gap in transport.
 				hasPacket = false
+			}
+		}
+		// Post-EOF silence tail: jitter drained, eof still marked — feed zeros so per-session
+		// decoder state winds down and the mix encoder sees continuous frames.
+		if !speakerActive && !hasPacket && eofMarked[sessionID] && st.jitter.pendingCount() == 0 && st.silenceTailRemain > 0 {
+			pcmFrame = make([]int16, packetSamples)
+			speakerActive = true
+			st.silenceTailRemain--
+			st.lastPacketAt = now
+			st.missCount = 0
+			st.lastPCM = nil
+			if st.silenceTailRemain == 0 {
+				m.dropDecoder(sessionID)
 			}
 		}
 		if !speakerActive && !hasPacket && !eofMarked[sessionID] && now.Sub(st.lastPacketAt) <= m.eofTimeoutDur && len(st.lastPCM) > 0 {
@@ -1412,10 +1400,6 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		return
 	}
 
-	if !m.lastMixEmittedAt.IsZero() && now.Sub(m.lastMixEmittedAt) > 8*packetDur {
-		m.reprimeMixOutputEncoder()
-	}
-
 	outPCM := make([]int16, packetSamples)
 	for i := 0; i < packetSamples; i++ {
 		// Saturated character: hard clip after sum.
@@ -1454,7 +1438,6 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	}
 	m.rememberLatestFrame(payload, exclude)
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
-	m.lastMixEmittedAt = now
 }
 
 func (m *channelMixer) processRepeaterCapture(sessionID uint32, pcm []int16, signalByte float64, now time.Time) {
