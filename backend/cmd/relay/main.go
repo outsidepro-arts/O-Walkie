@@ -269,6 +269,10 @@ type audioProcessContext struct {
 	// channelMixer defers zero-PCM tail until the first tick with EmitFrame==false so other modules
 	// (e.g. terminal click) still see the natural idle transition.
 	ArmPostMixSilenceAfterIdle bool
+	// SquelchIdleSuppressionCount: mix contributors that are not solely post-EOF synthetic zero tail.
+	// EOF tail frames still count as ActiveSpeakers for mixing/exclude/click, but squelch TX tail
+	// may start immediately (overlap) when this count is zero.
+	SquelchIdleSuppressionCount int
 }
 
 type audioModule interface {
@@ -619,12 +623,14 @@ func (p *audioProcessor) process(input []int16, signalByte float64, active bool)
 			mixed[i] = float64(input[i])
 		}
 	}
+	activeI := boolToInt(active)
 	ctx := &audioProcessContext{
-		Mixed:          mixed,
-		AvgSignalByte:  p.lastSignal,
-		ActiveSpeakers: boolToInt(active),
-		NoiseLevelDB:   p.noiseLevelDB,
-		EmitFrame:      active,
+		Mixed:                       mixed,
+		AvgSignalByte:               p.lastSignal,
+		ActiveSpeakers:              activeI,
+		SquelchIdleSuppressionCount: activeI,
+		NoiseLevelDB:                p.noiseLevelDB,
+		EmitFrame:                   active,
 	}
 	for _, mod := range p.modules {
 		mod.Process(ctx)
@@ -1258,6 +1264,7 @@ func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState
 func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool) {
 	mixed := make([]float64, packetSamples)
 	activeSpeakers := make([]uint32, 0, len(states))
+	squelchIdleSuppressors := 0
 	var signalSum float64
 	now := time.Now()
 
@@ -1273,6 +1280,7 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		pkt := m.pullNextPacket(sessionID, st)
 		hasPacket := pkt != nil
 		speakerActive := false
+		contribEOFTailOnly := false
 		speakerSignal := st.lastSignal
 		var pcmFrame []int16
 
@@ -1331,6 +1339,7 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		// Post-EOF silence tail: jitter drained, eof still marked — feed zeros so per-session
 		// decoder state winds down and the mix encoder sees continuous frames.
 		if !speakerActive && !hasPacket && eofMarked[sessionID] && st.jitter.pendingCount() == 0 && st.silenceTailRemain > 0 {
+			contribEOFTailOnly = true
 			pcmFrame = make([]int16, packetSamples)
 			speakerActive = true
 			st.silenceTailRemain--
@@ -1372,6 +1381,9 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 			m.processRepeaterCapture(sessionID, pcmFrame, speakerSignal, now)
 			continue
 		}
+		if !contribEOFTailOnly {
+			squelchIdleSuppressors++
+		}
 		activeSpeakers = append(activeSpeakers, sessionID)
 		signalSum += speakerSignal
 		for i := 0; i < packetSamples; i++ {
@@ -1399,11 +1411,12 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	}
 
 	ctx := &audioProcessContext{
-		Mixed:          mixed,
-		AvgSignalByte:  signalSum / float64(maxInt(len(activeSpeakers), 1)),
-		ActiveSpeakers: len(activeSpeakers),
-		NoiseLevelDB:   m.noiseLevelDB,
-		EmitFrame:      len(activeSpeakers) > 0,
+		Mixed:                       mixed,
+		AvgSignalByte:               signalSum / float64(maxInt(len(activeSpeakers), 1)),
+		ActiveSpeakers:              len(activeSpeakers),
+		SquelchIdleSuppressionCount: squelchIdleSuppressors,
+		NoiseLevelDB:                m.noiseLevelDB,
+		EmitFrame:                   len(activeSpeakers) > 0,
 	}
 	for _, mod := range m.modules {
 		mod.Process(ctx)
@@ -1741,7 +1754,7 @@ const (
 
 func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 	now := time.Now()
-	if ctx.ActiveSpeakers <= 0 {
+	if ctx.SquelchIdleSuppressionCount <= 0 {
 		// End-of-transmission tail burst: jump to 0 dB and emit white hiss briefly.
 		if m.lastActive && m.squelchBurstRemain <= 0 {
 			m.squelchBurstRemain = randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs)
