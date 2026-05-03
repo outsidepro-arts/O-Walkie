@@ -27,8 +27,7 @@ class wxDialog;
 struct ServerProfile {
     std::string name{"Default"};
     std::string host{"127.0.0.1"};
-    int wsPort = 5500;
-    int udpPort = 5505;
+    int port = 5500;
     std::string channel{"global"};
     bool repeater = false;
 };
@@ -124,8 +123,7 @@ private:
 
     wxTextCtrl* hostCtrl_ = nullptr;
     wxTextCtrl* connectionNameCtrl_ = nullptr;
-    wxTextCtrl* wsPortCtrl_ = nullptr;
-    wxTextCtrl* udpPortCtrl_ = nullptr;
+    wxTextCtrl* portCtrl_ = nullptr;
     wxTextCtrl* channelCtrl_ = nullptr;
     wxButton* settingsBtn_ = nullptr;
     wxCheckBox* repeaterCheck_ = nullptr;

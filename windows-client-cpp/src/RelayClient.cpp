@@ -101,7 +101,7 @@ void RelayClient::JoinWorkerThreads() {
     udpKeepalivePendingSinceNs_.store(0);
 }
 
-bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, const std::string& channel, bool repeater) {
+bool RelayClient::Connect(const std::string& host, int serverPort, const std::string& channel, bool repeater) {
     if (connected_.load()) {
         return true;
     }
@@ -112,8 +112,7 @@ bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, cons
     JoinWorkerThreads();
 
     host_ = host;
-    wsPort_ = wsPort;
-    udpPort_ = udpPort;
+    serverPort_ = serverPort;
     channel_ = channel.empty() ? "global" : channel;
     repeater_ = repeater;
     stopRequested_.store(false);
@@ -125,7 +124,7 @@ bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, cons
     connectionLostPosted_.store(false);
 
     try {
-        auto const results = resolver_.resolve(host_, std::to_string(wsPort_));
+        auto const results = resolver_.resolve(host_, std::to_string(serverPort_));
         ws_.emplace(ioc_);
         boost::asio::connect(ws_->next_layer(), results.begin(), results.end());
         ws_->handshake(host_, "/ws");
@@ -137,7 +136,7 @@ bool RelayClient::Connect(const std::string& host, int wsPort, int udpPort, cons
             } else {
                 udp_.emplace(ioc_, udp::endpoint(udp::v6(), 0));
             }
-            udpRemote_ = udp::endpoint(peerAddr, static_cast<std::uint16_t>(udpPort_));
+            udpRemote_ = udp::endpoint(peerAddr, static_cast<std::uint16_t>(serverPort_));
         }
 
         connected_.store(true);

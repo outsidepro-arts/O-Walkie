@@ -67,9 +67,12 @@ type appConfig struct {
 }
 
 type serverConfig struct {
-	WSAddr             string     `json:"ws_addr"`
-	UDPAddr            string     `json:"udp_addr"`
-	SampleRate         int        `json:"sample_rate"`
+	// Port is used for both WebSocket HTTP listener and UDP listener (same port number).
+	Port int `json:"port"`
+	// Legacy keys (optional): if port is 0, port is inferred from the first non-empty address.
+	LegacyWsAddr  string `json:"ws_addr,omitempty"`
+	LegacyUdpAddr string `json:"udp_addr,omitempty"`
+	SampleRate    int    `json:"sample_rate"`
 	PacketMs           int        `json:"packet_ms"`
 	Opus               opusConfig `json:"opus"`
 	HangoverMs         int        `json:"hangover_ms"`
@@ -2194,8 +2197,7 @@ type server struct {
 func defaultConfig() appConfig {
 	return appConfig{
 		Server: serverConfig{
-			WSAddr:     ":5500",
-			UDPAddr:    ":5505",
+			Port:       5500,
 			SampleRate: defaultSampleRate,
 			PacketMs:   defaultPacketMs,
 			Opus: opusConfig{
@@ -2271,6 +2273,7 @@ func loadConfig(path string) (appConfig, error) {
 	cfg.Server.PacketMs = normalizePacketMs(cfg.Server.PacketMs)
 	cfg.Server.JitterMinPkts = normalizeJitterMinPackets(cfg.Server.JitterMinPkts)
 	cfg.Server.Opus = normalizeOpusConfig(cfg.Server.Opus)
+	normalizeServerListenPort(&cfg.Server)
 	if err := validateConfig(cfg); err != nil {
 		return appConfig{}, err
 	}
@@ -2278,9 +2281,47 @@ func loadConfig(path string) (appConfig, error) {
 	return cfg, nil
 }
 
+func parsePortFromListenAddr(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	if strings.HasPrefix(s, ":") {
+		p, err := strconv.Atoi(s[1:])
+		if err != nil || p <= 0 {
+			return 0
+		}
+		return p
+	}
+	i := strings.LastIndex(s, ":")
+	if i < 0 || i >= len(s)-1 {
+		return 0
+	}
+	p, err := strconv.Atoi(s[i+1:])
+	if err != nil || p <= 0 {
+		return 0
+	}
+	return p
+}
+
+func normalizeServerListenPort(s *serverConfig) {
+	if s.Port == 0 {
+		if p := parsePortFromListenAddr(s.LegacyWsAddr); p > 0 {
+			s.Port = p
+		} else if p := parsePortFromListenAddr(s.LegacyUdpAddr); p > 0 {
+			s.Port = p
+		}
+	}
+	if s.Port == 0 {
+		s.Port = 5500
+	}
+	s.LegacyWsAddr = ""
+	s.LegacyUdpAddr = ""
+}
+
 func validateConfig(cfg appConfig) error {
-	if strings.TrimSpace(cfg.Server.WSAddr) == "" || strings.TrimSpace(cfg.Server.UDPAddr) == "" {
-		return errors.New("server.ws_addr and server.udp_addr must be set")
+	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
+		return errors.New("server.port must be between 1 and 65535")
 	}
 	if !isSupportedPacketMs(cfg.Server.PacketMs) {
 		return errors.New("server.packet_ms must be one of: 10, 20, 40, 60")
@@ -2559,7 +2600,8 @@ func main() {
 
 	rand.Seed(time.Now().UnixNano())
 
-	udpConn, err := net.ListenUDP("udp", mustResolveUDP(cfg.Server.UDPAddr))
+	listenAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	udpConn, err := net.ListenUDP("udp", mustResolveUDP(listenAddr))
 	if err != nil {
 		log.Fatalf("udp listen failed: %v", err)
 	}
@@ -2579,9 +2621,8 @@ func main() {
 	})
 
 	log.Printf(
-		"relay started ws=%s udp=%s sample_rate=%d packet_ms=%d opus_bitrate=%d opus_complexity=%d opus_fec=%t opus_dtx=%t opus_application=%s protocol_version=%d jitter_min_packets=%d busy_mode=%t transmit_timeout=%ds",
-		cfg.Server.WSAddr,
-		cfg.Server.UDPAddr,
+		"relay started port=%d (ws+udp) sample_rate=%d packet_ms=%d opus_bitrate=%d opus_complexity=%d opus_fec=%t opus_dtx=%t opus_application=%s protocol_version=%d jitter_min_packets=%d busy_mode=%t transmit_timeout=%ds",
+		cfg.Server.Port,
 		normalizeSampleRate(cfg.Server.SampleRate),
 		normalizePacketMs(cfg.Server.PacketMs),
 		configuredOpus.Bitrate,
@@ -2594,7 +2635,7 @@ func main() {
 		cfg.Server.BusyMode,
 		cfg.Server.TransmitTimeoutSec,
 	)
-	if err := http.ListenAndServe(cfg.Server.WSAddr, mux); err != nil {
+	if err := http.ListenAndServe(listenAddr, mux); err != nil {
 		log.Fatalf("ws server error: %v", err)
 	}
 }

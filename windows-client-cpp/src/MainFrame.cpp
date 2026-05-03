@@ -1846,11 +1846,12 @@ void MainFrame::MigrateLegacyConnectionJsonIfNeeded() {
         if (j.contains("host") && j["host"].is_string()) {
             p.host = j["host"].get<std::string>();
         }
-        if (j.contains("ws_port")) {
-            p.wsPort = j["ws_port"].get<int>();
-        }
-        if (j.contains("udp_port")) {
-            p.udpPort = j["udp_port"].get<int>();
+        if (j.contains("port") && j["port"].is_number_integer()) {
+            p.port = j["port"].get<int>();
+        } else if (j.contains("ws_port") && j["ws_port"].is_number_integer()) {
+            p.port = j["ws_port"].get<int>();
+        } else if (j.contains("udp_port") && j["udp_port"].is_number_integer()) {
+            p.port = j["udp_port"].get<int>();
         }
         if (j.contains("channel") && j["channel"].is_string()) {
             p.channel = j["channel"].get<std::string>();
@@ -1891,8 +1892,11 @@ void MainFrame::LoadAllSettings() {
                         ServerProfile p;
                         p.name = item.value("name", std::string("Profile"));
                         p.host = item.value("host", std::string("127.0.0.1"));
-                        p.wsPort = item.value("ws_port", 5500);
-                        p.udpPort = item.value("udp_port", 5505);
+                        if (item.contains("port") && item["port"].is_number_integer()) {
+                            p.port = item["port"].get<int>();
+                        } else {
+                            p.port = item.value("ws_port", item.value("udp_port", 5500));
+                        }
                         p.channel = item.value("channel", std::string("global"));
                         p.repeater = item.value("repeater", false);
                         profiles_.push_back(std::move(p));
@@ -1962,8 +1966,7 @@ void MainFrame::SaveProfilesToDisk() {
         nlohmann::json o;
         o["name"] = p.name;
         o["host"] = p.host;
-        o["ws_port"] = p.wsPort;
-        o["udp_port"] = p.udpPort;
+        o["port"] = p.port;
         o["channel"] = p.channel;
         o["repeater"] = p.repeater;
         arr.push_back(o);
@@ -2018,8 +2021,7 @@ void MainFrame::SyncUiFromActiveProfile() {
     const ServerProfile& p = profiles_[static_cast<size_t>(activeProfileIndex_)];
     connectionNameCtrl_->SetValue(wxString::FromUTF8(p.name));
     hostCtrl_->SetValue(wxString::FromUTF8(p.host));
-    wsPortCtrl_->SetValue(wxString::Format("%d", p.wsPort));
-    udpPortCtrl_->SetValue(wxString::Format("%d", p.udpPort));
+    portCtrl_->SetValue(wxString::Format("%d", p.port));
     channelCtrl_->SetValue(wxString::FromUTF8(p.channel));
     repeaterCheck_->SetValue(p.repeater);
 }
@@ -2029,17 +2031,14 @@ void MainFrame::SyncActiveProfileFromUi() {
         return;
     }
     ServerProfile& p = profiles_[static_cast<size_t>(activeProfileIndex_)];
-    long ws = 0;
-    long udp = 0;
-    wsPortCtrl_->GetValue().ToLong(&ws);
-    udpPortCtrl_->GetValue().ToLong(&udp);
+    long port = 0;
+    portCtrl_->GetValue().ToLong(&port);
     p.host = hostCtrl_->GetValue().utf8_string();
     p.name = connectionNameCtrl_->GetValue().utf8_string();
     if (p.name.empty()) {
         p.name = _("Connection").utf8_string();
     }
-    p.wsPort = static_cast<int>(ws);
-    p.udpPort = static_cast<int>(udp);
+    p.port = static_cast<int>(port);
     p.channel = channelCtrl_->GetValue().utf8_string();
     p.repeater = repeaterCheck_->GetValue();
 }
@@ -2056,11 +2055,8 @@ void MainFrame::UpdateProfileControlsEnabled() {
     if (hostCtrl_) {
         hostCtrl_->SetEditable(!sess);
     }
-    if (wsPortCtrl_) {
-        wsPortCtrl_->SetEditable(!sess);
-    }
-    if (udpPortCtrl_) {
-        udpPortCtrl_->SetEditable(!sess);
+    if (portCtrl_) {
+        portCtrl_->SetEditable(!sess);
     }
     if (channelCtrl_) {
         channelCtrl_->SetEditable(!sess);
@@ -2097,12 +2093,9 @@ void MainFrame::OnNewProfile(wxCommandEvent&) {
         p.name = wxString::Format(_("Connection %d"), static_cast<int>(profiles_.size()) + 1).utf8_string();
     }
     p.host = hostCtrl_->GetValue().utf8_string();
-    long ws = 0;
-    long udp = 0;
-    wsPortCtrl_->GetValue().ToLong(&ws);
-    udpPortCtrl_->GetValue().ToLong(&udp);
-    p.wsPort = static_cast<int>(ws);
-    p.udpPort = static_cast<int>(udp);
+    long port = 0;
+    portCtrl_->GetValue().ToLong(&port);
+    p.port = static_cast<int>(port);
     p.channel = channelCtrl_->GetValue().utf8_string();
     p.repeater = repeaterCheck_->GetValue();
     profiles_.push_back(p);
@@ -2166,15 +2159,14 @@ void MainFrame::OnReconnectTimer(wxTimerEvent&) {
 }
 
 bool MainFrame::TryConnectWithCurrentFields() {
-    long wsPort = 0;
-    long udpPort = 0;
-    if (!wsPortCtrl_->GetValue().ToLong(&wsPort) || !udpPortCtrl_->GetValue().ToLong(&udpPort)) {
-        SetStatus("Invalid ports");
+    long port = 0;
+    if (!portCtrl_->GetValue().ToLong(&port)) {
+        SetStatus("Invalid port");
         return false;
     }
     const std::string hostU8 = hostCtrl_->GetValue().utf8_string();
     const std::string chU8 = channelCtrl_->GetValue().utf8_string();
-    return relay_->Connect(hostU8, static_cast<int>(wsPort), static_cast<int>(udpPort), chU8, repeaterCheck_->GetValue());
+    return relay_->Connect(hostU8, static_cast<int>(port), chU8, repeaterCheck_->GetValue());
 }
 
 void MainFrame::StartReconnectAttemptAsync() {
@@ -2183,11 +2175,10 @@ void MainFrame::StartReconnectAttemptAsync() {
         return;
     }
 
-    long wsPort = 0;
-    long udpPort = 0;
-    if (!wsPortCtrl_->GetValue().ToLong(&wsPort) || !udpPortCtrl_->GetValue().ToLong(&udpPort)) {
+    long port = 0;
+    if (!portCtrl_->GetValue().ToLong(&port)) {
         reconnectAttemptInFlight_.store(false);
-        SetStatus("Invalid ports");
+        SetStatus("Invalid port");
         return;
     }
     const std::string hostU8 = hostCtrl_->GetValue().utf8_string();
@@ -2196,8 +2187,8 @@ void MainFrame::StartReconnectAttemptAsync() {
     const int attemptNo = ++reconnectAttemptSeq_;
     SetStatus(wxString::Format("Reconnect attempt #%d", attemptNo));
 
-    std::thread([this, hostU8, chU8, wsPort, udpPort, repeater] {
-        const bool ok = relay_->Connect(hostU8, static_cast<int>(wsPort), static_cast<int>(udpPort), chU8, repeater);
+    std::thread([this, hostU8, chU8, port, repeater] {
+        const bool ok = relay_->Connect(hostU8, static_cast<int>(port), chU8, repeater);
         this->CallAfter([this, ok] {
             reconnectAttemptInFlight_.store(false);
             if (!userWantsSession_) {
@@ -2279,19 +2270,12 @@ void MainFrame::BuildUi() {
     hostCtrl_->SetName(_("Host"));
     grid->Add(hostCtrl_, 1, wxEXPAND);
 
-    auto* labWs = new wxStaticText(panel, wxID_ANY, _("WebSocket port"));
-    SkipKeyboardFocus(labWs);
-    grid->Add(labWs, 0, wxALIGN_CENTER_VERTICAL);
-    wsPortCtrl_ = new wxTextCtrl(panel, wxID_ANY, "5500");
-    wsPortCtrl_->SetName(_("WebSocket port"));
-    grid->Add(wsPortCtrl_, 1, wxEXPAND);
-
-    auto* labUdp = new wxStaticText(panel, wxID_ANY, _("UDP port"));
-    SkipKeyboardFocus(labUdp);
-    grid->Add(labUdp, 0, wxALIGN_CENTER_VERTICAL);
-    udpPortCtrl_ = new wxTextCtrl(panel, wxID_ANY, "5505");
-    udpPortCtrl_->SetName(_("UDP port"));
-    grid->Add(udpPortCtrl_, 1, wxEXPAND);
+    auto* labPort = new wxStaticText(panel, wxID_ANY, _("Port"));
+    SkipKeyboardFocus(labPort);
+    grid->Add(labPort, 0, wxALIGN_CENTER_VERTICAL);
+    portCtrl_ = new wxTextCtrl(panel, wxID_ANY, "5500");
+    portCtrl_->SetName(_("Port"));
+    grid->Add(portCtrl_, 1, wxEXPAND);
 
     auto* labCh = new wxStaticText(panel, wxID_ANY, _("Channel"));
     SkipKeyboardFocus(labCh);
@@ -2354,9 +2338,8 @@ void MainFrame::BuildUi() {
     deleteProfileBtn_->MoveAfterInTabOrder(newProfileBtn_);
     connectionNameCtrl_->MoveAfterInTabOrder(deleteProfileBtn_);
     hostCtrl_->MoveAfterInTabOrder(connectionNameCtrl_);
-    wsPortCtrl_->MoveAfterInTabOrder(hostCtrl_);
-    udpPortCtrl_->MoveAfterInTabOrder(wsPortCtrl_);
-    channelCtrl_->MoveAfterInTabOrder(udpPortCtrl_);
+    portCtrl_->MoveAfterInTabOrder(hostCtrl_);
+    channelCtrl_->MoveAfterInTabOrder(portCtrl_);
     rxVolumeSlider_->MoveAfterInTabOrder(channelCtrl_);
     settingsBtn_->MoveAfterInTabOrder(rxVolumeSlider_);
     repeaterCheck_->MoveAfterInTabOrder(settingsBtn_);

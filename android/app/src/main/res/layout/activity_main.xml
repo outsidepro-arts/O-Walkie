@@ -161,61 +161,21 @@
             android:maxLines="1"
             android:selectAllOnFocus="true" />
 
-        <LinearLayout
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@id/serverPortInput"
+            android:text="@string/port_label" />
+
+        <EditText
+            android:id="@+id/serverPortInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:labelFor="@id/wsPortInput"
-                    android:text="@string/ws_port_label" />
-
-                <EditText
-                    android:id="@+id/wsPortInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:hint="@string/ws_port_hint"
-                    android:importantForAccessibility="yes"
-                    android:inputType="number"
-                    android:maxLines="1"
-                    android:selectAllOnFocus="true" />
-            </LinearLayout>
-
-            <Space
-                android:layout_width="8dp"
-                android:layout_height="1dp" />
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:labelFor="@id/udpPortInput"
-                    android:text="@string/udp_port_label" />
-
-                <EditText
-                    android:id="@+id/udpPortInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:hint="@string/udp_port_hint"
-                    android:importantForAccessibility="yes"
-                    android:inputType="number"
-                    android:maxLines="1"
-                    android:selectAllOnFocus="true" />
-            </LinearLayout>
-        </LinearLayout>
+            android:hint="@string/port_hint"
+            android:importantForAccessibility="yes"
+            android:inputType="number"
+            android:maxLines="1"
+            android:selectAllOnFocus="true" />
 
         <TextView
             android:layout_width="wrap_content"

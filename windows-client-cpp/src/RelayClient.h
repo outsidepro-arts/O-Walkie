@@ -39,7 +39,7 @@ public:
     RelayClient();
     ~RelayClient();
 
-    bool Connect(const std::string& host, int wsPort, int udpPort, const std::string& channel, bool repeater);
+    bool Connect(const std::string& host, int serverPort, const std::string& channel, bool repeater);
     void Disconnect();
     void JoinWorkerThreads();
 
@@ -86,8 +86,7 @@ private:
     std::atomic<int> seq_{0};
     WelcomeConfig cfg_;
     std::string host_;
-    int wsPort_ = 0;
-    int udpPort_ = 0;
+    int serverPort_ = 0;
     std::string channel_;
     bool repeater_ = false;
     std::thread wsThread_;

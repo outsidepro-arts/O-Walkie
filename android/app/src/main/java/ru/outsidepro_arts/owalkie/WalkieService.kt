@@ -98,7 +98,11 @@ class WalkieService : Service() {
         const val EXTRA_DEBUG_UDP_RECOVERY_COUNT = "debugUdpRecoveryCount"
         const val EXTRA_DEBUG_LAST_UDP_GAP_MS = "debugLastUdpGapMs"
         const val EXTRA_SERVER_HOST = "serverHost"
+        /** Single relay port for WebSocket and UDP (same as server `port`). */
+        const val EXTRA_SERVER_PORT = "serverPort"
+        /** @deprecated Legacy intents; prefer [EXTRA_SERVER_PORT]. */
         const val EXTRA_WS_PORT = "wsPort"
+        /** @deprecated Legacy intents; prefer [EXTRA_SERVER_PORT]. */
         const val EXTRA_UDP_PORT = "udpPort"
         const val EXTRA_CHANNEL = "channel"
         const val EXTRA_REPEATER_ENABLED = "repeaterEnabled"
@@ -114,8 +118,7 @@ class WalkieService : Service() {
         private const val NOTIFICATION_ID = 101
 
         private const val DEFAULT_WS_HOST = ""
-        private const val DEFAULT_WS_PORT = 8080
-        private const val DEFAULT_UDP_PORT = 5000
+        private const val DEFAULT_SERVER_PORT = 5500
         private const val DEFAULT_CHANNEL = "global"
 
         private const val DEFAULT_SAMPLE_RATE = 8000
@@ -249,10 +252,7 @@ class WalkieService : Service() {
     private var serverHost: String = DEFAULT_WS_HOST
 
     @Volatile
-    private var wsPort: Int = DEFAULT_WS_PORT
-
-    @Volatile
-    private var udpPort: Int = DEFAULT_UDP_PORT
+    private var serverPort: Int = DEFAULT_SERVER_PORT
 
     @Volatile
     private var channel: String = DEFAULT_CHANNEL
@@ -428,8 +428,7 @@ class WalkieService : Service() {
         val restartIntent = Intent(applicationContext, WalkieService::class.java).apply {
             action = ACTION_START
             putExtra(EXTRA_SERVER_HOST, serverHost)
-            putExtra(EXTRA_WS_PORT, wsPort)
-            putExtra(EXTRA_UDP_PORT, udpPort)
+            putExtra(EXTRA_SERVER_PORT, serverPort)
             putExtra(EXTRA_CHANNEL, channel)
             putExtra(EXTRA_REPEATER_ENABLED, repeaterEnabled)
         }
@@ -1350,7 +1349,7 @@ class WalkieService : Service() {
         bb.put(signalByte.toByte())
         bb.put(opusBytes)
 
-        val packet = DatagramPacket(payload, payload.size, address, udpPort)
+        val packet = DatagramPacket(payload, payload.size, address, serverPort)
         runCatching { socket.send(packet) }
             .onSuccess { lastOutboundUdpAtNs.set(System.nanoTime()) }
             .onFailure {
@@ -1590,7 +1589,7 @@ class WalkieService : Service() {
         bb.putInt(sid)
         bb.putInt(seqNum)
         bb.put(0) // signal=0 with empty payload marks UDP TX EOF on relay
-        val packet = DatagramPacket(payload, payload.size, address, udpPort)
+        val packet = DatagramPacket(payload, payload.size, address, serverPort)
         runCatching { socket.send(packet) }
             .onSuccess { lastOutboundUdpAtNs.set(System.nanoTime()) }
             .onFailure { recreateUdpSocket() }
@@ -1614,7 +1613,7 @@ class WalkieService : Service() {
         bb.putInt(0)
         bb.put(UDP_KEEPALIVE_SIGNAL.toByte())
 
-        val packet = DatagramPacket(payload, payload.size, address, udpPort)
+        val packet = DatagramPacket(payload, payload.size, address, serverPort)
         runCatching { socket.send(packet) }
             .onSuccess {
                 val nowNs = System.nanoTime()
@@ -1714,7 +1713,7 @@ class WalkieService : Service() {
         if (host.isBlank()) return ""
         val hostPart = if (host.contains(':') && !host.startsWith("[")) "[$host]" else host
         val scheme = if (wsSecure) "wss" else "ws"
-        return "$scheme://$hostPart:$wsPort/ws"
+        return "$scheme://$hostPart:$serverPort/ws"
     }
 
     private fun normalizePacketMs(value: Int): Int {
@@ -1774,18 +1773,27 @@ class WalkieService : Service() {
         }
     }
 
+    private fun readServerPortFromIntent(intent: Intent): Int {
+        var p = intent.getIntExtra(EXTRA_SERVER_PORT, -1)
+        if (p in 1..65535) return p
+        p = intent.getIntExtra(EXTRA_WS_PORT, -1)
+        if (p in 1..65535) return p
+        p = intent.getIntExtra(EXTRA_UDP_PORT, -1)
+        if (p in 1..65535) return p
+        return -1
+    }
+
     private fun applyConfigFromIntent(intent: Intent?): Boolean {
         if (intent == null) return false
         val newHost = intent.getStringExtra(EXTRA_SERVER_HOST)?.trim().orEmpty()
-        val newWsPort = intent.getIntExtra(EXTRA_WS_PORT, -1)
-        val newUdpPort = intent.getIntExtra(EXTRA_UDP_PORT, -1)
+        val fallbackPort = readServerPortFromIntent(intent)
         val newChannel = intent.getStringExtra(EXTRA_CHANNEL)?.trim().orEmpty()
         val newRepeaterEnabled = intent.getBooleanExtra(EXTRA_REPEATER_ENABLED, repeaterEnabled)
         val incomingRxVolume = intent.getIntExtra(EXTRA_RX_VOLUME_PERCENT, rxVolumePercent)
         val incomingUseBluetoothHeadset = intent.getBooleanExtra(EXTRA_USE_BLUETOOTH_HEADSET, useBluetoothHeadset)
-        val parsedEndpoint = parseServerEndpoint(newHost, newWsPort)
+        val parsedEndpoint = parseServerEndpoint(newHost, fallbackPort)
 
-        if (parsedEndpoint == null || newUdpPort !in 1..65535 || newChannel.isBlank()) {
+        if (parsedEndpoint == null || newChannel.isBlank()) {
             return false
         }
 
@@ -1794,16 +1802,14 @@ class WalkieService : Service() {
             useBluetoothHeadset = incomingUseBluetoothHeadset
             bluetoothHeadsetRouteStore.setEnabled(incomingUseBluetoothHeadset)
             val changed = serverHost != parsedEndpoint.host ||
-                wsPort != parsedEndpoint.wsPort ||
-                udpPort != newUdpPort ||
+                serverPort != parsedEndpoint.port ||
                 channel != newChannel ||
                 repeaterEnabled != newRepeaterEnabled ||
                 wsSecure != parsedEndpoint.wsSecure
             if (!changed) return false
 
             serverHost = parsedEndpoint.host
-            wsPort = parsedEndpoint.wsPort
-            udpPort = newUdpPort
+            serverPort = parsedEndpoint.port
             channel = newChannel
             repeaterEnabled = newRepeaterEnabled
             wsSecure = parsedEndpoint.wsSecure
@@ -1867,11 +1873,11 @@ class WalkieService : Service() {
 
     private data class ParsedServerEndpoint(
         val host: String,
-        val wsPort: Int,
+        val port: Int,
         val wsSecure: Boolean,
     )
 
-    private fun parseServerEndpoint(rawHost: String, fallbackWsPort: Int): ParsedServerEndpoint? {
+    private fun parseServerEndpoint(rawHost: String, fallbackPort: Int): ParsedServerEndpoint? {
         var value = rawHost.trim()
         if (value.isBlank()) return null
         var secure = false
@@ -1892,7 +1898,7 @@ class WalkieService : Service() {
         value = value.substringAfterLast('@')
         if (value.isBlank()) return null
 
-        var port = fallbackWsPort
+        var port = fallbackPort
         var host = value
         if (host.startsWith("[")) {
             val closing = host.indexOf(']')
@@ -1916,7 +1922,7 @@ class WalkieService : Service() {
             }
         }
         if (host.isBlank() || port !in 1..65535) return null
-        return ParsedServerEndpoint(host = host, wsPort = port, wsSecure = secure)
+        return ParsedServerEndpoint(host = host, port = port, wsSecure = secure)
     }
 
     private fun cancelConnection() {

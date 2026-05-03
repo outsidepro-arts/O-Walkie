@@ -6,10 +6,8 @@
     <string name="server_name_hint">Название сервера (пример: Team Alpha)</string>
     <string name="server_host_label">Хост сервера</string>
     <string name="server_host_hint">Хост/IP сервера</string>
-    <string name="ws_port_label">Служебный порт</string>
-    <string name="ws_port_hint">Служебный порт</string>
-    <string name="udp_port_label">Порт данных</string>
-    <string name="udp_port_hint">Порт данных</string>
+    <string name="port_label">Порт</string>
+    <string name="port_hint">Порт</string>
     <string name="channel_label">Канал</string>
     <string name="channel_hint">Название канала</string>
     <string name="save_server">Сохранить сервер</string>

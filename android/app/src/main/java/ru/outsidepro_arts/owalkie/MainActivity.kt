@@ -426,8 +426,7 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, WalkieService::class.java).apply {
             action = WalkieService.ACTION_START
             putExtra(WalkieService.EXTRA_SERVER_HOST, profile.host)
-            putExtra(WalkieService.EXTRA_WS_PORT, profile.wsPort)
-            putExtra(WalkieService.EXTRA_UDP_PORT, profile.udpPort)
+            putExtra(WalkieService.EXTRA_SERVER_PORT, profile.port)
             putExtra(WalkieService.EXTRA_CHANNEL, profile.channel)
             putExtra(WalkieService.EXTRA_REPEATER_ENABLED, repeaterModeEnabled)
             putExtra(WalkieService.EXTRA_RX_VOLUME_PERCENT, rxVolumeStore.getPercent())
@@ -673,16 +672,14 @@ class MainActivity : ComponentActivity() {
     private fun loadServerToInputs(profile: ServerProfile) {
         binding.serverNameInput.setText(profile.name)
         binding.serverHostInput.setText(profile.host)
-        binding.wsPortInput.setText(profile.wsPort.toString())
-        binding.udpPortInput.setText(profile.udpPort.toString())
+        binding.serverPortInput.setText(profile.port.toString())
         binding.channelInput.setText(profile.channel)
     }
 
     private fun collectServerFromInputs(): ServerProfile? {
         val name = binding.serverNameInput.text?.toString()?.trim().orEmpty()
         val host = binding.serverHostInput.text?.toString()?.trim().orEmpty()
-        val wsPort = binding.wsPortInput.text?.toString()?.trim()?.toIntOrNull() ?: -1
-        val udpPort = binding.udpPortInput.text?.toString()?.trim()?.toIntOrNull() ?: -1
+        val port = binding.serverPortInput.text?.toString()?.trim()?.toIntOrNull() ?: -1
         val channel = binding.channelInput.text?.toString()?.trim().orEmpty()
 
         when {
@@ -704,9 +701,8 @@ class MainActivity : ComponentActivity() {
                 return null
             }
 
-            wsPort !in 1..65535 || udpPort !in 1..65535 -> {
-                binding.wsPortInput.error = getString(R.string.validation_port)
-                binding.udpPortInput.error = getString(R.string.validation_port)
+            port !in 1..65535 -> {
+                binding.serverPortInput.error = getString(R.string.validation_port)
                 return null
             }
         }
@@ -714,8 +710,7 @@ class MainActivity : ComponentActivity() {
         return ServerProfile(
             name = name,
             host = host,
-            wsPort = wsPort,
-            udpPort = udpPort,
+            port = port,
             channel = channel,
         )
     }
@@ -852,7 +847,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun buildWsUrlForScan(profile: ServerProfile): String? {
-        val endpoint = parseServerEndpointForScan(profile.host, profile.wsPort) ?: return null
+        val endpoint = parseServerEndpointForScan(profile.host, profile.port) ?: return null
         val hostPart = if (endpoint.host.contains(':') && !endpoint.host.startsWith("[")) {
             "[${endpoint.host}]"
         } else {
@@ -1040,8 +1035,7 @@ class MainActivity : ComponentActivity() {
     private fun clearServerInputs() {
         binding.serverNameInput.setText("")
         binding.serverHostInput.setText("")
-        binding.wsPortInput.setText("")
-        binding.udpPortInput.setText("")
+        binding.serverPortInput.setText("")
         binding.channelInput.setText("")
     }
 

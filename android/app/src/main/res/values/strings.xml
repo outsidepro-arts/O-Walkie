@@ -6,10 +6,8 @@
     <string name="server_name_hint">Server name (example: Team Alpha)</string>
     <string name="server_host_label">Server host</string>
     <string name="server_host_hint">Server host/IP</string>
-    <string name="ws_port_label">Service port</string>
-    <string name="ws_port_hint">Service port</string>
-    <string name="udp_port_label">Data port</string>
-    <string name="udp_port_hint">Data port</string>
+    <string name="port_label">Port</string>
+    <string name="port_hint">Port</string>
     <string name="channel_label">Channel</string>
     <string name="channel_hint">Channel name</string>
     <string name="save_server">Save server</string>

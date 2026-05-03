@@ -1,7 +1,6 @@
 {
   "server": {
-    "ws_addr": ":5500",
-    "udp_addr": ":5505",
+    "port": 5500,
     "sample_rate": 8000,
     "packet_ms": 20,
     "opus": {

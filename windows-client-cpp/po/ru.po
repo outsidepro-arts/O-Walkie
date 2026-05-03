@@ -236,11 +236,8 @@ msgstr "Хост сервера"
 msgid "Host"
 msgstr "Хост"
 
-msgid "WebSocket port"
-msgstr "Служебный порт"
-
-msgid "UDP port"
-msgstr "Порт данных"
+msgid "Port"
+msgstr "Порт"
 
 msgid "Channel"
 msgstr "Канал"
