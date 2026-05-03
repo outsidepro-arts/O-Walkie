@@ -561,8 +561,8 @@ class WalkieService : Service() {
             if (force) {
                 // Force reconnect can otherwise overlap with stale callbacks
                 // and lead to double audio frames (server has two active sessions).
-                // Stop UDP keepalive tied to the old session and close the WS cleanly.
-                stopUdpKeepaliveLoop()
+                // Drop UDP immediately; keepalive is stopped inside hardDrop.
+                hardDropUdpTransportBecauseWsLost()
                 wsConnected.set(false)
                 channelBound = false
                 busyMode = false
@@ -614,7 +614,7 @@ class WalkieService : Service() {
                 channelBound = false
                 busyMode = false
                 busyRxActive.set(false)
-                stopUdpKeepaliveLoop()
+                hardDropUdpTransportBecauseWsLost()
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get()) {
                     scheduleWsReconnect()
@@ -630,7 +630,7 @@ class WalkieService : Service() {
                 channelBound = false
                 busyMode = false
                 busyRxActive.set(false)
-                stopUdpKeepaliveLoop()
+                hardDropUdpTransportBecauseWsLost()
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get()) {
                     scheduleWsReconnect()
@@ -798,6 +798,39 @@ class WalkieService : Service() {
         sendUdpKeepalivePacket(allowRecovery = false)
     }
 
+    /**
+     * Tear down UDP immediately when the WebSocket session is gone so RX/TX cannot overlap a stale
+     * transport while WS reconnects. Best-effort synchronous UDP EOF before closing the socket.
+     */
+    private fun hardDropUdpTransportBecauseWsLost() {
+        stopUdpKeepaliveLoop()
+        if (transmitting.getAndSet(false)) {
+            txJob?.cancel()
+            txJob = null
+            txLoopRunning.set(false)
+            sendUdpEofPacket()
+        }
+        if (rogerStreaming.getAndSet(false)) {
+            rogerJob?.cancel()
+            rogerJob = null
+        }
+        if (callStreaming.getAndSet(false)) {
+            callSignalJob?.cancel()
+            callSignalJob = null
+        }
+        scheduleRxResumeHoldoff()
+        releaseVoiceProfileIfIdle()
+        sessionId.set(0L)
+        synchronized(udpSocketLock) {
+            runCatching { udpSocket?.close() }
+            udpSocket = null
+        }
+        targetUdpAddress = null
+        lastInboundUdpAtNs.set(0L)
+        restartPlaybackLoop()
+        broadcastStatus(currentSignalByte())
+    }
+
     private fun ensurePlaybackLoop() {
         if (udpReceiveJob?.isActive == true) return
         val gen = playbackLoopGeneration.get()
@@ -828,6 +861,10 @@ class WalkieService : Service() {
                 while (isActive) {
                     if (gen != playbackLoopGeneration.get()) {
                         break
+                    }
+                    if (!wsConnected.get()) {
+                        delay(200L)
+                        continue
                     }
                     val socket = udpSocket ?: run {
                         ensureUdpSocket()
@@ -1290,6 +1327,9 @@ class WalkieService : Service() {
         if (opusBytes.isEmpty()) {
             return
         }
+        if (sessionId.get() == 0L) {
+            return
+        }
         val socket = udpSocket ?: run {
             ensureUdpSocket()
             udpSocket ?: return
@@ -1352,7 +1392,9 @@ class WalkieService : Service() {
         if (signalMonitorJob?.isActive == true) return
         signalMonitorJob = serviceScope.launch {
             while (isActive) {
-                ensureUdpSocket()
+                if (wsConnected.get()) {
+                    ensureUdpSocket()
+                }
                 if (desiredConnection.get() && !wsConnected.get() && webSocket == null) {
                     scheduleWsReconnect()
                 }
@@ -1420,6 +1462,7 @@ class WalkieService : Service() {
         lastNetworkRecoveryAtNs.set(nowNs)
         serviceScope.launch(Dispatchers.IO) {
             if (!desiredConnection.get()) return@launch
+            if (!wsConnected.get()) return@launch
             recreateUdpSocket()
         }
     }
@@ -1433,6 +1476,7 @@ class WalkieService : Service() {
                 return@launch
             }
             if (!desiredConnection.get()) return@launch
+            if (!wsConnected.get()) return@launch
             lastNetworkRecoveryAtNs.set(0L)
             recreateUdpSocket()
         }
@@ -1495,6 +1539,7 @@ class WalkieService : Service() {
     }
 
     private fun sendUdpHello() {
+        ensureUdpSocket()
         val localPort = udpSocket?.localPort ?: return
         webSocket?.send("""{"type":"udp_hello","udpPort":$localPort}""")
     }
