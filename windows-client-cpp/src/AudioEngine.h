@@ -95,6 +95,7 @@ private:
     bool StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal);
     void PlayVibrationPattern(const std::vector<int>& patternMs);
     void RecreateCodecUnlocked();
+    void RecreateRxDecoderUnlocked();
     int FrameSamples() const;
     int ResolveInputDeviceIndex() const;
     int ResolveOutputDeviceIndex() const;
@@ -143,6 +144,8 @@ private:
 
     std::atomic<bool> transmitting_{false};
     std::atomic<bool> signalStreaming_{false};
+    /// After dropping inbound audio (TX/holdoff), rebuild RX decoder before next decode.
+    std::atomic<bool> refresh_rx_decoder_{false};
     std::atomic<int64_t> rxResumeAtNs_{0};
     std::atomic<int64_t> lastInboundNs_{0};
     std::atomic<int64_t> lastTxCollisionToneNs_{0};

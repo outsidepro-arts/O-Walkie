@@ -232,6 +232,9 @@ class WalkieService : Service() {
     private val lastInboundUdpAtNs = AtomicLong(0L)
     private val lastTxCollisionVibrateAtNs = AtomicLong(0L)
 
+    /** After RX decode was suppressed (TX/holdoff), reinit RX Opus decoder before next play to avoid PLC tail on the first frame. */
+    private val pendingRxCodecReinit = AtomicBoolean(false)
+
     private val pttReleaseBurstCount = AtomicInteger(0)
     private val pttReleaseBurstPressBlocked = AtomicBoolean(false)
     private var pttReleaseBurstResetJob: Job? = null
@@ -917,7 +920,11 @@ class WalkieService : Service() {
                     if (transmitting.get() || rogerStreaming.get() || callStreaming.get() || isRxHoldoffActive()) {
                         // During local TX we intentionally drop inbound audio
                         // to avoid hearing server stream in parallel with speaking.
+                        pendingRxCodecReinit.set(true)
                         continue
+                    }
+                    if (pendingRxCodecReinit.getAndSet(false)) {
+                        codec = OpusCodecFactory().create(currentCodecSampleRate(), CHANNELS, opusConfig)
                     }
                     val opus = packet.data.copyOfRange(9, packet.length)
                     val pcm = applyRxVolume(codec.decode(opus, currentFrameSamples()))

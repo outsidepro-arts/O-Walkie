@@ -599,6 +599,16 @@ void AudioEngine::RecreateCodecUnlocked() {
     decoder_ = opus_decoder_create(sampleRate_, 1, &err);
 }
 
+void AudioEngine::RecreateRxDecoderUnlocked() {
+    if (decoder_) {
+        opus_decoder_destroy(decoder_);
+        decoder_ = nullptr;
+    }
+    int err = OPUS_OK;
+    decoder_ = opus_decoder_create(sampleRate_, 1, &err);
+    refresh_rx_decoder_.store(false);
+}
+
 int AudioEngine::FrameSamples() const {
     return (sampleRate_ * packetMs_) / 1000;
 }
@@ -689,6 +699,7 @@ bool AudioEngine::StartTransmit() {
 
 void AudioEngine::StopTransmit() {
     transmitting_.store(false);
+    refresh_rx_decoder_.store(true);
     std::lock_guard<std::mutex> lg(mu_);
     CloseCaptureDeviceLocked();
 }
@@ -704,6 +715,7 @@ void AudioEngine::ScheduleRxResumeHoldoff(int multiplier) {
                               std::chrono::steady_clock::now().time_since_epoch())
                               .count();
     rxResumeAtNs_.store(nowNs + static_cast<int64_t>(packetMs) * safeMult * 1'000'000LL);
+    refresh_rx_decoder_.store(true);
 }
 
 bool AudioEngine::IsRxHoldoffActive() const {
@@ -1017,12 +1029,16 @@ void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
             // Android-like "vibration" pattern emulation for desktop.
             PlayVibrationPattern({35, 55, 35, 55, 35});
         }
+        refresh_rx_decoder_.store(true);
         return;
     }
 
     std::lock_guard<std::mutex> lg(mu_);
     if (!decoder_ || IsRxHoldoffActive()) {
         return;
+    }
+    if (refresh_rx_decoder_.exchange(false)) {
+        RecreateRxDecoderUnlocked();
     }
 
     EnsurePlaybackDeviceLocked();

@@ -569,6 +569,11 @@ type channelMixer struct {
 	lastFramePayload         []byte
 	lastFrameAt              time.Time
 	lastFrameExcludedSession uint32 // broadcastMixed exclude for lastFramePayload; 0 = not excluded
+
+	// lastMixEmittedAt: time of last mixed Opus frame sent to clients. After a gap without
+	// Encode(), the output encoder's internal state can cause a digital glitch on the next
+	// speech frame; reprime the encoder when resuming after silence.
+	lastMixEmittedAt time.Time
 }
 
 type repeaterSession struct {
@@ -1217,6 +1222,17 @@ func (m *channelMixer) resetAfterLoopFailure() {
 	m.lastFrameAt = time.Time{}
 	m.lastFrameExcludedSession = 0
 	m.lastFrameMu.Unlock()
+	m.lastMixEmittedAt = time.Time{}
+}
+
+func (m *channelMixer) reprimeMixOutputEncoder() {
+	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, resolveOpusApplication(configuredOpus.Application))
+	if err != nil {
+		log.Printf("channel %s mix output encoder reprime failed: %v", m.name, err)
+		return
+	}
+	applyOpusEncoderConfig(enc)
+	m.encoder = enc
 }
 
 func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool, now time.Time) {
@@ -1396,6 +1412,10 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		return
 	}
 
+	if !m.lastMixEmittedAt.IsZero() && now.Sub(m.lastMixEmittedAt) > 8*packetDur {
+		m.reprimeMixOutputEncoder()
+	}
+
 	outPCM := make([]int16, packetSamples)
 	for i := 0; i < packetSamples; i++ {
 		// Saturated character: hard clip after sum.
@@ -1434,6 +1454,7 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	}
 	m.rememberLatestFrame(payload, exclude)
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
+	m.lastMixEmittedAt = now
 }
 
 func (m *channelMixer) processRepeaterCapture(sessionID uint32, pcm []int16, signalByte float64, now time.Time) {
