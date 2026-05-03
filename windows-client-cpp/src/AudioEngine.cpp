@@ -304,29 +304,18 @@ const std::vector<SignalPattern>& AudioEngine::CallPatterns() {
     static const std::vector<SignalPattern> kPatterns = [] {
         std::vector<SignalPattern> out;
         SignalPattern p1{"call_variant_1", "Variant 1", {}, false};
-        for (int i = 0; i < 9; ++i) {
-            p1.points.push_back({2300.0, 70});
-            p1.points.push_back({1850.0, 70});
-            p1.points.push_back({1450.0, 70});
-        }
+        p1.repeatCount = 9;
+        p1.points = {{2300.0, 70}, {1850.0, 70}, {1450.0, 70}};
         out.push_back(std::move(p1));
 
         SignalPattern p2{"call_variant_2", "Variant 2", {}, false};
-        for (int i = 0; i < 14; ++i) {
-            p2.points.push_back({1150.0, 35});
-            p2.points.push_back({1350.0, 35});
-            p2.points.push_back({1550.0, 35});
-            p2.points.push_back({1750.0, 35});
-            p2.points.push_back({1550.0, 35});
-            p2.points.push_back({1350.0, 35});
-        }
+        p2.repeatCount = 14;
+        p2.points = {{1150.0, 35}, {1350.0, 35}, {1550.0, 35}, {1750.0, 35}, {1550.0, 35}, {1350.0, 35}};
         out.push_back(std::move(p2));
 
         SignalPattern p3{"call_variant_3", "Variant 3", {}, false};
-        for (int i = 0; i < 32; ++i) {
-            p3.points.push_back({2000.0, 60});
-            p3.points.push_back({1000.0, 60});
-        }
+        p3.repeatCount = 32;
+        p3.points = {{2000.0, 60}, {1000.0, 60}};
         out.push_back(std::move(p3));
         return out;
     }();
@@ -539,11 +528,17 @@ std::vector<int16_t> AudioEngine::GenerateSignalPcm(int sampleRate, const Signal
     if (sampleRate <= 0 || pattern.points.empty()) {
         return {};
     }
+    const int reps = std::max(1, pattern.repeatCount);
+    std::vector<SignalPatternPoint> segments;
+    segments.reserve(pattern.points.size() * static_cast<size_t>(reps));
+    for (int r = 0; r < reps; ++r) {
+        segments.insert(segments.end(), pattern.points.begin(), pattern.points.end());
+    }
     std::vector<int16_t> out;
     out.reserve(static_cast<size_t>(sampleRate));
     constexpr double kPi = 3.14159265358979323846;
     double phase = 0.0;
-    for (const auto& seg : pattern.points) {
+    for (const auto& seg : segments) {
         const int n = std::max((sampleRate * seg.durationMs) / 1000, 1);
         const bool pause = seg.freqHz <= 0.0;
         const double step = pause ? 0.0 : (2.0 * kPi * seg.freqHz / sampleRate);

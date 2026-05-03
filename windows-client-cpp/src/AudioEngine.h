@@ -29,6 +29,8 @@ struct SignalPattern {
     std::string name;
     std::vector<SignalPatternPoint> points;
     bool appendTail = false;
+    /** Calling signals: repeat base `points` this many times when synthesizing (Roger uses 1). */
+    int repeatCount = 1;
 };
 
 class AudioEngine {

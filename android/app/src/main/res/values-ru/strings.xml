@@ -78,6 +78,11 @@
     <string name="roger_points_empty">Сегменты ещё не добавлены</string>
     <string name="roger_name_required">Введите название сигнала</string>
     <string name="roger_points_required">Добавьте хотя бы один сегмент</string>
+    <string name="signal_copy_button">Копировать сигнал</string>
+    <string name="signal_paste_button">Вставить сигнал</string>
+    <string name="signal_clipboard_empty">Буфер обмена пуст</string>
+    <string name="signal_clipboard_invalid">В буфере нет корректных данных сигнала O-Walkie</string>
+    <string name="signal_sequence_copied">Последовательность сигнала скопирована</string>
     <string name="battery_optimization_request">Разрешить работу в фоне</string>
     <string name="battery_optimization_status_unknown">Оптимизация батареи: неизвестно</string>
     <string name="battery_optimization_enabled">Оптимизация батареи: включена (приложение может быть выгружено)</string>

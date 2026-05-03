@@ -1,5 +1,7 @@
 package ru.outsidepro_arts.owalkie
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.app.AlertDialog
@@ -14,6 +16,7 @@ import androidx.activity.ComponentActivity
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
 import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 import ru.outsidepro_arts.owalkie.model.RogerPoint
+import ru.outsidepro_arts.owalkie.model.SignalSequenceClipboard
 
 class RogerPatternEditorActivity : ComponentActivity() {
     companion object {
@@ -40,6 +43,8 @@ class RogerPatternEditorActivity : ComponentActivity() {
     private lateinit var deletePatternButton: Button
     private lateinit var saveButton: Button
     private lateinit var cancelButton: Button
+    private lateinit var copySignalButton: Button
+    private lateinit var pasteSignalButton: Button
     private lateinit var repeatCountLabel: TextView
     private lateinit var repeatCountInput: EditText
     private lateinit var rogerPatternStore: RogerPatternStore
@@ -71,6 +76,8 @@ class RogerPatternEditorActivity : ComponentActivity() {
         deletePatternButton = findViewById(R.id.deletePatternButton)
         saveButton = findViewById(R.id.savePatternButton)
         cancelButton = findViewById(R.id.cancelPatternButton)
+        copySignalButton = findViewById(R.id.copySignalButton)
+        pasteSignalButton = findViewById(R.id.pasteSignalButton)
         repeatCountLabel = findViewById(R.id.repeatCountLabel)
         repeatCountInput = findViewById(R.id.repeatCountInput)
         val isCalling = signalKind == SIGNAL_KIND_CALLING
@@ -89,6 +96,8 @@ class RogerPatternEditorActivity : ComponentActivity() {
         deletePatternButton.setOnClickListener { confirmDeleteEditedPattern() }
         saveButton.setOnClickListener { savePattern() }
         cancelButton.setOnClickListener { finish() }
+        copySignalButton.setOnClickListener { copySequenceToClipboard() }
+        pasteSignalButton.setOnClickListener { pasteSequenceFromClipboard() }
         refreshPointsList()
     }
 
@@ -110,7 +119,7 @@ class RogerPatternEditorActivity : ComponentActivity() {
         points.clear()
         points.addAll(pattern.points)
         if (signalKind == SIGNAL_KIND_CALLING) {
-            repeatCountInput.setText("1")
+            repeatCountInput.setText((pattern.repeatCount?.coerceAtLeast(1) ?: 1).toString())
         }
         deletePatternButton.visibility = android.view.View.VISIBLE
     }
@@ -267,7 +276,8 @@ class RogerPatternEditorActivity : ComponentActivity() {
                 SIGNAL_KIND_CALLING -> callingPatternStore.updateCustomPattern(
                     editId,
                     name,
-                    buildRepeatedPoints(repeatCount),
+                    points.toList(),
+                    repeatCount,
                 )
                 else -> rogerPatternStore.updateCustomPattern(editId, name, points.toList())
             }
@@ -277,7 +287,7 @@ class RogerPatternEditorActivity : ComponentActivity() {
             }
         } else {
             if (signalKind == SIGNAL_KIND_CALLING) {
-                callingPatternStore.saveCustomPattern(name, buildRepeatedPoints(repeatCount))
+                callingPatternStore.saveCustomPattern(name, points.toList(), repeatCount)
             } else {
                 rogerPatternStore.saveCustomPattern(name, points.toList())
             }
@@ -313,5 +323,54 @@ class RogerPatternEditorActivity : ComponentActivity() {
     private fun buildSignalPointsForPlayback(): List<RogerPoint> {
         val repeatCount = resolveRepeatCountOrNull(showToastOnError = true) ?: return points
         return buildRepeatedPoints(repeatCount)
+    }
+
+    private fun copySequenceToClipboard() {
+        if (points.isEmpty()) {
+            Toast.makeText(this, R.string.roger_points_required, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val name = signalNameInput.text?.toString()?.trim().orEmpty()
+        val isCalling = signalKind == SIGNAL_KIND_CALLING
+        val repeatForCopy = if (isCalling) {
+            resolveRepeatCountOrNull(showToastOnError = false) ?: 1
+        } else {
+            1
+        }
+        val json = SignalSequenceClipboard.toJson(name, points, includeRepetitions = isCalling, repetitions = repeatForCopy)
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("O-Walkie signal", json))
+        Toast.makeText(this, R.string.signal_sequence_copied, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun pasteSequenceFromClipboard() {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = cm.primaryClip
+        if (clip == null || clip.itemCount == 0) {
+            Toast.makeText(this, R.string.signal_clipboard_empty, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val text = clip.getItemAt(0).coerceToText(this)?.toString().orEmpty()
+        val payload = SignalSequenceClipboard.parseFromText(text)
+        if (payload == null) {
+            Toast.makeText(this, R.string.signal_clipboard_invalid, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val repeatFromClip = when (signalKind) {
+            SIGNAL_KIND_CALLING -> payload.repeatCount.coerceIn(1, 500)
+            else -> 1
+        }
+        val totalMs = payload.points.sumOf { it.durationMs } * repeatFromClip
+        if (totalMs > maxSignalDurationMs()) {
+            Toast.makeText(this, R.string.roger_points_total_too_long, Toast.LENGTH_SHORT).show()
+            return
+        }
+        signalNameInput.setText(payload.name)
+        if (signalKind == SIGNAL_KIND_CALLING) {
+            repeatCountInput.setText(repeatFromClip.toString())
+        }
+        points.clear()
+        points.addAll(payload.points)
+        refreshPointsList()
     }
 }

@@ -373,3 +373,21 @@ msgstr "Вариант 2"
 
 msgid "Variant 3"
 msgstr "Вариант 3"
+
+msgid "Copy signal"
+msgstr "Копировать сигнал"
+
+msgid "Paste signal"
+msgstr "Вставить сигнал"
+
+msgid "Add at least one segment to copy."
+msgstr "Добавьте хотя бы один сегмент для копирования."
+
+msgid "Could not open clipboard."
+msgstr "Не удалось открыть буфер обмена."
+
+msgid "Clipboard is empty."
+msgstr "Буфер обмена пуст."
+
+msgid "No valid O-Walkie signal data in the clipboard."
+msgstr "В буфере нет корректных данных сигнала O-Walkie."

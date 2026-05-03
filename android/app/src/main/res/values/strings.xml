@@ -78,6 +78,11 @@
     <string name="roger_points_empty">No segments yet</string>
     <string name="roger_name_required">Enter signal name</string>
     <string name="roger_points_required">Add at least one segment</string>
+    <string name="signal_copy_button">Copy signal</string>
+    <string name="signal_paste_button">Paste signal</string>
+    <string name="signal_clipboard_empty">Clipboard is empty</string>
+    <string name="signal_clipboard_invalid">No valid O-Walkie signal data in the clipboard</string>
+    <string name="signal_sequence_copied">Signal sequence copied</string>
     <string name="battery_optimization_request">Allow background mode</string>
     <string name="battery_optimization_status_unknown">Battery optimization: unknown</string>
     <string name="battery_optimization_enabled">Battery optimization: enabled (may kill app)</string>

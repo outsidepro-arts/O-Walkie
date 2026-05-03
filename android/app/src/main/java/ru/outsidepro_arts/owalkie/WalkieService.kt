@@ -34,6 +34,7 @@ import ru.outsidepro_arts.owalkie.audio.OpusCodec
 import ru.outsidepro_arts.owalkie.audio.OpusConfig
 import ru.outsidepro_arts.owalkie.audio.OpusCodecFactory
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
+import ru.outsidepro_arts.owalkie.model.expandedCallingPoints
 import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
 import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
@@ -1287,7 +1288,9 @@ class WalkieService : Service() {
 
     private fun generateCallFromSelectedPattern(sampleRate: Int): ShortArray {
         val selected = callingPatternStore.getSelectedPattern()
-        return generateSignalFromPattern(sampleRate, selected.points, appendTail = false)
+        val segments = selected.expandedCallingPoints()
+        if (segments.isEmpty()) return shortArrayOf()
+        return generateSignalFromPattern(sampleRate, segments, appendTail = false)
     }
 
     private fun generateSignalFromPattern(

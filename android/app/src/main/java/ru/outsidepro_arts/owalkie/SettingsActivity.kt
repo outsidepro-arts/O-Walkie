@@ -13,6 +13,7 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
+import ru.outsidepro_arts.owalkie.model.expandedCallingPoints
 import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
 import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
@@ -87,7 +88,7 @@ class SettingsActivity : ComponentActivity() {
         }
         playCallingButton.setOnClickListener {
             val pattern = callingPatterns.getOrNull(callingSpinner.selectedItemPosition) ?: callingPatternStore.getSelectedPattern()
-            SignalPreviewPlayer.playPattern(pattern.points)
+            SignalPreviewPlayer.playPattern(pattern.expandedCallingPoints())
         }
         editRogerButton.setOnClickListener {
             val p = rogerPatterns.getOrNull(rogerSpinner.selectedItemPosition) ?: return@setOnClickListener

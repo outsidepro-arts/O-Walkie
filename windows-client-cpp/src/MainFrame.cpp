@@ -12,6 +12,7 @@
 
 #include <wx/button.h>
 #include <wx/checkbox.h>
+#include <wx/clipbrd.h>
 #include <wx/choice.h>
 #include <wx/filename.h>
 #include <wx/gauge.h>
@@ -353,6 +354,171 @@ wxStdDialogButtonSizer* NewTranslatedOkCancelSizer(wxDialog* dlg) {
     return bs;
 }
 
+namespace {
+
+constexpr const char* kSignalSequenceMagicKey = "oWalkieSignalSequence";
+
+std::string ExtractBalancedJsonObject(const std::string& s, size_t openIndex) {
+    if (openIndex >= s.size() || s[openIndex] != '{') {
+        return {};
+    }
+    int depth = 0;
+    size_t i = openIndex;
+    bool inString = false;
+    bool escape = false;
+    while (i < s.size()) {
+        const char c = s[i];
+        if (inString) {
+            if (escape) {
+                escape = false;
+            } else if (c == '\\') {
+                escape = true;
+            } else if (c == '"') {
+                inString = false;
+            }
+        } else {
+            if (c == '"') {
+                inString = true;
+            } else if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return s.substr(openIndex, i - openIndex + 1);
+                }
+            }
+        }
+        ++i;
+    }
+    return {};
+}
+
+struct ParsedSignalClip {
+    std::string name;
+    std::vector<SignalPatternPoint> points;
+    int repeatCount = 1;
+};
+
+static int ParseRepetitionsJsonValue(const nlohmann::json& n) {
+    if (n.is_string()) {
+        try {
+            return std::max(1, std::stoi(n.get<std::string>()));
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (n.is_number_integer()) {
+        return std::max(1, n.get<int>());
+    }
+    if (n.is_number()) {
+        return std::max(1, static_cast<int>(n.get<double>()));
+    }
+    return 1;
+}
+
+static bool FillPointsFromJsonArray(const nlohmann::json& arr, std::vector<SignalPatternPoint>& pts) {
+    if (!arr.is_array()) {
+        return false;
+    }
+    for (const auto& pt : arr) {
+        if (!pt.is_object()) {
+            return false;
+        }
+        const double f = pt.value("freqHz", -1.0);
+        const int d = pt.value("durationMs", -1);
+        if (f < 0.0 || d <= 0) {
+            return false;
+        }
+        pts.push_back(SignalPatternPoint{f, d});
+    }
+    return !pts.empty();
+}
+
+bool TryParseSignalSequenceEnvelope(const std::string& fragment, ParsedSignalClip& out) {
+    try {
+        auto j = nlohmann::json::parse(fragment);
+        if (!j.is_object() || !j.contains(kSignalSequenceMagicKey)) {
+            return false;
+        }
+        const auto& magic = j[kSignalSequenceMagicKey];
+
+        if (magic.is_object()) {
+            const auto& env = magic;
+            const int fmtVer = env.value("version", -1);
+            if (fmtVer != 1) {
+                return false;
+            }
+            if (!env.contains("points") || !env["points"].is_array()) {
+                return false;
+            }
+            std::vector<SignalPatternPoint> pts;
+            if (!FillPointsFromJsonArray(env["points"], pts)) {
+                return false;
+            }
+            out.name.clear();
+            if (env.contains("signal") && env["signal"].is_object()) {
+                out.name = env["signal"].value("name", std::string{});
+            }
+            out.repeatCount = 1;
+            if (env.contains("repetitions")) {
+                out.repeatCount = ParseRepetitionsJsonValue(env["repetitions"]);
+            }
+            out.points = std::move(pts);
+            return true;
+        }
+
+        if (magic.is_number_integer() || magic.is_number()) {
+            const int markerVer =
+                magic.is_number_integer() ? magic.get<int>() : static_cast<int>(magic.get<double>());
+            if (markerVer < 1 || markerVer > 2) {
+                return false;
+            }
+            if (!j.contains("points") || !j["points"].is_array()) {
+                return false;
+            }
+            std::vector<SignalPatternPoint> pts;
+            if (!FillPointsFromJsonArray(j["points"], pts)) {
+                return false;
+            }
+            out.name = j.value("name", std::string{});
+            out.repeatCount = 1;
+            if (j.contains("repetitions")) {
+                out.repeatCount = ParseRepetitionsJsonValue(j["repetitions"]);
+            } else if (j.contains("repeatCount")) {
+                out.repeatCount = ParseRepetitionsJsonValue(j["repeatCount"]);
+            }
+            out.points = std::move(pts);
+            return true;
+        }
+
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ParseSignalSequenceFromClipboardText(const std::string& utf8, ParsedSignalClip& out) {
+    if (TryParseSignalSequenceEnvelope(utf8, out)) {
+        return true;
+    }
+    const std::string needle = std::string("\"") + kSignalSequenceMagicKey + "\"";
+    for (size_t i = 0; i < utf8.size(); ++i) {
+        if (utf8[i] != '{') {
+            continue;
+        }
+        std::string frag = ExtractBalancedJsonObject(utf8, i);
+        if (frag.empty() || frag.find(needle) == std::string::npos) {
+            continue;
+        }
+        if (TryParseSignalSequenceEnvelope(frag, out)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 constexpr int kMaxRogerCustomSignalMs = 1000;
 constexpr int kMaxCallCustomSignalMs = 5000;
 /// Returned from SignalPatternEditorDialog when user confirms delete (settings must call DeleteCustom*).
@@ -394,6 +560,12 @@ public:
         row->Add(playBtn_, 0, wxRIGHT, 8);
         row->Add(deleteBtn_, 0);
         root->Add(row, 0, wxBOTTOM, 8);
+        auto* clipRow = new wxBoxSizer(wxHORIZONTAL);
+        copyBtn_ = new wxButton(this, wxID_ANY, _("Copy signal"));
+        pasteBtn_ = new wxButton(this, wxID_ANY, _("Paste signal"));
+        clipRow->Add(copyBtn_, 0, wxRIGHT, 8);
+        clipRow->Add(pasteBtn_, 0);
+        root->Add(clipRow, 0, wxBOTTOM, 8);
         root->Add(NewTranslatedOkCancelSizer(this), 0, wxEXPAND);
         SetSizerAndFit(root);
 
@@ -402,7 +574,7 @@ public:
             nameCtrl_->SetValue(wxString::FromUTF8(editOf->name));
             points_ = editOf->points;
             if (callKind_) {
-                repeatSpin_->SetValue(1);
+                repeatSpin_->SetValue(std::max(1, std::min(500, editOf->repeatCount)));
             }
             RefreshList();
             deleteBtn_->Show();
@@ -416,6 +588,8 @@ public:
         removeBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnRemove, this);
         playBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnPlay, this);
         deleteBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnDeleteClicked, this);
+        copyBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnCopySequence, this);
+        pasteBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnPasteSequence, this);
         Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnTrySave, this, wxID_OK);
         listBox_->Bind(wxEVT_LISTBOX_DCLICK, &SignalPatternEditorDialog::OnListActivate, this);
         Bind(wxEVT_CHAR_HOOK, &SignalPatternEditorDialog::OnDialogCharHook, this);
@@ -606,11 +780,88 @@ private:
         SignalPattern pat;
         pat.id.clear();
         pat.name.clear();
-        pat.points = BuildRepeatedPoints();
+        pat.points = points_;
+        pat.repeatCount = callKind_ ? RepeatCountOr1() : 1;
         pat.appendTail = !callKind_;
         if (!pat.points.empty() && audio_) {
             audio_->PlaySignalPatternPreview(pat);
         }
+    }
+
+    void OnCopySequence(wxCommandEvent&) {
+        if (points_.empty()) {
+            wxMessageBox(_("Add at least one segment to copy."), _("Copy signal"), wxOK | wxICON_INFORMATION, this);
+            return;
+        }
+        nlohmann::json inner;
+        inner["version"] = 1;
+        {
+            nlohmann::json sig;
+            sig["name"] = nameCtrl_->GetValue().utf8_string();
+            inner["signal"] = std::move(sig);
+        }
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& p : points_) {
+            nlohmann::json o;
+            o["durationMs"] = p.durationMs;
+            o["freqHz"] = p.freqHz;
+            arr.push_back(std::move(o));
+        }
+        inner["points"] = std::move(arr);
+        if (callKind_) {
+            inner["repetitions"] = RepeatCountOr1();
+        }
+        nlohmann::json j;
+        j[kSignalSequenceMagicKey] = std::move(inner);
+        const std::string dump = j.dump(2);
+        const wxString wxs = wxString::FromUTF8(dump);
+        if (!wxTheClipboard->Open()) {
+            wxMessageBox(_("Could not open clipboard."), _("Copy signal"), wxOK | wxICON_WARNING, this);
+            return;
+        }
+        wxTheClipboard->SetData(new wxTextDataObject(wxs));
+        wxTheClipboard->Close();
+    }
+
+    void OnPasteSequence(wxCommandEvent&) {
+        if (!wxTheClipboard->Open()) {
+            wxMessageBox(_("Could not open clipboard."), _("Paste signal"), wxOK | wxICON_WARNING, this);
+            return;
+        }
+        if (!wxTheClipboard->IsSupported(wxDF_TEXT)) {
+            wxTheClipboard->Close();
+            wxMessageBox(_("Clipboard is empty."), _("Paste signal"), wxOK | wxICON_INFORMATION, this);
+            return;
+        }
+        wxTextDataObject data;
+        if (!wxTheClipboard->GetData(data)) {
+            wxTheClipboard->Close();
+            wxMessageBox(_("Clipboard is empty."), _("Paste signal"), wxOK | wxICON_INFORMATION, this);
+            return;
+        }
+        wxTheClipboard->Close();
+        const std::string utf8 = data.GetText().utf8_string();
+        ParsedSignalClip parsed;
+        if (!ParseSignalSequenceFromClipboardText(utf8, parsed)) {
+            wxMessageBox(_("No valid O-Walkie signal data in the clipboard."), _("Paste signal"), wxOK | wxICON_WARNING, this);
+            return;
+        }
+        const int rep = callKind_ ? std::min(500, std::max(1, parsed.repeatCount)) : 1;
+        int sum = 0;
+        for (const auto& p : parsed.points) {
+            sum += p.durationMs;
+        }
+        const int limit = callKind_ ? kMaxCallCustomSignalMs : kMaxRogerCustomSignalMs;
+        if (sum * rep > limit) {
+            wxMessageBox(_("Total duration would exceed limit."), _("Paste signal"), wxOK | wxICON_WARNING, this);
+            return;
+        }
+        nameCtrl_->SetValue(wxString::FromUTF8(parsed.name));
+        if (callKind_) {
+            repeatSpin_->SetValue(rep);
+        }
+        points_ = std::move(parsed.points);
+        RefreshList();
     }
 
     void OnDeleteClicked(wxCommandEvent&) {
@@ -660,7 +911,8 @@ private:
         saved_ = {};
         saved_.id = editingId_;
         saved_.name = nameWx.utf8_string();
-        saved_.points = BuildRepeatedPoints();
+        saved_.points = points_;
+        saved_.repeatCount = callKind_ ? RepeatCountOr1() : 1;
         saved_.appendTail = !callKind_;
         EndModal(wxID_OK);
     }
@@ -673,6 +925,8 @@ private:
     wxButton* removeBtn_ = nullptr;
     wxButton* playBtn_ = nullptr;
     wxButton* deleteBtn_ = nullptr;
+    wxButton* copyBtn_ = nullptr;
+    wxButton* pasteBtn_ = nullptr;
     AudioEngine* audio_ = nullptr;
     bool callKind_ = false;
     std::string editingId_;
@@ -1239,6 +1493,7 @@ void MainFrame::LoadCustomSignalPatternsFromDisk() {
                 q.durationMs = pt.value("durationMs", 0);
                 p.points.push_back(q);
             }
+            p.repeatCount = 1;
             if (!p.id.empty() && !p.points.empty()) {
                 customRogerPatterns_.push_back(std::move(p));
             }
@@ -1254,6 +1509,7 @@ void MainFrame::LoadCustomSignalPatternsFromDisk() {
                 q.durationMs = pt.value("durationMs", 0);
                 p.points.push_back(q);
             }
+            p.repeatCount = std::max(1, item.value("repeatCount", 1));
             if (!p.id.empty() && !p.points.empty()) {
                 customCallPatterns_.push_back(std::move(p));
             }
@@ -1296,6 +1552,7 @@ void MainFrame::SaveCustomSignalPatternsToDisk() const {
                 pts.push_back(ptj);
             }
             o["points"] = pts;
+            o["repeatCount"] = std::max(1, p.repeatCount);
             arrCall.push_back(o);
         }
         j["call"] = arrCall;
@@ -1323,6 +1580,7 @@ void MainFrame::UpsertCustomRogerPattern(SignalPattern pattern) {
             if (existing.id == pattern.id) {
                 existing.name = std::move(pattern.name);
                 existing.points = std::move(pattern.points);
+                existing.repeatCount = 1;
                 existing.appendTail = true;
                 selectedRogerPatternId_ = existing.id;
                 SaveCustomSignalPatternsToDisk();
@@ -1337,6 +1595,7 @@ void MainFrame::UpsertCustomRogerPattern(SignalPattern pattern) {
         if (PatternNameAsciiIEq(existing.name, pattern.name)) {
             pattern.id = existing.id;
             existing = std::move(pattern);
+            existing.repeatCount = 1;
             selectedRogerPatternId_ = existing.id;
             SaveCustomSignalPatternsToDisk();
             ApplyCustomPatternsToEngine();
@@ -1348,6 +1607,7 @@ void MainFrame::UpsertCustomRogerPattern(SignalPattern pattern) {
     if (pattern.id.empty()) {
         pattern.id = NewCustomPatternId();
     }
+    pattern.repeatCount = 1;
     customRogerPatterns_.push_back(std::move(pattern));
     selectedRogerPatternId_ = customRogerPatterns_.back().id;
     SaveCustomSignalPatternsToDisk();
@@ -1363,6 +1623,7 @@ void MainFrame::UpsertCustomCallPattern(SignalPattern pattern) {
             if (existing.id == pattern.id) {
                 existing.name = std::move(pattern.name);
                 existing.points = std::move(pattern.points);
+                existing.repeatCount = std::max(1, pattern.repeatCount);
                 existing.appendTail = false;
                 selectedCallPatternId_ = existing.id;
                 SaveCustomSignalPatternsToDisk();
