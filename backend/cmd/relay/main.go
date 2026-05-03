@@ -1391,7 +1391,8 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		}
 	}
 
-	if len(activeSpeakers) > 0 {
+	repLive := m.liveRepeaterCaptureCount()
+	if len(activeSpeakers) > 0 || repLive > 0 {
 		m.mixOutSilenceRemain = 0
 		m.postMixSilenceDeferred = false
 	}
@@ -1409,6 +1410,8 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	} else if len(activeSpeakers) > 1 {
 		m.lastSingleSpeaker = 0
 	}
+
+	squelchIdleSuppressors += m.liveRepeaterCaptureCount()
 
 	ctx := &audioProcessContext{
 		Mixed:                       mixed,
@@ -1485,6 +1488,23 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	}
 	m.rememberLatestFrame(payload, exclude)
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
+}
+
+func (m *channelMixer) liveRepeaterCaptureCount() int {
+	m.repeaterMu.Lock()
+	defer m.repeaterMu.Unlock()
+	n := 0
+	for sessionID, st := range m.repeaterState {
+		if !st.collecting {
+			continue
+		}
+		c := m.hub.getClient(sessionID)
+		if c == nil || !c.isRepeaterMode() {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 func (m *channelMixer) processRepeaterCapture(sessionID uint32, pcm []int16, signalByte float64, now time.Time) {
@@ -1771,8 +1791,9 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 				m.squelchBurstRemain = 0
 				if m.cfg.SquelchShotsMaxS > 0 {
 					m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
+				} else {
+					ctx.ArmPostMixSilenceAfterIdle = true
 				}
-				ctx.ArmPostMixSilenceAfterIdle = true
 			}
 			return
 		}
