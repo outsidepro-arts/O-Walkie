@@ -59,23 +59,25 @@
     <string name="roger_custom_title">Свой сигнал</string>
     <string name="edit_signal_title">Редактировать сигнал</string>
     <string name="roger_name_hint">Название сигнала</string>
-    <string name="roger_points_label">Список точек частот</string>
-    <string name="roger_new_point_title">Новая точка</string>
+    <string name="roger_points_label">Сегменты</string>
+    <string name="roger_new_segment_title">Новый сегмент</string>
+    <string name="roger_edit_segment_title">Редактировать сегмент</string>
+    <string name="segment_row_a11y">Сегмент %1$d: %2$s, %3$d мс. Дважды нажмите, чтобы изменить.</string>
     <string name="roger_point_frequency_hint">Частота (Гц)</string>
     <string name="roger_point_duration_hint">Длительность (мс)</string>
-    <string name="roger_point_invalid">Введите корректные значения точки (частота >= 0, длительность > 0)</string>
+    <string name="roger_point_invalid">Введите корректные значения сегмента (частота >= 0, длительность > 0)</string>
     <string name="roger_points_total_too_long">Суммарная длина сигнала слишком большая для выбранного режима</string>
     <string name="roger_point_pause">Пауза</string>
     <string name="roger_point_hz_format">%1$d Гц</string>
-    <string name="delete_point_button">Удалить точку</string>
+    <string name="delete_point_button">Удалить сегмент</string>
     <string name="calling_repeat_count_label">Количество повторов</string>
     <string name="calling_repeat_count_hint">Количество повторов</string>
     <string name="calling_repeat_count_invalid">Введите количество повторов больше нуля</string>
     <string name="roger_save">Сохранить</string>
     <string name="roger_cancel">Отмена</string>
-    <string name="roger_points_empty">Точки пока не добавлены</string>
+    <string name="roger_points_empty">Сегменты ещё не добавлены</string>
     <string name="roger_name_required">Введите название сигнала</string>
-    <string name="roger_points_required">Добавьте хотя бы одну точку</string>
+    <string name="roger_points_required">Добавьте хотя бы один сегмент</string>
     <string name="battery_optimization_request">Разрешить работу в фоне</string>
     <string name="battery_optimization_status_unknown">Оптимизация батареи: неизвестно</string>
     <string name="battery_optimization_enabled">Оптимизация батареи: включена (приложение может быть выгружено)</string>

@@ -38,8 +38,14 @@ msgstr "Количество повторов"
 msgid "Add segment"
 msgstr "Добавить сегмент"
 
-msgid "Delete point"
-msgstr "Удалить точку"
+msgid "Delete segment"
+msgstr "Удалить сегмент"
+
+msgid "Edit segment"
+msgstr "Редактировать сегмент"
+
+msgid "Invalid selection."
+msgstr "Неверный выбор."
 
 msgid "Delete signal"
 msgstr "Удалить сигнал"

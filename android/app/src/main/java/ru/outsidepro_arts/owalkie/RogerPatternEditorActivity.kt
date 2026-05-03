@@ -65,6 +65,7 @@ class RogerPatternEditorActivity : ComponentActivity() {
 
         signalNameInput = findViewById(R.id.signalNameInput)
         pointsList = findViewById(R.id.pointsListView)
+        pointsList.setItemsCanFocus(true)
         addPointButton = findViewById(R.id.addPointButton)
         playPatternButton = findViewById(R.id.playPatternButton)
         deletePatternButton = findViewById(R.id.deletePatternButton)
@@ -81,7 +82,7 @@ class RogerPatternEditorActivity : ComponentActivity() {
 
         applyEditModeIfNeeded()
 
-        addPointButton.setOnClickListener { showAddPointDialog() }
+        addPointButton.setOnClickListener { showSegmentDialog(editIndex = null) }
         playPatternButton.setOnClickListener {
             SignalPreviewPlayer.playPattern(buildSignalPointsForPlayback())
         }
@@ -130,7 +131,15 @@ class RogerPatternEditorActivity : ComponentActivity() {
             .show()
     }
 
-    private fun showAddPointDialog() {
+    private fun formatFreqForEdit(freqHz: Double): String {
+        if (freqHz <= 0.0) return "0"
+        val frac = kotlin.math.abs(freqHz % 1.0)
+        if (frac < 1e-9 || frac > 1.0 - 1e-9) return freqHz.toInt().toString()
+        return freqHz.toString()
+    }
+
+    private fun showSegmentDialog(editIndex: Int?) {
+        if (editIndex != null && editIndex !in points.indices) return
         val freqInput = EditText(this).apply {
             hint = getString(R.string.roger_point_frequency_hint)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
@@ -139,15 +148,22 @@ class RogerPatternEditorActivity : ComponentActivity() {
             hint = getString(R.string.roger_point_duration_hint)
             inputType = InputType.TYPE_CLASS_NUMBER
         }
+        if (editIndex != null) {
+            val pt = points[editIndex]
+            freqInput.setText(formatFreqForEdit(pt.freqHz))
+            durationInput.setText(pt.durationMs.toString())
+        }
         val container = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(40, 20, 40, 0)
             addView(freqInput)
             addView(durationInput)
         }
+        val titleRes =
+            if (editIndex == null) R.string.roger_new_segment_title else R.string.roger_edit_segment_title
 
         AlertDialog.Builder(this)
-            .setTitle(R.string.roger_new_point_title)
+            .setTitle(titleRes)
             .setView(container)
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 val freq = freqInput.text?.toString()?.trim()?.toDoubleOrNull()
@@ -157,12 +173,18 @@ class RogerPatternEditorActivity : ComponentActivity() {
                     return@setPositiveButton
                 }
                 val repeatCount = resolveRepeatCountOrNull(showToastOnError = true) ?: return@setPositiveButton
-                val totalDurationMs = (points.sumOf { it.durationMs } + duration) * repeatCount
+                val oldDur = editIndex?.let { points[it].durationMs } ?: 0
+                val baseSum = points.sumOf { it.durationMs } - oldDur
+                val totalDurationMs = (baseSum + duration) * repeatCount
                 if (totalDurationMs > maxSignalDurationMs()) {
                     Toast.makeText(this, R.string.roger_points_total_too_long, Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-                points += RogerPoint(freqHz = freq, durationMs = duration)
+                if (editIndex == null) {
+                    points += RogerPoint(freqHz = freq, durationMs = duration)
+                } else if (editIndex in points.indices) {
+                    points[editIndex] = RogerPoint(freqHz = freq, durationMs = duration)
+                }
                 refreshPointsList()
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -200,10 +222,20 @@ class RogerPatternEditorActivity : ComponentActivity() {
                 } else {
                     getString(R.string.roger_point_hz_format, point.freqHz.toInt())
                 }
-                label.text = "${position + 1}. $toneLabel / ${point.durationMs} ms"
-                delete.setOnClickListener {
-                    if (position in points.indices) {
-                        points.removeAt(position)
+                val lineText = "${position + 1}. $toneLabel / ${point.durationMs} ms"
+                label.text = lineText
+                label.contentDescription =
+                    getString(R.string.segment_row_a11y, position + 1, toneLabel, point.durationMs)
+                label.tag = position
+                label.setOnClickListener { v ->
+                    val pos = v.tag as? Int ?: return@setOnClickListener
+                    if (pos in points.indices) showSegmentDialog(editIndex = pos)
+                }
+                delete.tag = position
+                delete.setOnClickListener { v ->
+                    val pos = v.tag as? Int ?: return@setOnClickListener
+                    if (pos in points.indices) {
+                        points.removeAt(pos)
                         refreshPointsList()
                     }
                 }

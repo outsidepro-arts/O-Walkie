@@ -386,7 +386,7 @@ public:
         }
         auto* row = new wxBoxSizer(wxHORIZONTAL);
         addBtn_ = new wxButton(this, wxID_ANY, _("Add segment"));
-        removeBtn_ = new wxButton(this, wxID_ANY, _("Delete point"));
+        removeBtn_ = new wxButton(this, wxID_ANY, _("Delete segment"));
         playBtn_ = new wxButton(this, wxID_ANY, _("Play"));
         deleteBtn_ = new wxButton(this, wxID_ANY, _("Delete signal"));
         row->Add(addBtn_, 0, wxRIGHT, 8);
@@ -417,6 +417,8 @@ public:
         playBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnPlay, this);
         deleteBtn_->Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnDeleteClicked, this);
         Bind(wxEVT_BUTTON, &SignalPatternEditorDialog::OnTrySave, this, wxID_OK);
+        listBox_->Bind(wxEVT_LISTBOX_DCLICK, &SignalPatternEditorDialog::OnListActivate, this);
+        Bind(wxEVT_CHAR_HOOK, &SignalPatternEditorDialog::OnDialogCharHook, this);
     }
 
     SignalPattern TakeSavedPattern() { return std::move(saved_); }
@@ -470,36 +472,115 @@ private:
         return true;
     }
 
-    void OnAdd(wxCommandEvent&) {
-        wxDialog dlg(this, wxID_ANY, _("New segment"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
+    bool ReplacePointFromInputs(size_t idx, double freqHz, int durationMs, wxString& errOut) {
+        if (idx >= points_.size()) {
+            errOut = _("Invalid selection.");
+            return false;
+        }
+        if (durationMs <= 0) {
+            errOut = _("Duration must be positive.");
+            return false;
+        }
+        if (freqHz < 0.0) {
+            errOut = _("Frequency cannot be negative.");
+            return false;
+        }
+        const int repeat = RepeatCountOr1();
+        const int oldDur = points_[idx].durationMs;
+        const int newCycle = CycleDurationMs() - oldDur + durationMs;
+        const int limit = callKind_ ? kMaxCallCustomSignalMs : kMaxRogerCustomSignalMs;
+        if (newCycle * repeat > limit) {
+            errOut = _("Total duration would exceed limit.");
+            return false;
+        }
+        points_[idx].freqHz = freqHz;
+        points_[idx].durationMs = durationMs;
+        RefreshList();
+        listBox_->SetSelection(static_cast<int>(idx));
+        return true;
+    }
+
+    bool PromptSegmentFields(const wxString& title, double& freqHz, int& durationMs) {
+        wxDialog dlg(this, wxID_ANY, title, wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
         auto* sz = new wxBoxSizer(wxVERTICAL);
         auto* fRow = new wxBoxSizer(wxHORIZONTAL);
         fRow->Add(new wxStaticText(&dlg, wxID_ANY, _("Frequency (Hz)")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
-        auto* fCtrl = new wxTextCtrl(&dlg, wxID_ANY, "1000");
+        auto* fCtrl = new wxTextCtrl(&dlg, wxID_ANY, wxString::Format(wxT("%.10g"), freqHz));
         fRow->Add(fCtrl, 1, wxEXPAND);
         sz->Add(fRow, 0, wxEXPAND | wxALL, 8);
         auto* dRow = new wxBoxSizer(wxHORIZONTAL);
         dRow->Add(new wxStaticText(&dlg, wxID_ANY, _("Duration (ms)")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
-        auto* dCtrl = new wxTextCtrl(&dlg, wxID_ANY, "50");
+        auto* dCtrl = new wxTextCtrl(&dlg, wxID_ANY, wxString::Format(wxT("%d"), durationMs));
         dRow->Add(dCtrl, 1, wxEXPAND);
         sz->Add(dRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
         sz->Add(NewTranslatedOkCancelSizer(&dlg), 0, wxEXPAND | wxALL, 8);
         dlg.SetSizerAndFit(sz);
         if (dlg.ShowModal() != wxID_OK) {
-            return;
+            return false;
         }
-        double freq = 0;
-        if (!fCtrl->GetValue().ToDouble(&freq)) {
+        if (!fCtrl->GetValue().ToDouble(&freqHz)) {
             wxMessageBox(_("Invalid frequency."), _("Invalid"), wxOK | wxICON_WARNING, this);
-            return;
+            return false;
         }
         long durL = 0;
         if (!dCtrl->GetValue().ToLong(&durL)) {
             wxMessageBox(_("Duration must be an integer."), _("Invalid"), wxOK | wxICON_WARNING, this);
+            return false;
+        }
+        durationMs = static_cast<int>(durL);
+        return true;
+    }
+
+    void OpenEditForSelectedSegment() {
+        const int sel = listBox_->GetSelection();
+        if (sel == wxNOT_FOUND || sel < 0 || static_cast<size_t>(sel) >= points_.size()) {
+            return;
+        }
+        double freq = points_[static_cast<size_t>(sel)].freqHz;
+        int dur = points_[static_cast<size_t>(sel)].durationMs;
+        if (!PromptSegmentFields(_("Edit segment"), freq, dur)) {
             return;
         }
         wxString err;
-        if (!AppendPointFromInputs(freq, static_cast<int>(durL), err)) {
+        if (!ReplacePointFromInputs(static_cast<size_t>(sel), freq, dur, err)) {
+            wxMessageBox(err, _("Invalid"), wxOK | wxICON_WARNING, this);
+        }
+    }
+
+    void OnListActivate(wxCommandEvent&) { OpenEditForSelectedSegment(); }
+
+    void OnDialogCharHook(wxKeyEvent& e) {
+        const int k = e.GetKeyCode();
+        if (k != WXK_RETURN && k != WXK_NUMPAD_ENTER) {
+            e.Skip();
+            return;
+        }
+        wxWindow* focus = wxWindow::FindFocus();
+        bool listHasFocus = false;
+        for (wxWindow* w = focus; w; w = w->GetParent()) {
+            if (w == listBox_) {
+                listHasFocus = true;
+                break;
+            }
+            if (w == this) {
+                break;
+            }
+        }
+        if (listHasFocus) {
+            OpenEditForSelectedSegment();
+            return;
+        }
+        e.Skip();
+    }
+
+    void OnAdd(wxCommandEvent&) {
+        double freq = 1000.0;
+        int dur = 50;
+        if (!PromptSegmentFields(_("New segment"), freq, dur)) {
+            return;
+        }
+        wxString err;
+        if (!AppendPointFromInputs(freq, dur, err)) {
             wxMessageBox(err, _("Invalid"), wxOK | wxICON_WARNING, this);
         }
     }
