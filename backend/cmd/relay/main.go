@@ -70,9 +70,9 @@ type serverConfig struct {
 	// Port is used for both WebSocket HTTP listener and UDP listener (same port number).
 	Port int `json:"port"`
 	// Legacy keys (optional): if port is 0, port is inferred from the first non-empty address.
-	LegacyWsAddr  string `json:"ws_addr,omitempty"`
-	LegacyUdpAddr string `json:"udp_addr,omitempty"`
-	SampleRate    int    `json:"sample_rate"`
+	LegacyWsAddr       string     `json:"ws_addr,omitempty"`
+	LegacyUdpAddr      string     `json:"udp_addr,omitempty"`
+	SampleRate         int        `json:"sample_rate"`
 	PacketMs           int        `json:"packet_ms"`
 	Opus               opusConfig `json:"opus"`
 	HangoverMs         int        `json:"hangover_ms"`
@@ -294,6 +294,11 @@ type speakerStreamState struct {
 	lastSignal   float64
 	lastPCM      []int16
 	missCount    int
+
+	// decoderFlushPending/eofAt: after explicit TX EOF, drop per-session Opus decoder once
+	// the jitter queue has drained, so the next transmission does not inherit decoder tail.
+	decoderFlushPending bool
+	eofAt               time.Time
 }
 
 type speakerJitterBuffer struct {
@@ -663,6 +668,34 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 		txForceStopped:     make(map[uint32]bool),
 		txLastStopNoticeAt: make(map[uint32]time.Time),
 	}
+}
+
+func (m *channelMixer) dropDecoder(sessionID uint32) {
+	m.decodersMu.Lock()
+	delete(m.decoders, sessionID)
+	m.decodersMu.Unlock()
+}
+
+// maybeFlushDecoderAfterEOF drops the per-session Opus decoder after explicit EOF once
+// the jitter buffer is empty and a short settle window has passed, so the next PTT
+// does not inherit PLC/tail state from the previous transmission. Runs before pulling
+// from jitter so we never clear the queue mid-drain.
+func (m *channelMixer) maybeFlushDecoderAfterEOF(sessionID uint32, st *speakerStreamState, now time.Time) {
+	if st == nil || !st.decoderFlushPending {
+		return
+	}
+	if st.jitter.pendingCount() != 0 {
+		return
+	}
+	minQuiet := 5 * packetDur
+	if !st.eofAt.IsZero() && now.Sub(st.eofAt) < minQuiet {
+		return
+	}
+	m.dropDecoder(sessionID)
+	st.lastPCM = nil
+	st.missCount = 0
+	st.decoderFlushPending = false
+	st.eofAt = time.Time{}
 }
 
 func (m *channelMixer) canAcceptTxPacket(sessionID uint32) bool {
@@ -1126,6 +1159,7 @@ func (m *channelMixer) runLoop() (panicked bool) {
 				st.jitter.reset()
 				st.lastPCM = nil
 				st.missCount = 0
+				m.dropDecoder(pkt.sessionID)
 			}
 			st.jitter.push(pkt)
 			st.lastPacketAt = now
@@ -1147,6 +1181,8 @@ func (m *channelMixer) runLoop() (panicked bool) {
 				// Force jitter start on EOF so buffered short TX drains now,
 				// instead of sticking until the next long transmission.
 				st.jitter.forceStartFromMinSeq()
+				st.decoderFlushPending = true
+				st.eofAt = time.Now()
 			}
 			m.markRepeaterEOF(sid)
 			// Keep already buffered packets for a short natural drain, but disable
@@ -1201,6 +1237,7 @@ func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState
 			delete(m.txStartedAt, sid)
 			delete(m.txForceStopped, sid)
 			delete(m.txLastStopNoticeAt, sid)
+			m.dropDecoder(sid)
 			continue
 		}
 		if now.Sub(st.lastPacketAt) > m.eofTimeoutDur && st.pending == nil {
@@ -1209,6 +1246,7 @@ func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState
 			delete(m.txStartedAt, sid)
 			delete(m.txForceStopped, sid)
 			delete(m.txLastStopNoticeAt, sid)
+			m.dropDecoder(sid)
 		}
 	}
 }
@@ -1223,6 +1261,7 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		if st == nil {
 			continue
 		}
+		m.maybeFlushDecoderAfterEOF(sessionID, st, now)
 		// If a short burst did not reach jitter start threshold and then paused,
 		// force-start queued packets so they are drained now (even without explicit EOF).
 		if st.jitter.pendingCount() > 0 && !st.jitter.isStarted() && now.Sub(st.lastPacketAt) > packetDur {
