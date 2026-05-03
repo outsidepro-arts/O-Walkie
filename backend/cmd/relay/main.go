@@ -265,6 +265,10 @@ type audioProcessContext struct {
 	NoiseLevelDB   float64
 	EmitFrame      bool
 	DropFrame      bool
+	// ArmPostMixSilenceAfterIdle: noise/squelch module finished a synthetic burst (TX tail or idle shot);
+	// channelMixer defers zero-PCM tail until the first tick with EmitFrame==false so other modules
+	// (e.g. terminal click) still see the natural idle transition.
+	ArmPostMixSilenceAfterIdle bool
 }
 
 type audioModule interface {
@@ -569,6 +573,11 @@ type channelMixer struct {
 	lastFramePayload         []byte
 	lastFrameAt              time.Time
 	lastFrameExcludedSession uint32 // broadcastMixed exclude for lastFramePayload; 0 = not excluded
+
+	// After squelch-generated audio (TX tail hiss, idle shot), emit this many all-zero mixed frames
+	// so the downlink Opus encoder and clients see a clean tail. Armed on first idle tick (EmitFrame false).
+	mixOutSilenceRemain    int
+	postMixSilenceDeferred bool
 }
 
 type repeaterSession struct {
@@ -1209,6 +1218,9 @@ func (m *channelMixer) resetAfterLoopFailure() {
 	m.lastFrameAt = time.Time{}
 	m.lastFrameExcludedSession = 0
 	m.lastFrameMu.Unlock()
+
+	m.mixOutSilenceRemain = 0
+	m.postMixSilenceDeferred = false
 }
 
 func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool, now time.Time) {
@@ -1367,6 +1379,11 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		}
 	}
 
+	if len(activeSpeakers) > 0 {
+		m.mixOutSilenceRemain = 0
+		m.postMixSilenceDeferred = false
+	}
+
 	m.processRepeaterFinalization(now)
 
 	if len(activeSpeakers) == 0 {
@@ -1396,6 +1413,23 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		}
 	}
 	m.noiseLevelDB = ctx.NoiseLevelDB
+
+	if ctx.ArmPostMixSilenceAfterIdle {
+		m.postMixSilenceDeferred = true
+	}
+	if m.postMixSilenceDeferred && len(activeSpeakers) == 0 && !ctx.EmitFrame {
+		m.mixOutSilenceRemain = m.silenceTailFramesAfterEOF()
+		m.postMixSilenceDeferred = false
+	}
+	if m.mixOutSilenceRemain > 0 && len(activeSpeakers) == 0 && !ctx.EmitFrame {
+		for i := range mixed {
+			mixed[i] = 0
+		}
+		ctx.EmitFrame = true
+		ctx.AvgSignalByte = m.lastSignal
+		m.mixOutSilenceRemain--
+	}
+
 	if !ctx.EmitFrame {
 		return
 	}
@@ -1725,6 +1759,7 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 				if m.cfg.SquelchShotsMaxS > 0 {
 					m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
 				}
+				ctx.ArmPostMixSilenceAfterIdle = true
 			}
 			return
 		}
@@ -1794,7 +1829,7 @@ func (m *whiteNoiseSquelchModule) processIdleShots(ctx *audioProcessContext, now
 	switch m.shotPhase {
 	case shotPhasePreSilence:
 		ctx.EmitFrame = true
-		m.advanceShotPhase(now, randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs))
+		m.advanceShotPhase(ctx, now, randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs))
 	case shotPhaseNoise:
 		// Use the same hiss profile as TX-end tail to keep squelch shots consistent.
 		noiseAmplitude := m.cfg.NoiseGain * dbToLinear(m.cfg.TailNoiseDB)
@@ -1802,16 +1837,16 @@ func (m *whiteNoiseSquelchModule) processIdleShots(ctx *audioProcessContext, now
 			ctx.Mixed[i] += m.white.next() * noiseAmplitude
 		}
 		ctx.EmitFrame = true
-		m.advanceShotPhase(now, time.Second)
+		m.advanceShotPhase(ctx, now, time.Second)
 	case shotPhasePostSilence:
 		ctx.EmitFrame = true
-		m.advanceShotPhase(now, 0)
+		m.advanceShotPhase(ctx, now, 0)
 	default:
 		ctx.EmitFrame = false
 	}
 }
 
-func (m *whiteNoiseSquelchModule) advanceShotPhase(now time.Time, nextPhaseDuration time.Duration) {
+func (m *whiteNoiseSquelchModule) advanceShotPhase(ctx *audioProcessContext, now time.Time, nextPhaseDuration time.Duration) {
 	m.shotPhaseRemain -= m.frameDuration
 	if m.shotPhaseRemain > 0 {
 		return
@@ -1827,6 +1862,7 @@ func (m *whiteNoiseSquelchModule) advanceShotPhase(now time.Time, nextPhaseDurat
 		m.shotPhase = shotPhaseNone
 		m.shotPhaseRemain = 0
 		m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
+		ctx.ArmPostMixSilenceAfterIdle = true
 	default:
 		m.shotPhase = shotPhaseNone
 		m.shotPhaseRemain = 0
