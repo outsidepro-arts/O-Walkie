@@ -113,6 +113,11 @@ type noiseConfig struct {
 	TailNoiseDB        float64 `json:"tail_noise_db"`
 	TailMinMs          int     `json:"tail_min_ms"`
 	TailMaxMs          int     `json:"tail_max_ms"`
+	// NoiseDistribution: "gaussian" (default) or "uniform" (legacy sample-wise [-1,1]).
+	NoiseDistribution string `json:"noise_distribution,omitempty"`
+	// ThermalLowpassHz: moving-average lowpass corner (~SR/window); 0 disables (raw stream).
+	// Default in config 8000 matches examples/radio_noise B_thermal_lp_8kHz.wav @ 48 kHz.
+	ThermalLowpassHz float64 `json:"thermal_lowpass_hz,omitempty"`
 }
 
 type compressorConfig struct {
@@ -124,14 +129,36 @@ type compressorConfig struct {
 	MakeupDB    float64 `json:"makeup_db"`
 }
 
-type clickConfig struct {
-	Enabled             bool    `json:"enabled"`
+// clickPopsConfig: sinusoidal PTT / in-TX pops (legacy flat click_* merged here when pops set).
+type clickPopsConfig struct {
 	ClickDB             float64 `json:"click_db"`
 	GlitchIntervalMaxMs int     `json:"glitch_interval_max_ms"`
 	GlitchFreqMinHz     float64 `json:"glitch_freq_min_hz"`
 	GlitchFreqMaxHz     float64 `json:"glitch_freq_max_hz"`
 	GlitchLevelMinDB    float64 `json:"glitch_level_min_db"`
 	GlitchLevelMaxDB    float64 `json:"glitch_level_max_db"`
+}
+
+// clickImpulsesConfig: sparse RF-style impulses; rate follows signal like modules.noise (weak -> more).
+type clickImpulsesConfig struct {
+	Enabled            bool    `json:"enabled"`
+	ProbAtWeakSignal   float64 `json:"prob_at_weak_signal"`
+	ProbAtStrongSignal float64 `json:"prob_at_strong_signal"`
+	GainDB             float64 `json:"gain_db"`
+}
+
+type clickConfig struct {
+	Enabled bool             `json:"enabled"`
+	Pops    *clickPopsConfig `json:"pops,omitempty"`
+	// Legacy flat fields (used when pops is nil)
+	ClickDB             float64 `json:"click_db,omitempty"`
+	GlitchIntervalMaxMs int     `json:"glitch_interval_max_ms,omitempty"`
+	GlitchFreqMinHz     float64 `json:"glitch_freq_min_hz,omitempty"`
+	GlitchFreqMaxHz     float64 `json:"glitch_freq_max_hz,omitempty"`
+	GlitchLevelMinDB    float64 `json:"glitch_level_min_db,omitempty"`
+	GlitchLevelMaxDB    float64 `json:"glitch_level_max_db,omitempty"`
+
+	Impulses *clickImpulsesConfig `json:"impulses,omitempty"`
 }
 
 type filterConfig struct {
@@ -276,6 +303,12 @@ type audioProcessContext struct {
 	// SquelchHissJustEnded: white_noise_squelch finished TX tail hiss or idle-shot noise phase this tick.
 	// Lets tx_click emit the terminal click immediately even when the next phase still sets EmitFrame true.
 	SquelchHissJustEnded bool
+	// RepeaterIdleTail: one tick after a repeater capture flushes (EOF) so squelch can arm the same
+	// TX-end hiss tail as normal downlink speakers (repeater uplink does not add ActiveSpeakers).
+	RepeaterIdleTail bool
+	// RepeaterCaptureLive: repeater side-chain is collecting uplink; uplink is not summed into Mixed.
+	// Suppresses idle squelch shots but must not synthesize comfort noise into an empty mix for broadcast.
+	RepeaterCaptureLive bool
 }
 
 type audioModule interface {
@@ -585,6 +618,8 @@ type channelMixer struct {
 	// so the downlink Opus encoder and clients see a clean tail. Armed on first idle tick (EmitFrame false).
 	mixOutSilenceRemain    int
 	postMixSilenceDeferred bool
+	// Set for one mixer tick when a repeater session finalizes so white_noise arms squelch tail without dead air.
+	repeaterIdleTail bool
 }
 
 type repeaterSession struct {
@@ -1230,6 +1265,7 @@ func (m *channelMixer) resetAfterLoopFailure() {
 
 	m.mixOutSilenceRemain = 0
 	m.postMixSilenceDeferred = false
+	m.repeaterIdleTail = false
 }
 
 func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool, now time.Time) {
@@ -1414,7 +1450,11 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		m.lastSingleSpeaker = 0
 	}
 
-	squelchIdleSuppressors += m.liveRepeaterCaptureCount()
+	repLive = m.liveRepeaterCaptureCount()
+	squelchIdleSuppressors += repLive
+
+	repeaterIdleTail := m.repeaterIdleTail
+	m.repeaterIdleTail = false
 
 	ctx := &audioProcessContext{
 		Mixed:                       mixed,
@@ -1423,6 +1463,8 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		SquelchIdleSuppressionCount: squelchIdleSuppressors,
 		NoiseLevelDB:                m.noiseLevelDB,
 		EmitFrame:                   len(activeSpeakers) > 0,
+		RepeaterIdleTail:            repeaterIdleTail,
+		RepeaterCaptureLive:         repLive > 0,
 	}
 	for _, mod := range m.modules {
 		mod.Process(ctx)
@@ -1557,19 +1599,29 @@ func (m *channelMixer) processRepeaterFinalization(now time.Time) {
 			continue
 		}
 
-		for i := 0; i < 16; i++ {
+		// Drain DSP tail (hiss / weak squelch) into the repeater buffer. A single emit==false can
+		// be an idle-shot wait frame; require two consecutive no-emits before stopping so the tail
+		// is not truncated and playback does not end with a long gap before client-side squelch.
+		consecutiveNoEmit := 0
+		for i := 0; i < 64; i++ {
 			out, emit := st.processor.process(nil, st.lastSignal, false)
-			if !emit {
+			if emit {
+				consecutiveNoEmit = 0
+				st.bufferPCM = append(st.bufferPCM, out...)
+				continue
+			}
+			consecutiveNoEmit++
+			if consecutiveNoEmit >= 2 {
 				break
 			}
-			st.bufferPCM = append(st.bufferPCM, out...)
 		}
 
 		bufferCopy := append([]int16(nil), st.bufferPCM...)
 		st.bufferPCM = st.bufferPCM[:0]
 		st.collecting = false
 		st.eofMarked = false
-		go m.playbackRepeaterAfterDelay(sessionID, bufferCopy, packetDur)
+		m.repeaterIdleTail = true
+		go m.playbackRepeaterAfterDelay(sessionID, bufferCopy, 0)
 	}
 }
 
@@ -1577,7 +1629,9 @@ func (m *channelMixer) playbackRepeaterAfterDelay(sessionID uint32, pcm []int16,
 	if len(pcm) == 0 {
 		return
 	}
-	time.Sleep(delayDur)
+	if delayDur > 0 {
+		time.Sleep(delayDur)
+	}
 
 	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, resolveOpusApplication(configuredOpus.Application))
 	if err != nil {
@@ -1637,6 +1691,7 @@ type whiteNoiseSquelchModule struct {
 	squelchBurstRemain time.Duration
 	squelchLatched     bool
 	lastActive         bool
+	prevActiveSpeakers int
 	shotNextAt         time.Time
 	shotPhase          int
 	shotPhaseRemain    time.Duration
@@ -1656,27 +1711,41 @@ type clickModule struct {
 	glitchAmpMax   float64
 	lastActive     bool
 	pendingEnd     bool
+	impulses       *clickImpulsesConfig
+	impulseAmp     float64
 }
 
 func newClickModule(frameDuration time.Duration, cfg clickConfig) *clickModule {
-	amp := 32767.0 * dbToLinear(cfg.ClickDB)
+	pops := mergeClickPops(cfg)
+	amp := 32767.0 * dbToLinear(pops.ClickDB)
 	if amp < 0 {
 		amp = 0
 	}
 	if amp > 32767.0 {
 		amp = 32767.0
 	}
-	return &clickModule{
+	m := &clickModule{
 		clickAmplitude: amp,
 		freqHz:         200.0,
 		burstSamples:   configuredSampleRate / 80, // ~12.5 ms at current sample rate.
 		frameDuration:  frameDuration,
-		glitchMaxMs:    maxInt(cfg.GlitchIntervalMaxMs, 0),
-		glitchFreqMin:  cfg.GlitchFreqMinHz,
-		glitchFreqMax:  cfg.GlitchFreqMaxHz,
-		glitchAmpMin:   32767.0 * dbToLinear(cfg.GlitchLevelMinDB),
-		glitchAmpMax:   32767.0 * dbToLinear(cfg.GlitchLevelMaxDB),
+		glitchMaxMs:    maxInt(pops.GlitchIntervalMaxMs, 0),
+		glitchFreqMin:  pops.GlitchFreqMinHz,
+		glitchFreqMax:  pops.GlitchFreqMaxHz,
+		glitchAmpMin:   32767.0 * dbToLinear(pops.GlitchLevelMinDB),
+		glitchAmpMax:   32767.0 * dbToLinear(pops.GlitchLevelMaxDB),
+		impulses:       cfg.Impulses,
 	}
+	if cfg.Impulses != nil && cfg.Impulses.Enabled {
+		m.impulseAmp = 32767.0 * dbToLinear(cfg.Impulses.GainDB)
+		if m.impulseAmp < 0 {
+			m.impulseAmp = 0
+		}
+		if m.impulseAmp > 32767.0 {
+			m.impulseAmp = 32767.0
+		}
+	}
+	return m
 }
 
 func (m *clickModule) Name() string {
@@ -1705,9 +1774,28 @@ func (m *clickModule) Process(ctx *audioProcessContext) {
 		ctx.EmitFrame = true
 		m.pendingEnd = false
 		m.lastActive = false
+		m.maybeInjectRFImpulses(ctx)
 		return
 	}
 	m.lastActive = active
+	m.maybeInjectRFImpulses(ctx)
+}
+
+func (m *clickModule) maybeInjectRFImpulses(ctx *audioProcessContext) {
+	if m.impulses == nil || !m.impulses.Enabled || m.impulseAmp <= 0 || len(ctx.Mixed) == 0 {
+		return
+	}
+	p := mapSignalByteToImpulseProbability(ctx.AvgSignalByte, *m.impulses)
+	if p <= 0 || rand.Float64() >= p {
+		return
+	}
+	i := rand.Intn(len(ctx.Mixed))
+	if rand.Intn(2) == 0 {
+		ctx.Mixed[i] -= m.impulseAmp
+	} else {
+		ctx.Mixed[i] += m.impulseAmp
+	}
+	ctx.EmitFrame = true
 }
 
 func (m *clickModule) processRandomGlitchClicks(ctx *audioProcessContext) {
@@ -1758,7 +1846,7 @@ func (m *clickModule) injectClickWithParams(ctx *audioProcessContext, sign float
 
 func newWhiteNoiseSquelchModule(frameDuration time.Duration, cfg noiseConfig) *whiteNoiseSquelchModule {
 	return &whiteNoiseSquelchModule{
-		white:         newWhiteNoise(),
+		white:         newWhiteNoise(cfg),
 		frameDuration: frameDuration,
 		cfg:           cfg,
 	}
@@ -1777,9 +1865,17 @@ const (
 
 func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 	now := time.Now()
+	defer func() {
+		m.prevActiveSpeakers = ctx.ActiveSpeakers
+	}()
 	if ctx.SquelchIdleSuppressionCount <= 0 {
 		// End-of-transmission tail burst: jump to 0 dB and emit white hiss briefly.
-		if m.lastActive && m.squelchBurstRemain <= 0 {
+		// Require actual mix contributors (or synthetic EOF tail frames still counted as active
+		// speakers) so repeater-only suppression (suppressors>0, ActiveSpeakers==0) does not
+		// trigger a tail on every brief capture edge — that was heard as overly frequent idle squelch.
+		// RepeaterIdleTail covers legitimate EOF flush: repeater never increments ActiveSpeakers.
+		if m.lastActive && m.squelchBurstRemain <= 0 &&
+			(m.prevActiveSpeakers > 0 || ctx.ActiveSpeakers > 0 || ctx.RepeaterIdleTail) {
 			m.squelchBurstRemain = randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs)
 		}
 		m.lastActive = false
@@ -1814,6 +1910,12 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 	m.shotNextAt = time.Time{}
 	m.shotPhase = shotPhaseNone
 	m.shotPhaseRemain = 0
+
+	// Repeater uplink is processed in a side buffer, not in Mixed; do not fill the broadcast
+	// mix with comfort noise (listeners would hear empty-carrier hiss, not repeated audio).
+	if ctx.ActiveSpeakers == 0 && ctx.RepeaterCaptureLive {
+		return
+	}
 
 	noiseDB := m.cfg.MinNoiseDB
 	if m.cfg.SignalDependent {
@@ -1906,6 +2008,32 @@ func (m *whiteNoiseSquelchModule) advanceShotPhase(ctx *audioProcessContext, now
 		m.shotPhase = shotPhaseNone
 		m.shotPhaseRemain = 0
 	}
+}
+
+func mergeClickPops(cfg clickConfig) clickPopsConfig {
+	if cfg.Pops != nil {
+		return *cfg.Pops
+	}
+	return clickPopsConfig{
+		ClickDB:             cfg.ClickDB,
+		GlitchIntervalMaxMs: cfg.GlitchIntervalMaxMs,
+		GlitchFreqMinHz:     cfg.GlitchFreqMinHz,
+		GlitchFreqMaxHz:     cfg.GlitchFreqMaxHz,
+		GlitchLevelMinDB:    cfg.GlitchLevelMinDB,
+		GlitchLevelMaxDB:    cfg.GlitchLevelMaxDB,
+	}
+}
+
+func mapSignalByteToImpulseProbability(signalByte float64, c clickImpulsesConfig) float64 {
+	pct := (signalByte / 255.0) * 100.0
+	if pct <= 10.0 {
+		return c.ProbAtWeakSignal
+	}
+	if pct >= 100.0 {
+		return c.ProbAtStrongSignal
+	}
+	t := (pct - 10.0) / 90.0
+	return c.ProbAtWeakSignal + t*(c.ProbAtStrongSignal-c.ProbAtWeakSignal)
 }
 
 func mapSignalByteToNoiseDB(signalByte float64, cfg noiseConfig) float64 {
@@ -2059,14 +2187,76 @@ func applyAudioTiming(sampleRate int, packetMs int) {
 	packetSamples = configuredSampleRate * norm / 1000
 }
 
-type whiteNoise struct{}
+type whiteNoise struct {
+	gaussian   bool
+	win        int
+	buf        []float64
+	sum        float64
+	pos        int
+	count      int
+	hasSpare   bool
+	spareGauss float64
+}
 
-func newWhiteNoise() *whiteNoise {
-	return &whiteNoise{}
+func newWhiteNoise(cfg noiseConfig) *whiteNoise {
+	w := &whiteNoise{}
+	switch cfg.NoiseDistribution {
+	case "", "gaussian":
+		w.gaussian = true
+	case "uniform":
+		w.gaussian = false
+	default:
+		w.gaussian = true
+	}
+	if cfg.ThermalLowpassHz > 0 && configuredSampleRate > 0 {
+		win := int(float64(configuredSampleRate) / cfg.ThermalLowpassHz)
+		if win < 2 {
+			win = 2
+		}
+		w.win = win
+		w.buf = make([]float64, win)
+	}
+	return w
+}
+
+func (w *whiteNoise) nextRaw() float64 {
+	if !w.gaussian {
+		return rand.Float64()*2 - 1
+	}
+	if w.hasSpare {
+		w.hasSpare = false
+		return w.spareGauss * math.Sqrt(1.0/3.0)
+	}
+	u1 := rand.Float64()
+	for u1 <= 1e-12 {
+		u1 = rand.Float64()
+	}
+	u2 := rand.Float64()
+	mag := math.Sqrt(-2.0 * math.Log(u1))
+	z0 := mag * math.Cos(2*math.Pi*u2)
+	z1 := mag * math.Sin(2*math.Pi*u2)
+	w.spareGauss = z1
+	w.hasSpare = true
+	return z0 * math.Sqrt(1.0/3.0)
 }
 
 func (w *whiteNoise) next() float64 {
-	return rand.Float64()*2 - 1
+	x := w.nextRaw()
+	if w.win <= 0 {
+		return x
+	}
+	if w.count < w.win {
+		w.buf[w.pos] = x
+		w.sum += x
+		w.pos = (w.pos + 1) % w.win
+		w.count++
+		return w.sum / float64(w.count)
+	}
+	old := w.buf[w.pos]
+	w.buf[w.pos] = x
+	w.sum += x - old
+	w.pos = (w.pos + 1) % w.win
+	return w.sum / float64(w.win)
 }
 
 type compressorModule struct {
@@ -2347,15 +2537,25 @@ func defaultConfig() appConfig {
 				TailNoiseDB:        0.0,
 				TailMinMs:          15,
 				TailMaxMs:          60,
+				NoiseDistribution:  "gaussian",
+				ThermalLowpassHz:   8000,
 			},
 			Click: &clickConfig{
-				Enabled:             true,
-				ClickDB:             -8.0,
-				GlitchIntervalMaxMs: 0,
-				GlitchFreqMinHz:     120.0,
-				GlitchFreqMaxHz:     360.0,
-				GlitchLevelMinDB:    -14.0,
-				GlitchLevelMaxDB:    -6.0,
+				Enabled: true,
+				Pops: &clickPopsConfig{
+					ClickDB:             -8.0,
+					GlitchIntervalMaxMs: 0,
+					GlitchFreqMinHz:     120.0,
+					GlitchFreqMaxHz:     360.0,
+					GlitchLevelMinDB:    -14.0,
+					GlitchLevelMaxDB:    -6.0,
+				},
+				Impulses: &clickImpulsesConfig{
+					Enabled:            true,
+					ProbAtWeakSignal:   0.022,
+					ProbAtStrongSignal: 0.00045,
+					GainDB:             -14.0,
+				},
 			},
 			Filter: &filterConfig{
 				Enabled:   true,
@@ -2500,27 +2700,46 @@ func validateConfig(cfg appConfig) error {
 		if cfg.Modules.Noise.TailMinMs <= 0 || cfg.Modules.Noise.TailMaxMs < cfg.Modules.Noise.TailMinMs {
 			return errors.New("modules.noise tail range is invalid")
 		}
+		if cfg.Modules.Noise.NoiseDistribution == "" {
+			cfg.Modules.Noise.NoiseDistribution = "gaussian"
+		}
+		if cfg.Modules.Noise.NoiseDistribution != "gaussian" && cfg.Modules.Noise.NoiseDistribution != "uniform" {
+			return errors.New("modules.noise.noise_distribution must be gaussian or uniform")
+		}
+		if cfg.Modules.Noise.ThermalLowpassHz < 0 {
+			return errors.New("modules.noise.thermal_lowpass_hz must be >= 0")
+		}
 	}
 	if cfg.Modules.Click != nil && cfg.Modules.Click.Enabled {
-		if math.IsNaN(cfg.Modules.Click.ClickDB) || math.IsInf(cfg.Modules.Click.ClickDB, 0) {
-			return errors.New("modules.click.click_db must be a finite number")
+		pops := mergeClickPops(*cfg.Modules.Click)
+		if math.IsNaN(pops.ClickDB) || math.IsInf(pops.ClickDB, 0) {
+			return errors.New("modules.click pops.click_db must be a finite number")
 		}
-		if cfg.Modules.Click.GlitchIntervalMaxMs < 0 {
-			return errors.New("modules.click.glitch_interval_max_ms must be >= 0")
+		if pops.GlitchIntervalMaxMs < 0 {
+			return errors.New("modules.click pops.glitch_interval_max_ms must be >= 0")
 		}
-		if math.IsNaN(cfg.Modules.Click.GlitchFreqMinHz) || math.IsInf(cfg.Modules.Click.GlitchFreqMinHz, 0) ||
-			math.IsNaN(cfg.Modules.Click.GlitchFreqMaxHz) || math.IsInf(cfg.Modules.Click.GlitchFreqMaxHz, 0) {
-			return errors.New("modules.click glitch_freq range must be finite")
+		if math.IsNaN(pops.GlitchFreqMinHz) || math.IsInf(pops.GlitchFreqMinHz, 0) ||
+			math.IsNaN(pops.GlitchFreqMaxHz) || math.IsInf(pops.GlitchFreqMaxHz, 0) {
+			return errors.New("modules.click pops glitch_freq range must be finite")
 		}
-		if cfg.Modules.Click.GlitchFreqMinHz <= 0 || cfg.Modules.Click.GlitchFreqMaxHz < cfg.Modules.Click.GlitchFreqMinHz {
-			return errors.New("modules.click glitch_freq range is invalid")
+		if pops.GlitchFreqMinHz <= 0 || pops.GlitchFreqMaxHz < pops.GlitchFreqMinHz {
+			return errors.New("modules.click pops glitch_freq range is invalid")
 		}
-		if math.IsNaN(cfg.Modules.Click.GlitchLevelMinDB) || math.IsInf(cfg.Modules.Click.GlitchLevelMinDB, 0) ||
-			math.IsNaN(cfg.Modules.Click.GlitchLevelMaxDB) || math.IsInf(cfg.Modules.Click.GlitchLevelMaxDB, 0) {
-			return errors.New("modules.click glitch_level range must be finite")
+		if math.IsNaN(pops.GlitchLevelMinDB) || math.IsInf(pops.GlitchLevelMinDB, 0) ||
+			math.IsNaN(pops.GlitchLevelMaxDB) || math.IsInf(pops.GlitchLevelMaxDB, 0) {
+			return errors.New("modules.click pops glitch_level range must be finite")
 		}
-		if cfg.Modules.Click.GlitchLevelMaxDB < cfg.Modules.Click.GlitchLevelMinDB {
-			return errors.New("modules.click glitch_level range is invalid")
+		if pops.GlitchLevelMaxDB < pops.GlitchLevelMinDB {
+			return errors.New("modules.click pops glitch_level range is invalid")
+		}
+		if cfg.Modules.Click.Impulses != nil && cfg.Modules.Click.Impulses.Enabled {
+			im := cfg.Modules.Click.Impulses
+			if im.ProbAtWeakSignal < 0 || im.ProbAtWeakSignal > 1 || im.ProbAtStrongSignal < 0 || im.ProbAtStrongSignal > 1 {
+				return errors.New("modules.click.impulses prob_at_*_signal must be in [0..1]")
+			}
+			if math.IsNaN(im.GainDB) || math.IsInf(im.GainDB, 0) {
+				return errors.New("modules.click.impulses.gain_db must be finite")
+			}
 		}
 	}
 	if cfg.Modules.Distortion != nil && cfg.Modules.Distortion.Enabled {
