@@ -273,6 +273,9 @@ type audioProcessContext struct {
 	// EOF tail frames still count as ActiveSpeakers for mixing/exclude/click, but squelch TX tail
 	// may start immediately (overlap) when this count is zero.
 	SquelchIdleSuppressionCount int
+	// SquelchHissJustEnded: white_noise_squelch finished TX tail hiss or idle-shot noise phase this tick.
+	// Lets tx_click emit the terminal click immediately even when the next phase still sets EmitFrame true.
+	SquelchHissJustEnded bool
 }
 
 type audioModule interface {
@@ -1697,7 +1700,7 @@ func (m *clickModule) Process(ctx *audioProcessContext) {
 		m.processRandomGlitchClicks(ctx)
 	}
 
-	if !active && m.pendingEnd && !ctx.EmitFrame {
+	if !active && m.pendingEnd && (!ctx.EmitFrame || ctx.SquelchHissJustEnded) {
 		m.injectClick(ctx, -1.0)
 		ctx.EmitFrame = true
 		m.pendingEnd = false
@@ -1789,6 +1792,7 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 			m.squelchBurstRemain -= m.frameDuration
 			if m.squelchBurstRemain <= 0 {
 				m.squelchBurstRemain = 0
+				ctx.SquelchHissJustEnded = true
 				if m.cfg.SquelchShotsMaxS > 0 {
 					m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
 				} else {
@@ -1892,6 +1896,7 @@ func (m *whiteNoiseSquelchModule) advanceShotPhase(ctx *audioProcessContext, now
 	case shotPhaseNoise:
 		m.shotPhase = shotPhasePostSilence
 		m.shotPhaseRemain = nextPhaseDuration
+		ctx.SquelchHissJustEnded = true
 	case shotPhasePostSilence:
 		m.shotPhase = shotPhaseNone
 		m.shotPhaseRemain = 0
