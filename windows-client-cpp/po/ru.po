@@ -176,6 +176,15 @@ msgstr "Индикатор уровня микрофона"
 msgid "Show VU meter"
 msgstr "Показывать индикатор уровня (VU)"
 
+msgid "TX collision vibration tone (Hz)"
+msgstr "Тон имитации вибрации при коллизии TX (Гц)"
+
+msgid "TX collision vibration volume"
+msgstr "Громкость имитации вибрации при коллизии TX"
+
+msgid "Preview vibration"
+msgstr "Прослушать вибрацию"
+
 msgid "Not set"
 msgstr "Не задана"
 

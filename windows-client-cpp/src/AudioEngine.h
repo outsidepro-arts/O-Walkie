@@ -55,6 +55,10 @@ public:
     void SetPreferredOutputDevice(int indexOrMinusOneForDefault);
     /// Incoming (RX) stream gain, 0–200 (%), same semantics as Android `RxVolumeStore`.
     void SetRxVolumePercent(int percent);
+    /// Desktop TX-collision "vibration" emulation: tone frequency (Hz) and volume 0–100 (%).
+    void SetTxCollisionVibration(double freqHz, int volumePercent);
+    /// Preview using the given parameters without changing stored settings.
+    void PlayTxCollisionVibrationPreview(double freqHz, int volumePercent);
     void SetRogerPatternId(std::string patternId);
     void SetCallPatternId(std::string patternId);
     std::string RogerPatternId() const;
@@ -143,6 +147,9 @@ private:
     std::atomic<int64_t> lastInboundNs_{0};
     std::atomic<int64_t> lastTxCollisionToneNs_{0};
     std::atomic<int> rxVolumePercent_{100};
+
+    double txCollisionVibrationHz_{100.0};
+    int txCollisionVibrationVolumePercent_{40};
 
     EncodedFrameCallback onEncodedFrame_;
     StatusCallback onStatus_;

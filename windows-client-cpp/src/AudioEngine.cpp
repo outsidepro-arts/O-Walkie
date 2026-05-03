@@ -58,6 +58,11 @@ constexpr int kRxVolumeMinPercent = 0;
 constexpr int kRxVolumeMaxPercent = 200;
 constexpr int kRxVolumeDefaultPercent = 100;
 
+constexpr double kTxCollisionVibrationHzMin = 30.0;
+constexpr double kTxCollisionVibrationHzMax = 500.0;
+/// Peak sine gain at volume 100% (matches previous fixed ~0.18 at default volume 40%).
+constexpr double kTxCollisionVibrationGainFullScale = 0.45;
+
 struct WavPcm {
     std::vector<int16_t> samples;
     int sampleRate = 0;
@@ -267,6 +272,22 @@ void AppendTone(std::vector<int16_t>& out, int sampleRate, double freqHz, int du
         const double s = std::sin(w * i) * env * gain;
         const int v = static_cast<int>(std::lround(s * 32767.0));
         out.push_back(static_cast<int16_t>(std::clamp(v, -32768, 32767)));
+    }
+}
+
+void AppendDesktopVibrationPattern(
+    std::vector<int16_t>& pcm, int sampleRate, double freqHz, double gain, const std::vector<int>& patternMs) {
+    bool toneOn = true;
+    for (int d : patternMs) {
+        if (d <= 0) {
+            continue;
+        }
+        if (toneOn) {
+            AppendTone(pcm, sampleRate, freqHz, d, gain);
+        } else {
+            AppendSilence(pcm, sampleRate, d);
+        }
+        toneOn = !toneOn;
     }
 }
 
@@ -818,22 +839,39 @@ void AudioEngine::PlayVibrationPattern(const std::vector<int>& patternMs) {
     if (patternMs.empty()) {
         return;
     }
-    std::vector<int16_t> pcm;
+    double hz = 100.0;
+    int volPct = 40;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        bool toneOn = true;
-        for (int d : patternMs) {
-            if (d <= 0) {
-                continue;
-            }
-            if (toneOn) {
-                AppendTone(pcm, kLocalSignalSynthesisRate, 100.0, d, 0.18);
-            } else {
-                AppendSilence(pcm, kLocalSignalSynthesisRate, d);
-            }
-            toneOn = !toneOn;
-        }
+        volPct = txCollisionVibrationVolumePercent_;
+        hz = txCollisionVibrationHz_;
     }
+    if (volPct <= 0) {
+        return;
+    }
+    hz = std::clamp(hz, kTxCollisionVibrationHzMin, kTxCollisionVibrationHzMax);
+    const double gain = (static_cast<double>(volPct) / 100.0) * kTxCollisionVibrationGainFullScale;
+    std::vector<int16_t> pcm;
+    AppendDesktopVibrationPattern(pcm, kLocalSignalSynthesisRate, hz, gain, patternMs);
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
+}
+
+void AudioEngine::SetTxCollisionVibration(double freqHz, int volumePercent) {
+    std::lock_guard<std::mutex> lg(mu_);
+    txCollisionVibrationHz_ = std::clamp(freqHz, kTxCollisionVibrationHzMin, kTxCollisionVibrationHzMax);
+    txCollisionVibrationVolumePercent_ = std::clamp(volumePercent, 0, 100);
+}
+
+void AudioEngine::PlayTxCollisionVibrationPreview(double freqHz, int volumePercent) {
+    const double hz = std::clamp(freqHz, kTxCollisionVibrationHzMin, kTxCollisionVibrationHzMax);
+    const int vol = std::clamp(volumePercent, 0, 100);
+    if (vol <= 0) {
+        return;
+    }
+    const double gain = (static_cast<double>(vol) / 100.0) * kTxCollisionVibrationGainFullScale;
+    std::vector<int16_t> pcm;
+    static const std::vector<int> kPatternMs = {35, 55, 35, 55, 35};
+    AppendDesktopVibrationPattern(pcm, kLocalSignalSynthesisRate, hz, gain, kPatternMs);
     PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
 }
 

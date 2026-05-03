@@ -153,6 +153,8 @@ private:
     bool pttToggleMode_ = false;
     bool showMicLevelIndicator_ = false;
     int rxVolumePercent_ = 100;
+    double txCollisionVibrationHz_ = 100.0;
+    int txCollisionVibrationVolumePercent_ = 40;
     std::string uiLanguageCode_{"en"};
     bool globalPttPressed_ = false;
     bool globalPttToggleHookDown_ = false;

@@ -34,6 +34,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <wx/access.h>
 #endif
 
 static bool PatternNameAsciiIEq(const std::string& a, const std::string& b) {
@@ -355,6 +356,36 @@ wxStdDialogButtonSizer* NewTranslatedOkCancelSizer(wxDialog* dlg) {
 }
 
 namespace {
+
+#if defined(_WIN32) && wxUSE_ACCESSIBILITY
+class OwLabeledFieldAccessible final : public wxAccessible {
+public:
+    OwLabeledFieldAccessible(wxWindow* win, wxString fieldLabel)
+        : wxAccessible(win), fieldLabel_(std::move(fieldLabel)) {}
+
+    wxAccStatus GetName(int childId, wxString* name) override {
+        if (!name) {
+            return wxACC_INVALID_ARG;
+        }
+        // Narrator often focuses a child (edit/up/down) whose default MSAA name is empty.
+        if (childId == wxACC_SELF || (childId >= 1 && childId <= 4)) {
+            *name = fieldLabel_;
+            return wxACC_OK;
+        }
+        return wxAccessible::GetName(childId, name);
+    }
+
+private:
+    wxString fieldLabel_;
+};
+
+void OwAttachMsaaFieldLabel(wxWindow* ctrl, wxString fieldLabel) {
+    if (!ctrl || fieldLabel.empty()) {
+        return;
+    }
+    ctrl->SetAccessible(new OwLabeledFieldAccessible(ctrl, std::move(fieldLabel)));
+}
+#endif
 
 constexpr const char* kSignalSequenceMagicKey = "oWalkieSignalSequence";
 
@@ -951,26 +982,29 @@ public:
         int globalPttMods,
         bool showMicLevelIndicator,
         bool pttToggleMode,
-        const std::string& uiLanguage)
-        : wxDialog(parent, wxID_ANY, _("Settings"), wxDefaultPosition, wxSize(640, 420), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+        const std::string& uiLanguage,
+        double txCollisionVibrationHz,
+        int txCollisionVibrationVolumePercent)
+        : wxDialog(parent, wxID_ANY, _("Settings"), wxDefaultPosition, wxSize(640, 500), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
           host_(host),
           inputDevices_(inputDevices),
           outputDevices_(outputDevices),
           rogerPatterns_(std::move(rogerPatterns)),
           callPatterns_(std::move(callPatterns)) {
+        auto* panel = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
         auto* root = new wxBoxSizer(wxVERTICAL);
         auto* grid = new wxFlexGridSizer(2, 8, 10);
         grid->AddGrowableCol(1, 1);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, _("Display language")), 0, wxALIGN_CENTER_VERTICAL);
-        langChoice_ = new wxChoice(this, wxID_ANY);
+        grid->Add(new wxStaticText(panel, wxID_ANY, _("Display language")), 0, wxALIGN_CENTER_VERTICAL);
+        langChoice_ = new wxChoice(panel, wxID_ANY);
         langChoice_->Append(_("English"));
         langChoice_->Append(_("Russian"));
         langChoice_->SetSelection(uiLanguage == "ru" ? 1 : 0);
         grid->Add(langChoice_, 1, wxEXPAND);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, _("Microphone")), 0, wxALIGN_CENTER_VERTICAL);
-        inputChoice_ = new wxChoice(this, wxID_ANY);
+        grid->Add(new wxStaticText(panel, wxID_ANY, _("Microphone")), 0, wxALIGN_CENTER_VERTICAL);
+        inputChoice_ = new wxChoice(panel, wxID_ANY);
         inputChoice_->Append(_("System default"));
         inputIds_.push_back(-1);
         for (const auto& d : inputDevices_) {
@@ -979,8 +1013,8 @@ public:
         }
         grid->Add(inputChoice_, 1, wxEXPAND);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, _("Speaker")), 0, wxALIGN_CENTER_VERTICAL);
-        outputChoice_ = new wxChoice(this, wxID_ANY);
+        grid->Add(new wxStaticText(panel, wxID_ANY, _("Speaker")), 0, wxALIGN_CENTER_VERTICAL);
+        outputChoice_ = new wxChoice(panel, wxID_ANY);
         outputChoice_->Append(_("System default"));
         outputIds_.push_back(-1);
         for (const auto& d : outputDevices_) {
@@ -989,17 +1023,17 @@ public:
         }
         grid->Add(outputChoice_, 1, wxEXPAND);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, _("Roger pattern")), 0, wxALIGN_CENTER_VERTICAL);
+        grid->Add(new wxStaticText(panel, wxID_ANY, _("Roger pattern")), 0, wxALIGN_CENTER_VERTICAL);
         auto* rogerRow = new wxBoxSizer(wxHORIZONTAL);
-        rogerChoice_ = new wxChoice(this, wxID_ANY);
+        rogerChoice_ = new wxChoice(panel, wxID_ANY);
         for (const auto& p : rogerPatterns_) {
             rogerChoice_->Append(wxString::FromUTF8(p.name));
             rogerIds_.push_back(p.id);
         }
         rogerRow->Add(rogerChoice_, 1, wxEXPAND | wxRIGHT, 8);
-        rogerPlayBtn_ = new wxButton(this, wxID_ANY, _("Play"));
-        rogerEditBtn_ = new wxButton(this, wxID_ANY, _("Edit"));
-        rogerCustomBtn_ = new wxButton(this, wxID_ANY, _("Custom"));
+        rogerPlayBtn_ = new wxButton(panel, wxID_ANY, _("Play"));
+        rogerEditBtn_ = new wxButton(panel, wxID_ANY, _("Edit"));
+        rogerCustomBtn_ = new wxButton(panel, wxID_ANY, _("Custom"));
         rogerRow->Add(rogerPlayBtn_, 0, wxRIGHT, 8);
         auto* rogerEditThenCustom = new wxBoxSizer(wxHORIZONTAL);
         rogerEditThenCustom->Add(rogerEditBtn_, 0, wxRIGHT, 8);
@@ -1007,17 +1041,17 @@ public:
         rogerRow->Add(rogerEditThenCustom, 0);
         grid->Add(rogerRow, 1, wxEXPAND);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, _("Call pattern")), 0, wxALIGN_CENTER_VERTICAL);
+        grid->Add(new wxStaticText(panel, wxID_ANY, _("Call pattern")), 0, wxALIGN_CENTER_VERTICAL);
         auto* callRow = new wxBoxSizer(wxHORIZONTAL);
-        callChoice_ = new wxChoice(this, wxID_ANY);
+        callChoice_ = new wxChoice(panel, wxID_ANY);
         for (const auto& p : callPatterns_) {
             callChoice_->Append(wxString::FromUTF8(p.name));
             callIds_.push_back(p.id);
         }
         callRow->Add(callChoice_, 1, wxEXPAND | wxRIGHT, 8);
-        callPlayBtn_ = new wxButton(this, wxID_ANY, _("Play"));
-        callEditBtn_ = new wxButton(this, wxID_ANY, _("Edit"));
-        callCustomBtn_ = new wxButton(this, wxID_ANY, _("Custom"));
+        callPlayBtn_ = new wxButton(panel, wxID_ANY, _("Play"));
+        callEditBtn_ = new wxButton(panel, wxID_ANY, _("Edit"));
+        callCustomBtn_ = new wxButton(panel, wxID_ANY, _("Custom"));
         callRow->Add(callPlayBtn_, 0, wxRIGHT, 8);
         auto* callEditThenCustom = new wxBoxSizer(wxHORIZONTAL);
         callEditThenCustom->Add(callEditBtn_, 0, wxRIGHT, 8);
@@ -1025,27 +1059,77 @@ public:
         callRow->Add(callEditThenCustom, 0);
         grid->Add(callRow, 1, wxEXPAND);
 
-        grid->Add(new wxStaticText(this, wxID_ANY, _("Global PTT key")), 0, wxALIGN_CENTER_VERTICAL);
+        grid->Add(new wxStaticText(panel, wxID_ANY, _("Global PTT key")), 0, wxALIGN_CENTER_VERTICAL);
         auto* pttRow = new wxBoxSizer(wxHORIZONTAL);
-        pttKeyLabel_ = new wxStaticText(this, wxID_ANY, wxString::FromUTF8(PttComboToDisplayName(globalPttVKey, globalPttMods)));
-        pttCaptureBtn_ = new wxButton(this, wxID_ANY, _("Assign key"));
-        pttClearBtn_ = new wxButton(this, wxID_ANY, _("Clear"));
+        pttKeyLabel_ = new wxStaticText(panel, wxID_ANY, wxString::FromUTF8(PttComboToDisplayName(globalPttVKey, globalPttMods)));
+        pttCaptureBtn_ = new wxButton(panel, wxID_ANY, _("Assign key"));
+        pttClearBtn_ = new wxButton(panel, wxID_ANY, _("Clear"));
         pttRow->Add(pttKeyLabel_, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
         pttRow->Add(pttCaptureBtn_, 0, wxRIGHT, 8);
         pttRow->Add(pttClearBtn_, 0);
         grid->Add(pttRow, 1, wxEXPAND);
-        grid->Add(new wxStaticText(this, wxID_ANY, _("PTT toggle mode")), 0, wxALIGN_CENTER_VERTICAL);
-        pttToggleCheck_ = new wxCheckBox(this, wxID_ANY, _("Tap or hotkey press toggles transmit on/off"));
+        grid->Add(new wxStaticText(panel, wxID_ANY, _("PTT toggle mode")), 0, wxALIGN_CENTER_VERTICAL);
+        pttToggleCheck_ = new wxCheckBox(panel, wxID_ANY, _("Tap or hotkey press toggles transmit on/off"));
         pttToggleCheck_->SetValue(pttToggleMode);
         grid->Add(pttToggleCheck_, 1, wxEXPAND);
-        grid->Add(new wxStaticText(this, wxID_ANY, _("Microphone level indicator")), 0, wxALIGN_CENTER_VERTICAL);
-        micLevelCheck_ = new wxCheckBox(this, wxID_ANY, _("Show VU meter"));
+        grid->Add(new wxStaticText(panel, wxID_ANY, _("Microphone level indicator")), 0, wxALIGN_CENTER_VERTICAL);
+        micLevelCheck_ = new wxCheckBox(panel, wxID_ANY, _("Show VU meter"));
         micLevelCheck_->SetValue(showMicLevelIndicator);
         grid->Add(micLevelCheck_, 1, wxEXPAND);
 
+        auto* labTxCollHz = new wxStaticText(panel, wxID_ANY, _("TX collision vibration tone (Hz)"));
+        SkipKeyboardFocus(labTxCollHz);
+        grid->Add(labTxCollHz, 0, wxALIGN_CENTER_VERTICAL);
+        txCollHzSpin_ = new wxSpinCtrlDouble(
+            panel,
+            wxID_ANY,
+            wxEmptyString,
+            wxDefaultPosition,
+            wxDefaultSize,
+            wxSP_ARROW_KEYS,
+            30.0,
+            500.0,
+            std::clamp(txCollisionVibrationHz, 30.0, 500.0),
+            1.0);
+#if defined(_WIN32) && wxUSE_ACCESSIBILITY
+        OwAttachMsaaFieldLabel(txCollHzSpin_, _("TX collision vibration tone (Hz)"));
+#endif
+        grid->Add(txCollHzSpin_, 1, wxEXPAND);
+        txCollHzSpin_->MoveAfterInTabOrder(labTxCollHz);
+
+        auto* labTxCollVol = new wxStaticText(panel, wxID_ANY, _("TX collision vibration volume"));
+        SkipKeyboardFocus(labTxCollVol);
+        grid->Add(labTxCollVol, 0, wxALIGN_CENTER_VERTICAL);
+        auto* txCollVolRow = new wxBoxSizer(wxHORIZONTAL);
+        txCollVolSlider_ = new wxSlider(
+            panel,
+            wxID_ANY,
+            std::clamp(txCollisionVibrationVolumePercent, 0, 100),
+            0,
+            100,
+            wxDefaultPosition,
+            wxDefaultSize,
+            wxSL_HORIZONTAL);
+#if defined(_WIN32) && wxUSE_ACCESSIBILITY
+        OwAttachMsaaFieldLabel(txCollVolSlider_, _("TX collision vibration volume"));
+#endif
+        txCollVolValue_ = new wxStaticText(panel, wxID_ANY, wxString::Format(wxT("%d%%"), txCollVolSlider_->GetValue()));
+        txCollPreviewBtn_ = new wxButton(panel, wxID_ANY, _("Preview vibration"));
+        txCollPreviewBtn_->SetName(_("Preview vibration"));
+        SkipKeyboardFocus(txCollVolValue_);
+        txCollVolRow->Add(txCollVolSlider_, 1, wxEXPAND | wxRIGHT, 8);
+        txCollVolRow->Add(txCollVolValue_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+        txCollVolRow->Add(txCollPreviewBtn_, 0);
+        grid->Add(txCollVolRow, 1, wxEXPAND);
+        txCollVolSlider_->MoveAfterInTabOrder(labTxCollVol);
+
         root->Add(grid, 1, wxEXPAND | wxALL, 12);
-        root->Add(NewTranslatedOkCancelSizer(this), 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
-        SetSizerAndFit(root);
+        panel->SetSizer(root);
+
+        auto* dlgSizer = new wxBoxSizer(wxVERTICAL);
+        dlgSizer->Add(panel, 1, wxEXPAND);
+        dlgSizer->Add(NewTranslatedOkCancelSizer(this), 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+        SetSizerAndFit(dlgSizer);
         SetLayoutDirection(wxLayout_LeftToRight);
 
         SelectById(inputChoice_, inputIds_, selectedInputId);
@@ -1054,6 +1138,18 @@ public:
         SelectByString(callChoice_, callIds_, selectedCallId);
         selectedPttVKey_ = globalPttVKey;
         selectedPttMods_ = globalPttMods;
+
+        txCollVolSlider_->Bind(wxEVT_SLIDER, [this](wxCommandEvent&) {
+            if (txCollVolValue_ && txCollVolSlider_) {
+                txCollVolValue_->SetLabel(wxString::Format(wxT("%d%%"), txCollVolSlider_->GetValue()));
+            }
+        });
+        txCollPreviewBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            if (!host_ || !host_->AudioEnginePtr() || !txCollHzSpin_ || !txCollVolSlider_) {
+                return;
+            }
+            host_->AudioEnginePtr()->PlayTxCollisionVibrationPreview(txCollHzSpin_->GetValue(), txCollVolSlider_->GetValue());
+        });
 
         pttCaptureBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             HotkeyCaptureDialog dlg(this);
@@ -1160,6 +1256,8 @@ public:
     int SelectedGlobalPttMods() const { return selectedPttMods_; }
     bool ShowMicLevelIndicator() const { return micLevelCheck_ && micLevelCheck_->GetValue(); }
     bool PttToggleMode() const { return pttToggleCheck_ && pttToggleCheck_->GetValue(); }
+    double SelectedTxCollisionVibrationHz() const { return txCollHzSpin_ ? txCollHzSpin_->GetValue() : 100.0; }
+    int SelectedTxCollisionVibrationVolumePercent() const { return txCollVolSlider_ ? txCollVolSlider_->GetValue() : 40; }
 
 private:
     void ReloadRogerCallChoicesFromHost() {
@@ -1283,6 +1381,10 @@ private:
     wxChoice* langChoice_ = nullptr;
     wxCheckBox* pttToggleCheck_ = nullptr;
     wxCheckBox* micLevelCheck_ = nullptr;
+    wxSpinCtrlDouble* txCollHzSpin_ = nullptr;
+    wxSlider* txCollVolSlider_ = nullptr;
+    wxStaticText* txCollVolValue_ = nullptr;
+    wxButton* txCollPreviewBtn_ = nullptr;
     std::vector<int> inputIds_;
     std::vector<int> outputIds_;
     std::vector<std::string> rogerIds_;
@@ -1797,6 +1899,10 @@ void MainFrame::LoadAllSettings() {
                 pttToggleMode_ = j.value("ptt_toggle_mode", false);
                 showMicLevelIndicator_ = j.value("show_mic_level_indicator", false);
                 rxVolumePercent_ = j.value("rx_volume_percent", 100);
+                txCollisionVibrationHz_ = j.value("tx_collision_vibration_hz", 100.0);
+                txCollisionVibrationVolumePercent_ = j.value("tx_collision_vibration_volume_percent", 40);
+                txCollisionVibrationHz_ = std::clamp(txCollisionVibrationHz_, 30.0, 500.0);
+                txCollisionVibrationVolumePercent_ = std::clamp(txCollisionVibrationVolumePercent_, 0, 100);
                 uiLanguageCode_ = j.value("ui_language", std::string("en"));
                 if (uiLanguageCode_ != "ru") {
                     uiLanguageCode_ = "en";
@@ -1850,6 +1956,8 @@ void MainFrame::SaveAudioSettings() {
     j["ptt_toggle_mode"] = pttToggleMode_;
     j["show_mic_level_indicator"] = showMicLevelIndicator_;
     j["rx_volume_percent"] = std::clamp(rxVolumePercent_, 0, 200);
+    j["tx_collision_vibration_hz"] = txCollisionVibrationHz_;
+    j["tx_collision_vibration_volume_percent"] = std::clamp(txCollisionVibrationVolumePercent_, 0, 100);
     j["ui_language"] = uiLanguageCode_;
     try {
         std::ofstream out(AudioSettingsPath().utf8_string());
@@ -2583,6 +2691,7 @@ void MainFrame::ApplyAudioSettingsToEngine() {
     audio_->SetRogerPatternId(selectedRogerPatternId_);
     audio_->SetCallPatternId(selectedCallPatternId_);
     audio_->SetRxVolumePercent(rxVolumePercent_);
+    audio_->SetTxCollisionVibration(txCollisionVibrationHz_, txCollisionVibrationVolumePercent_);
 }
 
 void MainFrame::OnSettingsClicked(wxCommandEvent&) {
@@ -2605,7 +2714,9 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
         globalPttMods_,
         showMicLevelIndicator_,
         pttToggleMode_,
-        uiLanguageCode_);
+        uiLanguageCode_,
+        txCollisionVibrationHz_,
+        txCollisionVibrationVolumePercent_);
     if (dlg.ShowModal() != wxID_OK) {
         return;
     }
@@ -2616,6 +2727,8 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
     globalPttVKey_ = dlg.SelectedGlobalPttVKey();
     globalPttMods_ = dlg.SelectedGlobalPttMods();
     showMicLevelIndicator_ = dlg.ShowMicLevelIndicator();
+    txCollisionVibrationHz_ = std::clamp(dlg.SelectedTxCollisionVibrationHz(), 30.0, 500.0);
+    txCollisionVibrationVolumePercent_ = std::clamp(dlg.SelectedTxCollisionVibrationVolumePercent(), 0, 100);
     uiLanguageCode_ = dlg.SelectedUiLanguage();
     if (uiLanguageCode_ != "ru") {
         uiLanguageCode_ = "en";
