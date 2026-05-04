@@ -16,6 +16,7 @@ import ru.outsidepro_arts.owalkie.model.CallingPatternStore
 import ru.outsidepro_arts.owalkie.model.expandedCallingPoints
 import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
 import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
+import ru.outsidepro_arts.owalkie.model.PhoneCallRelayPauseStore
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
 import ru.outsidepro_arts.owalkie.model.RogerPattern
 import ru.outsidepro_arts.owalkie.model.RogerPatternStore
@@ -26,11 +27,13 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var microphoneConfigStore: MicrophoneConfigStore
     private lateinit var bluetoothHeadsetRouteStore: BluetoothHeadsetRouteStore
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
+    private lateinit var phoneCallRelayPauseStore: PhoneCallRelayPauseStore
     private lateinit var hardwarePttRow: View
     private lateinit var hardwarePttStatusText: TextView
     private lateinit var microphoneSpinner: Spinner
     private lateinit var useBluetoothHeadsetCheckBox: CheckBox
     private lateinit var pttToggleModeCheckBox: CheckBox
+    private lateinit var pauseRelayDuringCellularCallCheckBox: CheckBox
     private lateinit var rogerSpinner: Spinner
     private lateinit var callingSpinner: Spinner
     private lateinit var customRogerButton: Button
@@ -57,12 +60,14 @@ class SettingsActivity : ComponentActivity() {
         microphoneConfigStore = MicrophoneConfigStore(this)
         bluetoothHeadsetRouteStore = BluetoothHeadsetRouteStore(this)
         pttHardwareKeyStore = PttHardwareKeyStore(this)
+        phoneCallRelayPauseStore = PhoneCallRelayPauseStore(this)
 
         hardwarePttRow = findViewById(R.id.hardwarePttRow)
         hardwarePttStatusText = findViewById(R.id.hardwarePttStatusText)
         microphoneSpinner = findViewById(R.id.microphoneSpinner)
         useBluetoothHeadsetCheckBox = findViewById(R.id.useBluetoothHeadsetCheckBox)
         pttToggleModeCheckBox = findViewById(R.id.pttToggleModeCheckBox)
+        pauseRelayDuringCellularCallCheckBox = findViewById(R.id.pauseRelayDuringCellularCallCheckBox)
         rogerSpinner = findViewById(R.id.rogerPatternSpinner)
         callingSpinner = findViewById(R.id.callingPatternSpinner)
         customRogerButton = findViewById(R.id.customRogerButton)
@@ -126,6 +131,7 @@ class SettingsActivity : ComponentActivity() {
     private fun refreshPatterns() {
         refreshHardwarePttStatus()
         refreshPttToggleMode()
+        refreshPhoneCallRelayPauseToggle()
         refreshMicrophoneOptions()
         refreshBluetoothHeadsetToggle()
         refreshRogerPatterns()
@@ -157,6 +163,15 @@ class SettingsActivity : ComponentActivity() {
         pttToggleModeCheckBox.isChecked = enabled
         pttToggleModeCheckBox.setOnCheckedChangeListener { _, isChecked ->
             pttHardwareKeyStore.setToggleModeEnabled(isChecked)
+        }
+    }
+
+    private fun refreshPhoneCallRelayPauseToggle() {
+        val enabled = phoneCallRelayPauseStore.isPauseDuringCallEnabled()
+        pauseRelayDuringCellularCallCheckBox.setOnCheckedChangeListener(null)
+        pauseRelayDuringCellularCallCheckBox.isChecked = enabled
+        pauseRelayDuringCellularCallCheckBox.setOnCheckedChangeListener { _, isChecked ->
+            phoneCallRelayPauseStore.setPauseDuringCallEnabled(isChecked)
         }
     }
 

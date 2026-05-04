@@ -104,6 +104,8 @@
     <string name="connection_state_transmitting">Передача</string>
     <string name="connection_state_calling">Вызов</string>
     <string name="connection_state_receiving">Прием</string>
+    <string name="connection_state_paused_phone_call">Пауза (телефонный звонок)</string>
+    <string name="pause_relay_during_cellular_call_label">Приостанавливать прием при активном звонке</string>
     <string name="saved_server_announcement">Сервер сохранен</string>
     <string name="deleted_server_announcement">Сервер удален</string>
     <string name="connected_server_announcement">Подключение к выбранному серверу</string>

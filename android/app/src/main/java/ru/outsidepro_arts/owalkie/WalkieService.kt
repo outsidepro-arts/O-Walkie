@@ -27,9 +27,12 @@ import android.os.IBinder
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.telephony.PhoneStateListener
+import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import ru.outsidepro_arts.owalkie.audio.OpusCodec
 import ru.outsidepro_arts.owalkie.audio.OpusConfig
 import ru.outsidepro_arts.owalkie.audio.OpusCodecFactory
@@ -37,6 +40,7 @@ import ru.outsidepro_arts.owalkie.model.CallingPatternStore
 import ru.outsidepro_arts.owalkie.model.expandedCallingPoints
 import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
 import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
+import ru.outsidepro_arts.owalkie.model.PhoneCallRelayPauseStore
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
 import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 import ru.outsidepro_arts.owalkie.model.RxVolumeStore
@@ -109,6 +113,8 @@ class WalkieService : Service() {
         const val EXTRA_RX_VOLUME_PERCENT = "rxVolumePercent"
         const val EXTRA_USE_BLUETOOTH_HEADSET = "useBluetoothHeadset"
         const val EXTRA_ACTIVITY_FOCUSED = "activityFocused"
+        /** Relay transport paused while the system reports an active cellular call ([TelephonyManager.CALL_STATE_OFFHOOK]). */
+        const val EXTRA_RELAY_PAUSED_PHONE_CALL = "relayPausedPhoneCall"
         const val EXTRA_HW_KEY_ACTION = "hwKeyAction"
         const val EXTRA_HW_KEY_REPEAT = "hwKeyRepeat"
         const val EXTRA_HW_KEY_CODE = "hwKeyCode"
@@ -167,6 +173,7 @@ class WalkieService : Service() {
     private val wsOpening = AtomicBoolean(false)
     private val wsRetryAttempt = AtomicInteger(0)
     private val desiredConnection = AtomicBoolean(false)
+    private val relayPausedForCellularCall = AtomicBoolean(false)
     private val configLock = Any()
     private val wsConnectLock = Any()
     private val connectivityManager by lazy {
@@ -287,6 +294,10 @@ class WalkieService : Service() {
     private lateinit var bluetoothHeadsetRouteStore: BluetoothHeadsetRouteStore
     private lateinit var rxVolumeStore: RxVolumeStore
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
+    private lateinit var phoneCallRelayPauseStore: PhoneCallRelayPauseStore
+    private var telephonyCallStateCallback: TelephonyCallback? = null
+    @Suppress("DEPRECATION")
+    private var legacyPhoneStateListener: PhoneStateListener? = null
     private var localPttPressPcm: ShortArray = shortArrayOf()
     private var localPttReleasePcm: ShortArray = shortArrayOf()
     @Volatile
@@ -310,6 +321,7 @@ class WalkieService : Service() {
         bluetoothHeadsetRouteStore = BluetoothHeadsetRouteStore(this)
         rxVolumeStore = RxVolumeStore(this)
         pttHardwareKeyStore = PttHardwareKeyStore(this)
+        phoneCallRelayPauseStore = PhoneCallRelayPauseStore(this)
         useBluetoothHeadset = bluetoothHeadsetRouteStore.isEnabled()
         rxVolumePercent = rxVolumeStore.getPercent()
         val pttPressWav = loadWavPcmFromRaw(R.raw.selfpttup_002)
@@ -317,6 +329,7 @@ class WalkieService : Service() {
         val pttReleaseWav = loadWavPcmFromRaw(R.raw.selfttdown_002)
         localPttReleasePcm = resampleLinear(pttReleaseWav.samples, pttReleaseWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
         registerNetworkCallback()
+        registerTelephonyForRelayPause()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -416,6 +429,7 @@ class WalkieService : Service() {
         signalMonitorJob?.cancel()
         udpKeepaliveJob?.cancel()
         unregisterNetworkCallback()
+        unregisterTelephonyForRelayPause()
         webSocket?.close(1000, "service destroyed")
         synchronized(udpSocketLock) {
             udpSocket?.close()
@@ -428,6 +442,7 @@ class WalkieService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         if (!desiredConnection.get()) return
+        if (relayPausedForCellularCall.get()) return
         val restartIntent = Intent(applicationContext, WalkieService::class.java).apply {
             action = ACTION_START
             putExtra(EXTRA_SERVER_HOST, serverHost)
@@ -559,6 +574,7 @@ class WalkieService : Service() {
 
     private fun connectWebSocket(force: Boolean = false) {
         if (!desiredConnection.get()) return
+        if (relayPausedForCellularCall.get()) return
         synchronized(wsConnectLock) {
             if (!force && (webSocket != null || wsOpening.get())) return
             if (force) {
@@ -619,7 +635,7 @@ class WalkieService : Service() {
                 busyRxActive.set(false)
                 hardDropUdpTransportBecauseWsLost()
                 this@WalkieService.webSocket = null
-                if (desiredConnection.get()) {
+                if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
                     scheduleWsReconnect()
                 } else {
                     broadcastStatus(currentSignalByte())
@@ -635,7 +651,7 @@ class WalkieService : Service() {
                 busyRxActive.set(false)
                 hardDropUdpTransportBecauseWsLost()
                 this@WalkieService.webSocket = null
-                if (desiredConnection.get()) {
+                if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
                     scheduleWsReconnect()
                 } else {
                     broadcastStatus(currentSignalByte())
@@ -653,6 +669,7 @@ class WalkieService : Service() {
                     val serverProtocol = obj.optInt("protocolVersion", -1)
                     if (serverProtocol != PROTOCOL_VERSION) {
                         protocolError = true
+                        relayPausedForCellularCall.set(false)
                         desiredConnection.set(false)
                         wsConnected.set(false)
                         ws.close(1002, "incompatible protocol version")
@@ -661,6 +678,7 @@ class WalkieService : Service() {
                     }
                     if (!obj.has("sampleRate")) {
                         protocolError = true
+                        relayPausedForCellularCall.set(false)
                         desiredConnection.set(false)
                         wsConnected.set(false)
                         ws.close(1002, "missing sampleRate in welcome")
@@ -670,6 +688,7 @@ class WalkieService : Service() {
                     val rawSampleRate = obj.optInt("sampleRate", -1)
                     if (rawSampleRate != normalizeSampleRate(rawSampleRate)) {
                         protocolError = true
+                        relayPausedForCellularCall.set(false)
                         desiredConnection.set(false)
                         wsConnected.set(false)
                         ws.close(1002, "unsupported sampleRate in welcome")
@@ -1404,7 +1423,12 @@ class WalkieService : Service() {
                 if (wsConnected.get()) {
                     ensureUdpSocket()
                 }
-                if (desiredConnection.get() && !wsConnected.get() && webSocket == null) {
+                if (
+                    desiredConnection.get() &&
+                    !relayPausedForCellularCall.get() &&
+                    !wsConnected.get() &&
+                    webSocket == null
+                ) {
                     scheduleWsReconnect()
                 }
                 // Re-evaluate headset availability continuously so checked mode
@@ -1513,7 +1537,11 @@ class WalkieService : Service() {
             setPackage(packageName)
             putExtra(EXTRA_SIGNAL, signal.coerceIn(0, 255))
             putExtra(EXTRA_WS_CONNECTED, wsConnected.get())
-            putExtra(EXTRA_WS_CONNECTING, desiredConnection.get() && !wsConnected.get())
+            putExtra(
+                EXTRA_WS_CONNECTING,
+                desiredConnection.get() && !wsConnected.get() && !relayPausedForCellularCall.get(),
+            )
+            putExtra(EXTRA_RELAY_PAUSED_PHONE_CALL, relayPausedForCellularCall.get())
             putExtra(EXTRA_UDP_READY, udpSocket?.isClosed == false)
             putExtra(EXTRA_PROTOCOL_ERROR, protocolError)
             putExtra(EXTRA_BUSY_MODE, busyMode)
@@ -1530,6 +1558,7 @@ class WalkieService : Service() {
     }
 
     private fun scheduleWsReconnect() {
+        if (relayPausedForCellularCall.get()) return
         if (wsReconnectJob?.isActive == true) return
         wsReconnectJob = serviceScope.launch {
             val attempt = wsRetryAttempt.incrementAndGet()
@@ -1932,7 +1961,11 @@ class WalkieService : Service() {
         return ParsedServerEndpoint(host = host, port = port, wsSecure = secure)
     }
 
-    private fun cancelConnection() {
+    /**
+     * Drops active relay transport and TX/Roger/Call jobs.
+     * @param clearUserIntent When true, clears [desiredConnection] (user or fatal protocol disconnect).
+     */
+    private fun tearDownTransport(clearUserIntent: Boolean) {
         resetPttReleaseBurstGuard()
         transmitting.set(false)
         rogerStreaming.set(false)
@@ -1947,7 +1980,9 @@ class WalkieService : Service() {
         localRogerPlaybackJob = null
         localCallPlaybackJob?.cancel()
         localCallPlaybackJob = null
-        desiredConnection.set(false)
+        if (clearUserIntent) {
+            desiredConnection.set(false)
+        }
         wsConnected.set(false)
         wsOpening.set(false)
         channelBound = false
@@ -1971,7 +2006,7 @@ class WalkieService : Service() {
         wsReconnectJob?.cancel()
         wsReconnectJob = null
         stopUdpKeepaliveLoop()
-        runCatching { webSocket?.close(1000, "cancel requested") }
+        runCatching { webSocket?.close(1000, if (clearUserIntent) "cancel requested" else "paused for phone call") }
         runCatching { webSocket?.cancel() }
         webSocket = null
         synchronized(udpSocketLock) {
@@ -1979,7 +2014,76 @@ class WalkieService : Service() {
             udpSocket = null
         }
         restoreMediaAudioProfile()
+    }
+
+    private fun cancelConnection() {
+        relayPausedForCellularCall.set(false)
+        tearDownTransport(clearUserIntent = true)
         broadcastStatus(currentSignalByte())
+    }
+
+    private fun pauseRelayTransportForCellularCall() {
+        if (!phoneCallRelayPauseStore.isPauseDuringCallEnabled()) return
+        if (!desiredConnection.get()) return
+        if (!relayPausedForCellularCall.compareAndSet(false, true)) return
+        tearDownTransport(clearUserIntent = false)
+        broadcastStatus(currentSignalByte())
+    }
+
+    private fun resumeRelayAfterCellularCallIfNeeded() {
+        if (!relayPausedForCellularCall.compareAndSet(true, false)) return
+        if (!desiredConnection.get()) return
+        startCore(null)
+    }
+
+    private fun onTelephonyCallStateChanged(state: Int) {
+        when (state) {
+            TelephonyManager.CALL_STATE_OFFHOOK ->
+                serviceScope.launch { pauseRelayTransportForCellularCall() }
+            TelephonyManager.CALL_STATE_IDLE ->
+                serviceScope.launch { resumeRelayAfterCellularCallIfNeeded() }
+        }
+    }
+
+    private fun registerTelephonyForRelayPause() {
+        val tm = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val cb = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                override fun onCallStateChanged(state: Int) {
+                    onTelephonyCallStateChanged(state)
+                }
+            }
+            telephonyCallStateCallback = cb
+            runCatching {
+                tm.registerTelephonyCallback(ContextCompat.getMainExecutor(this), cb)
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val listener = object : PhoneStateListener() {
+                @Suppress("DEPRECATION")
+                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                    onTelephonyCallStateChanged(state)
+                }
+            }
+            legacyPhoneStateListener = listener
+            @Suppress("DEPRECATION")
+            runCatching { tm.listen(listener, PhoneStateListener.LISTEN_CALL_STATE) }
+        }
+    }
+
+    private fun unregisterTelephonyForRelayPause() {
+        val tm = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager ?: return
+        telephonyCallStateCallback?.let { cb ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                runCatching { tm.unregisterTelephonyCallback(cb) }
+            }
+            telephonyCallStateCallback = null
+        }
+        legacyPhoneStateListener?.let { listener ->
+            @Suppress("DEPRECATION")
+            runCatching { tm.listen(listener, PhoneStateListener.LISTEN_NONE) }
+            legacyPhoneStateListener = null
+        }
     }
 
     private fun disconnectAndStopService() {

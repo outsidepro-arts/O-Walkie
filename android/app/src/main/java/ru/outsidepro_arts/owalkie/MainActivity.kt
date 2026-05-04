@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
     private var busyRxActive = false
     private var pttBurstPressBlocked = false
     private var rxActive = false
+    private var relayPausedForPhoneCall = false
     private var userRequestedConnection = false
     private var suppressSpinnerReconnect = false
     private var skipNextConnectedTone = false
@@ -90,6 +91,7 @@ class MainActivity : ComponentActivity() {
             val signal = intent.getIntExtra(WalkieService.EXTRA_SIGNAL, 0).coerceIn(0, 255)
             val prevConnected = wsConnected
             val prevConnecting = wsConnecting
+            relayPausedForPhoneCall = intent.getBooleanExtra(WalkieService.EXTRA_RELAY_PAUSED_PHONE_CALL, false)
             wsConnected = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTED, false)
             wsConnecting = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTING, false)
             transmitting = intent.getBooleanExtra(WalkieService.EXTRA_TX_ACTIVE, transmitting)
@@ -112,9 +114,15 @@ class MainActivity : ComponentActivity() {
                 }
             } else if (!prevProtocolIncompatible && protocolIncompatible) {
                 uiSignalPlayer.playConnectionError()
-            } else if (userRequestedConnection && prevConnecting && !wsConnecting && !wsConnected) {
+            } else if (
+                userRequestedConnection &&
+                prevConnecting &&
+                !wsConnecting &&
+                !wsConnected &&
+                !relayPausedForPhoneCall
+            ) {
                 uiSignalPlayer.playConnectionError()
-            } else if (userRequestedConnection && prevConnected && !wsConnected) {
+            } else if (userRequestedConnection && prevConnected && !wsConnected && !relayPausedForPhoneCall) {
                 uiSignalPlayer.playConnectionError()
             }
 
@@ -640,7 +648,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleConnectAction() {
-        if (wsConnecting || wsConnected) {
+        if (wsConnecting || wsConnected || (userRequestedConnection && relayPausedForPhoneCall)) {
             userRequestedConnection = false
             uiSignalPlayer.playManualDisconnect()
             sendServiceAction(WalkieService.ACTION_DISCONNECT_AND_STOP)
@@ -719,6 +727,7 @@ class MainActivity : ComponentActivity() {
         val labelRes = when {
             wsConnecting -> R.string.connect_cancel
             wsConnected -> R.string.connect_disconnect
+            userRequestedConnection && relayPausedForPhoneCall -> R.string.connect_disconnect
             else -> R.string.connect_server
         }
         val label = getString(labelRes)
@@ -927,6 +936,7 @@ class MainActivity : ComponentActivity() {
     private fun updateStatusChips() {
         val connectionState = when {
             protocolIncompatible -> getString(R.string.connection_state_protocol_incompatible)
+            relayPausedForPhoneCall -> getString(R.string.connection_state_paused_phone_call)
             callActive -> getString(R.string.connection_state_calling)
             transmitting -> getString(R.string.connection_state_transmitting)
             wsConnected && rxActive -> getString(R.string.connection_state_receiving)

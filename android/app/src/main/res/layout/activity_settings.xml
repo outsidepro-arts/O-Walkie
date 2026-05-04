@@ -67,6 +67,13 @@
         android:layout_marginTop="8dp"
         android:text="@string/hardware_ptt_toggle_mode_label" />
 
+    <CheckBox
+        android:id="@+id/pauseRelayDuringCellularCallCheckBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/pause_relay_during_cellular_call_label" />
+
     <TextView
         android:id="@+id/rogerSignalLabel"
         android:layout_width="wrap_content"
