@@ -113,11 +113,13 @@ type noiseConfig struct {
 	TailNoiseDB        float64 `json:"tail_noise_db"`
 	TailMinMs          int     `json:"tail_min_ms"`
 	TailMaxMs          int     `json:"tail_max_ms"`
-	// NoiseDistribution: "gaussian" (default) or "uniform" (legacy sample-wise [-1,1]).
+	// NoiseDistribution: "gaussian" (default) or "uniform" (legacy per-sample [-1,1]).
 	NoiseDistribution string `json:"noise_distribution,omitempty"`
-	// ThermalLowpassHz: moving-average lowpass corner (~SR/window); 0 disables (raw stream).
-	// Default in config 8000 matches examples/radio_noise B_thermal_lp_8kHz.wav @ 48 kHz.
+	// ThermalLowpassHz: moving-average lowpass (~SR/window); 0 disables.
 	ThermalLowpassHz float64 `json:"thermal_lowpass_hz,omitempty"`
+	// SynthSilenceTailPackets: zero-PCM frames after each squelch-generated burst (tail / idle shot).
+	// 0 = default jitter_min_packets+2 (min 4).
+	SynthSilenceTailPackets int `json:"synth_silence_tail_packets,omitempty"`
 }
 
 type compressorConfig struct {
@@ -129,7 +131,7 @@ type compressorConfig struct {
 	MakeupDB    float64 `json:"makeup_db"`
 }
 
-// clickPopsConfig: sinusoidal PTT / in-TX pops (legacy flat click_* merged here when pops set).
+// clickPopsConfig: sinusoidal PTT / in-TX pops (legacy flat click_* merged here when pops omitted).
 type clickPopsConfig struct {
 	ClickDB             float64 `json:"click_db"`
 	GlitchIntervalMaxMs int     `json:"glitch_interval_max_ms"`
@@ -139,7 +141,6 @@ type clickPopsConfig struct {
 	GlitchLevelMaxDB    float64 `json:"glitch_level_max_db"`
 }
 
-// clickImpulsesConfig: sparse RF-style impulses; rate follows signal like modules.noise (weak -> more).
 type clickImpulsesConfig struct {
 	Enabled            bool    `json:"enabled"`
 	ProbAtWeakSignal   float64 `json:"prob_at_weak_signal"`
@@ -151,14 +152,13 @@ type clickConfig struct {
 	Enabled bool             `json:"enabled"`
 	Pops    *clickPopsConfig `json:"pops,omitempty"`
 	// Legacy flat fields (used when pops is nil)
-	ClickDB             float64 `json:"click_db,omitempty"`
-	GlitchIntervalMaxMs int     `json:"glitch_interval_max_ms,omitempty"`
-	GlitchFreqMinHz     float64 `json:"glitch_freq_min_hz,omitempty"`
-	GlitchFreqMaxHz     float64 `json:"glitch_freq_max_hz,omitempty"`
-	GlitchLevelMinDB    float64 `json:"glitch_level_min_db,omitempty"`
-	GlitchLevelMaxDB    float64 `json:"glitch_level_max_db,omitempty"`
-
-	Impulses *clickImpulsesConfig `json:"impulses,omitempty"`
+	ClickDB             float64              `json:"click_db,omitempty"`
+	GlitchIntervalMaxMs int                  `json:"glitch_interval_max_ms,omitempty"`
+	GlitchFreqMinHz     float64              `json:"glitch_freq_min_hz,omitempty"`
+	GlitchFreqMaxHz     float64              `json:"glitch_freq_max_hz,omitempty"`
+	GlitchLevelMinDB    float64              `json:"glitch_level_min_db,omitempty"`
+	GlitchLevelMaxDB    float64              `json:"glitch_level_max_db,omitempty"`
+	Impulses            *clickImpulsesConfig `json:"impulses,omitempty"`
 }
 
 type filterConfig struct {
@@ -292,23 +292,10 @@ type audioProcessContext struct {
 	NoiseLevelDB   float64
 	EmitFrame      bool
 	DropFrame      bool
-	// ArmPostMixSilenceAfterIdle: noise/squelch module finished a synthetic burst (TX tail or idle shot);
-	// channelMixer defers zero-PCM tail until the first tick with EmitFrame==false so other modules
-	// (e.g. terminal click) still see the natural idle transition.
-	ArmPostMixSilenceAfterIdle bool
-	// SquelchIdleSuppressionCount: mix contributors that are not solely post-EOF synthetic zero tail.
-	// EOF tail frames still count as ActiveSpeakers for mixing/exclude/click, but squelch TX tail
-	// may start immediately (overlap) when this count is zero.
-	SquelchIdleSuppressionCount int
-	// SquelchHissJustEnded: white_noise_squelch finished TX tail hiss or idle-shot noise phase this tick.
-	// Lets tx_click emit the terminal click immediately even when the next phase still sets EmitFrame true.
+	// SquelchHissJustEnded: synthetic hiss (TX tail or idle-shot noise) ended this tick — terminal click.
 	SquelchHissJustEnded bool
-	// RepeaterIdleTail: one tick after a repeater capture flushes (EOF) so squelch can arm the same
-	// TX-end hiss tail as normal downlink speakers (repeater uplink does not add ActiveSpeakers).
-	RepeaterIdleTail bool
-	// RepeaterCaptureLive: repeater side-chain is collecting uplink; uplink is not summed into Mixed.
-	// Suppresses idle squelch shots but must not synthesize comfort noise into an empty mix for broadcast.
-	RepeaterCaptureLive bool
+	// QueueSynthSilenceTail: after this mixed frame, emit zero-PCM tail before going fully idle.
+	QueueSynthSilenceTail bool
 }
 
 type audioModule interface {
@@ -339,10 +326,10 @@ type speakerStreamState struct {
 	lastPCM      []int16
 	missCount    int
 
-	// silenceTailRemain: after explicit UDP EOF, emit this many all-zero PCM frames once the
-	// jitter queue is empty so uplink Opus decoders and the mix see a smooth silence ramp-off
-	// (depth scales with jitter_min_packets).
-	silenceTailRemain int
+	// decoderFlushPending/eofAt: after explicit TX EOF, drop per-session Opus decoder once
+	// the jitter queue has drained, so the next transmission does not inherit decoder tail.
+	decoderFlushPending bool
+	eofAt               time.Time
 }
 
 type speakerJitterBuffer struct {
@@ -614,12 +601,8 @@ type channelMixer struct {
 	lastFrameAt              time.Time
 	lastFrameExcludedSession uint32 // broadcastMixed exclude for lastFramePayload; 0 = not excluded
 
-	// After squelch-generated audio (TX tail hiss, idle shot), emit this many all-zero mixed frames
-	// so the downlink Opus encoder and clients see a clean tail. Armed on first idle tick (EmitFrame false).
-	mixOutSilenceRemain    int
-	postMixSilenceDeferred bool
-	// Set for one mixer tick when a repeater session finalizes so white_noise arms squelch tail without dead air.
-	repeaterIdleTail bool
+	// Zero-PCM frames after squelch-generated bursts (tail / idle shot), before idle.
+	synthSilenceRemain int
 }
 
 type repeaterSession struct {
@@ -661,14 +644,12 @@ func (p *audioProcessor) process(input []int16, signalByte float64, active bool)
 			mixed[i] = float64(input[i])
 		}
 	}
-	activeI := boolToInt(active)
 	ctx := &audioProcessContext{
-		Mixed:                       mixed,
-		AvgSignalByte:               p.lastSignal,
-		ActiveSpeakers:              activeI,
-		SquelchIdleSuppressionCount: activeI,
-		NoiseLevelDB:                p.noiseLevelDB,
-		EmitFrame:                   active,
+		Mixed:          mixed,
+		AvgSignalByte:  p.lastSignal,
+		ActiveSpeakers: boolToInt(active),
+		NoiseLevelDB:   p.noiseLevelDB,
+		EmitFrame:      active,
 	}
 	for _, mod := range p.modules {
 		mod.Process(ctx)
@@ -729,14 +710,26 @@ func (m *channelMixer) dropDecoder(sessionID uint32) {
 	m.decodersMu.Unlock()
 }
 
-// silenceTailFramesAfterEOF returns how many mixer ticks of zero PCM to inject after the
-// jitter queue drains post-EOF (jitter depth + small margin).
-func (m *channelMixer) silenceTailFramesAfterEOF() int {
-	n := int(m.jitterMinPackets) + 2
-	if n < 4 {
-		n = 4
+// maybeFlushDecoderAfterEOF drops the per-session Opus decoder after explicit EOF once
+// the jitter buffer is empty and a short settle window has passed, so the next PTT
+// does not inherit PLC/tail state from the previous transmission. Runs before pulling
+// from jitter so we never clear the queue mid-drain.
+func (m *channelMixer) maybeFlushDecoderAfterEOF(sessionID uint32, st *speakerStreamState, now time.Time) {
+	if st == nil || !st.decoderFlushPending {
+		return
 	}
-	return n
+	if st.jitter.pendingCount() != 0 {
+		return
+	}
+	minQuiet := 5 * packetDur
+	if !st.eofAt.IsZero() && now.Sub(st.eofAt) < minQuiet {
+		return
+	}
+	m.dropDecoder(sessionID)
+	st.lastPCM = nil
+	st.missCount = 0
+	st.decoderFlushPending = false
+	st.eofAt = time.Time{}
 }
 
 func (m *channelMixer) canAcceptTxPacket(sessionID uint32) bool {
@@ -1200,12 +1193,7 @@ func (m *channelMixer) runLoop() (panicked bool) {
 				st.jitter.reset()
 				st.lastPCM = nil
 				st.missCount = 0
-				st.silenceTailRemain = 0
 				m.dropDecoder(pkt.sessionID)
-			}
-			if st.silenceTailRemain > 0 && st.jitter.pendingCount() == 0 {
-				// New uplink while synthetic tail is running (jitter already drained): real audio wins.
-				st.silenceTailRemain = 0
 			}
 			st.jitter.push(pkt)
 			st.lastPacketAt = now
@@ -1227,7 +1215,8 @@ func (m *channelMixer) runLoop() (panicked bool) {
 				// Force jitter start on EOF so buffered short TX drains now,
 				// instead of sticking until the next long transmission.
 				st.jitter.forceStartFromMinSeq()
-				st.silenceTailRemain = m.silenceTailFramesAfterEOF()
+				st.decoderFlushPending = true
+				st.eofAt = time.Now()
 			}
 			m.markRepeaterEOF(sid)
 			// Keep already buffered packets for a short natural drain, but disable
@@ -1263,9 +1252,7 @@ func (m *channelMixer) resetAfterLoopFailure() {
 	m.lastFrameExcludedSession = 0
 	m.lastFrameMu.Unlock()
 
-	m.mixOutSilenceRemain = 0
-	m.postMixSilenceDeferred = false
-	m.repeaterIdleTail = false
+	m.synthSilenceRemain = 0
 }
 
 func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool, now time.Time) {
@@ -1300,10 +1287,64 @@ func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState
 	}
 }
 
+// synthesizedBurstSilenceTicks returns how many mixer ticks of silence to send after squelch-generated audio.
+func (m *channelMixer) synthesizedBurstSilenceTicks() int {
+	n := int(m.jitterMinPackets) + 2
+	if n < 4 {
+		n = 4
+	}
+	if m.modulesCfg.Noise != nil && m.modulesCfg.Noise.SynthSilenceTailPackets > 0 {
+		n = m.modulesCfg.Noise.SynthSilenceTailPackets
+	}
+	return n
+}
+
+func (m *channelMixer) emitEncodedSilenceFrame(now time.Time, activeSpeakers []uint32) {
+	outPCM := make([]int16, packetSamples)
+	opusBuf := make([]byte, opusMaxFrameLen)
+	n, err := m.encoder.Encode(outPCM, opusBuf)
+	if err != nil {
+		log.Printf("opus encode failed in channel %s (silence tail): %v", m.name, err)
+		return
+	}
+	if n <= 0 {
+		return
+	}
+	m.seq++
+	sig := m.lastSignal
+	if sig < 0 {
+		sig = 0
+	}
+	if sig > 255 {
+		sig = 255
+	}
+	sigByte := uint8(sig)
+	header := make([]byte, 9)
+	binary.BigEndian.PutUint32(header[0:4], 0)
+	binary.BigEndian.PutUint32(header[4:8], m.seq)
+	header[8] = sigByte
+	payload := append(header, opusBuf[:n]...)
+	exclude := uint32(0)
+	if len(activeSpeakers) == 1 {
+		exclude = activeSpeakers[0]
+	} else if len(activeSpeakers) == 0 && m.lastSingleSpeaker != 0 {
+		packetMs := int(packetDur / time.Millisecond)
+		tailMaxMs := packetMs * 2
+		if m.modulesCfg.Noise != nil && m.modulesCfg.Noise.Enabled {
+			tailMaxMs = maxInt(m.modulesCfg.Noise.TailMaxMs, packetMs*2)
+		}
+		tailGrace := time.Duration(tailMaxMs) * time.Millisecond
+		if now.Sub(m.lastSingleSpeakerAt) <= tailGrace {
+			exclude = m.lastSingleSpeaker
+		}
+	}
+	m.rememberLatestFrame(payload, exclude)
+	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, sigByte)
+}
+
 func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool) {
 	mixed := make([]float64, packetSamples)
 	activeSpeakers := make([]uint32, 0, len(states))
-	squelchIdleSuppressors := 0
 	var signalSum float64
 	now := time.Now()
 
@@ -1311,6 +1352,7 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		if st == nil {
 			continue
 		}
+		m.maybeFlushDecoderAfterEOF(sessionID, st, now)
 		// If a short burst did not reach jitter start threshold and then paused,
 		// force-start queued packets so they are drained now (even without explicit EOF).
 		if st.jitter.pendingCount() > 0 && !st.jitter.isStarted() && now.Sub(st.lastPacketAt) > packetDur {
@@ -1319,7 +1361,6 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		pkt := m.pullNextPacket(sessionID, st)
 		hasPacket := pkt != nil
 		speakerActive := false
-		contribEOFTailOnly := false
 		speakerSignal := st.lastSignal
 		var pcmFrame []int16
 
@@ -1375,20 +1416,6 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 				hasPacket = false
 			}
 		}
-		// Post-EOF silence tail: jitter drained, eof still marked — feed zeros so per-session
-		// decoder state winds down and the mix encoder sees continuous frames.
-		if !speakerActive && !hasPacket && eofMarked[sessionID] && st.jitter.pendingCount() == 0 && st.silenceTailRemain > 0 {
-			contribEOFTailOnly = true
-			pcmFrame = make([]int16, packetSamples)
-			speakerActive = true
-			st.silenceTailRemain--
-			st.lastPacketAt = now
-			st.missCount = 0
-			st.lastPCM = nil
-			if st.silenceTailRemain == 0 {
-				m.dropDecoder(sessionID)
-			}
-		}
 		if !speakerActive && !hasPacket && !eofMarked[sessionID] && now.Sub(st.lastPacketAt) <= m.eofTimeoutDur && len(st.lastPCM) > 0 {
 			decay := math.Pow(m.concealDecay, float64(st.missCount+1))
 			if now.Sub(st.lastPacketAt) > m.hangoverDur {
@@ -1420,20 +1447,11 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 			m.processRepeaterCapture(sessionID, pcmFrame, speakerSignal, now)
 			continue
 		}
-		if !contribEOFTailOnly {
-			squelchIdleSuppressors++
-		}
 		activeSpeakers = append(activeSpeakers, sessionID)
 		signalSum += speakerSignal
 		for i := 0; i < packetSamples; i++ {
 			mixed[i] += float64(pcmFrame[i])
 		}
-	}
-
-	repLive := m.liveRepeaterCaptureCount()
-	if len(activeSpeakers) > 0 || repLive > 0 {
-		m.mixOutSilenceRemain = 0
-		m.postMixSilenceDeferred = false
 	}
 
 	m.processRepeaterFinalization(now)
@@ -1450,21 +1468,18 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		m.lastSingleSpeaker = 0
 	}
 
-	repLive = m.liveRepeaterCaptureCount()
-	squelchIdleSuppressors += repLive
-
-	repeaterIdleTail := m.repeaterIdleTail
-	m.repeaterIdleTail = false
+	if m.synthSilenceRemain > 0 {
+		m.emitEncodedSilenceFrame(now, activeSpeakers)
+		m.synthSilenceRemain--
+		return
+	}
 
 	ctx := &audioProcessContext{
-		Mixed:                       mixed,
-		AvgSignalByte:               signalSum / float64(maxInt(len(activeSpeakers), 1)),
-		ActiveSpeakers:              len(activeSpeakers),
-		SquelchIdleSuppressionCount: squelchIdleSuppressors,
-		NoiseLevelDB:                m.noiseLevelDB,
-		EmitFrame:                   len(activeSpeakers) > 0,
-		RepeaterIdleTail:            repeaterIdleTail,
-		RepeaterCaptureLive:         repLive > 0,
+		Mixed:          mixed,
+		AvgSignalByte:  signalSum / float64(maxInt(len(activeSpeakers), 1)),
+		ActiveSpeakers: len(activeSpeakers),
+		NoiseLevelDB:   m.noiseLevelDB,
+		EmitFrame:      len(activeSpeakers) > 0,
 	}
 	for _, mod := range m.modules {
 		mod.Process(ctx)
@@ -1474,23 +1489,9 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		}
 	}
 	m.noiseLevelDB = ctx.NoiseLevelDB
-
-	if ctx.ArmPostMixSilenceAfterIdle {
-		m.postMixSilenceDeferred = true
+	if ctx.QueueSynthSilenceTail {
+		m.synthSilenceRemain += m.synthesizedBurstSilenceTicks()
 	}
-	if m.postMixSilenceDeferred && len(activeSpeakers) == 0 && !ctx.EmitFrame {
-		m.mixOutSilenceRemain = m.silenceTailFramesAfterEOF()
-		m.postMixSilenceDeferred = false
-	}
-	if m.mixOutSilenceRemain > 0 && len(activeSpeakers) == 0 && !ctx.EmitFrame {
-		for i := range mixed {
-			mixed[i] = 0
-		}
-		ctx.EmitFrame = true
-		ctx.AvgSignalByte = m.lastSignal
-		m.mixOutSilenceRemain--
-	}
-
 	if !ctx.EmitFrame {
 		return
 	}
@@ -1533,23 +1534,6 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	}
 	m.rememberLatestFrame(payload, exclude)
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
-}
-
-func (m *channelMixer) liveRepeaterCaptureCount() int {
-	m.repeaterMu.Lock()
-	defer m.repeaterMu.Unlock()
-	n := 0
-	for sessionID, st := range m.repeaterState {
-		if !st.collecting {
-			continue
-		}
-		c := m.hub.getClient(sessionID)
-		if c == nil || !c.isRepeaterMode() {
-			continue
-		}
-		n++
-	}
-	return n
 }
 
 func (m *channelMixer) processRepeaterCapture(sessionID uint32, pcm []int16, signalByte float64, now time.Time) {
@@ -1599,29 +1583,23 @@ func (m *channelMixer) processRepeaterFinalization(now time.Time) {
 			continue
 		}
 
-		// Drain DSP tail (hiss / weak squelch) into the repeater buffer. A single emit==false can
-		// be an idle-shot wait frame; require two consecutive no-emits before stopping so the tail
-		// is not truncated and playback does not end with a long gap before client-side squelch.
-		consecutiveNoEmit := 0
-		for i := 0; i < 64; i++ {
+		for i := 0; i < 16; i++ {
 			out, emit := st.processor.process(nil, st.lastSignal, false)
-			if emit {
-				consecutiveNoEmit = 0
-				st.bufferPCM = append(st.bufferPCM, out...)
-				continue
-			}
-			consecutiveNoEmit++
-			if consecutiveNoEmit >= 2 {
+			if !emit {
 				break
 			}
+			st.bufferPCM = append(st.bufferPCM, out...)
 		}
 
 		bufferCopy := append([]int16(nil), st.bufferPCM...)
+		nPad := m.synthesizedBurstSilenceTicks() * packetSamples
+		if nPad > 0 {
+			bufferCopy = append(bufferCopy, make([]int16, nPad)...)
+		}
 		st.bufferPCM = st.bufferPCM[:0]
 		st.collecting = false
 		st.eofMarked = false
-		m.repeaterIdleTail = true
-		go m.playbackRepeaterAfterDelay(sessionID, bufferCopy, 0)
+		go m.playbackRepeaterAfterDelay(sessionID, bufferCopy, packetDur)
 	}
 }
 
@@ -1629,9 +1607,7 @@ func (m *channelMixer) playbackRepeaterAfterDelay(sessionID uint32, pcm []int16,
 	if len(pcm) == 0 {
 		return
 	}
-	if delayDur > 0 {
-		time.Sleep(delayDur)
-	}
+	time.Sleep(delayDur)
 
 	enc, err := opus.NewEncoder(configuredSampleRate, audioChannels, resolveOpusApplication(configuredOpus.Application))
 	if err != nil {
@@ -1691,7 +1667,6 @@ type whiteNoiseSquelchModule struct {
 	squelchBurstRemain time.Duration
 	squelchLatched     bool
 	lastActive         bool
-	prevActiveSpeakers int
 	shotNextAt         time.Time
 	shotPhase          int
 	shotPhaseRemain    time.Duration
@@ -1760,8 +1735,6 @@ func (m *clickModule) Process(ctx *audioProcessContext) {
 		m.pendingEnd = false
 		m.scheduleNextGlitch()
 	} else if !active && m.lastActive {
-		// Speaker just released PTT: wait until squelch/noise tail closes,
-		// then emit exactly one terminal click.
 		m.pendingEnd = true
 		m.glitchRemain = 0
 	}
@@ -1865,17 +1838,9 @@ const (
 
 func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 	now := time.Now()
-	defer func() {
-		m.prevActiveSpeakers = ctx.ActiveSpeakers
-	}()
-	if ctx.SquelchIdleSuppressionCount <= 0 {
+	if ctx.ActiveSpeakers <= 0 {
 		// End-of-transmission tail burst: jump to 0 dB and emit white hiss briefly.
-		// Require actual mix contributors (or synthetic EOF tail frames still counted as active
-		// speakers) so repeater-only suppression (suppressors>0, ActiveSpeakers==0) does not
-		// trigger a tail on every brief capture edge — that was heard as overly frequent idle squelch.
-		// RepeaterIdleTail covers legitimate EOF flush: repeater never increments ActiveSpeakers.
-		if m.lastActive && m.squelchBurstRemain <= 0 &&
-			(m.prevActiveSpeakers > 0 || ctx.ActiveSpeakers > 0 || ctx.RepeaterIdleTail) {
+		if m.lastActive && m.squelchBurstRemain <= 0 {
 			m.squelchBurstRemain = randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs)
 		}
 		m.lastActive = false
@@ -1889,10 +1854,9 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 			if m.squelchBurstRemain <= 0 {
 				m.squelchBurstRemain = 0
 				ctx.SquelchHissJustEnded = true
+				ctx.QueueSynthSilenceTail = true
 				if m.cfg.SquelchShotsMaxS > 0 {
 					m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
-				} else {
-					ctx.ArmPostMixSilenceAfterIdle = true
 				}
 			}
 			return
@@ -1910,12 +1874,6 @@ func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
 	m.shotNextAt = time.Time{}
 	m.shotPhase = shotPhaseNone
 	m.shotPhaseRemain = 0
-
-	// Repeater uplink is processed in a side buffer, not in Mixed; do not fill the broadcast
-	// mix with comfort noise (listeners would hear empty-carrier hiss, not repeated audio).
-	if ctx.ActiveSpeakers == 0 && ctx.RepeaterCaptureLive {
-		return
-	}
 
 	noiseDB := m.cfg.MinNoiseDB
 	if m.cfg.SignalDependent {
@@ -1996,14 +1954,14 @@ func (m *whiteNoiseSquelchModule) advanceShotPhase(ctx *audioProcessContext, now
 		m.shotPhase = shotPhaseNoise
 		m.shotPhaseRemain = nextPhaseDuration
 	case shotPhaseNoise:
+		ctx.SquelchHissJustEnded = true
 		m.shotPhase = shotPhasePostSilence
 		m.shotPhaseRemain = nextPhaseDuration
-		ctx.SquelchHissJustEnded = true
 	case shotPhasePostSilence:
 		m.shotPhase = shotPhaseNone
 		m.shotPhaseRemain = 0
 		m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
-		ctx.ArmPostMixSilenceAfterIdle = true
+		ctx.QueueSynthSilenceTail = true
 	default:
 		m.shotPhase = shotPhaseNone
 		m.shotPhaseRemain = 0
@@ -2032,8 +1990,7 @@ func mapSignalByteToImpulseProbability(signalByte float64, c clickImpulsesConfig
 	if pct >= 100.0 {
 		return c.ProbAtStrongSignal
 	}
-	t := (pct - 10.0) / 90.0
-	return c.ProbAtWeakSignal + t*(c.ProbAtStrongSignal-c.ProbAtWeakSignal)
+	return c.ProbAtWeakSignal + ((pct-10.0)/90.0)*(c.ProbAtStrongSignal-c.ProbAtWeakSignal)
 }
 
 func mapSignalByteToNoiseDB(signalByte float64, cfg noiseConfig) float64 {
@@ -2200,7 +2157,7 @@ type whiteNoise struct {
 
 func newWhiteNoise(cfg noiseConfig) *whiteNoise {
 	w := &whiteNoise{}
-	switch cfg.NoiseDistribution {
+	switch strings.ToLower(strings.TrimSpace(cfg.NoiseDistribution)) {
 	case "", "gaussian":
 		w.gaussian = true
 	case "uniform":
@@ -2550,12 +2507,6 @@ func defaultConfig() appConfig {
 					GlitchLevelMinDB:    -14.0,
 					GlitchLevelMaxDB:    -6.0,
 				},
-				Impulses: &clickImpulsesConfig{
-					Enabled:            true,
-					ProbAtWeakSignal:   0.022,
-					ProbAtStrongSignal: 0.00045,
-					GainDB:             -14.0,
-				},
 			},
 			Filter: &filterConfig{
 				Enabled:   true,
@@ -2708,6 +2659,9 @@ func validateConfig(cfg appConfig) error {
 		}
 		if cfg.Modules.Noise.ThermalLowpassHz < 0 {
 			return errors.New("modules.noise.thermal_lowpass_hz must be >= 0")
+		}
+		if cfg.Modules.Noise.SynthSilenceTailPackets < 0 {
+			return errors.New("modules.noise.synth_silence_tail_packets must be >= 0")
 		}
 	}
 	if cfg.Modules.Click != nil && cfg.Modules.Click.Enabled {
