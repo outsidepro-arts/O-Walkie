@@ -32,19 +32,15 @@ go run ./cmd/relay ./config.json
 - each module block in `modules.*` is optional:
   - if the block is missing, module is disabled
   - if the block exists, `enabled: true|false` controls activation
-- `modules.noise.signal_dependent` controls whether noise level follows signal strength (`true`) or stays fixed at `min_noise_db` (`false`)
-- `modules.noise.noise_distribution` `gaussian` (default) or `uniform` (legacy per-sample [-1,1])
-- `modules.noise.thermal_lowpass_hz` moving-average lowpass (~sample_rate/window); `0` disables; default `8000` matches coarse thermal-noise proxy (see `examples/radio_noise/B_thermal_lp_8kHz.wav` at 48 kHz)
-- `modules.noise.*` squelch / tail / idle-shot behavior (unchanged)
-- `modules.noise.squelch_shots_min_s` idle-shot timer minimum in seconds (`> 0` when enabled)
-- `modules.noise.squelch_shots_max_s` idle-shot timer maximum in seconds (`0` disables shots; when enabled must be `>= squelch_shots_min_s`)
-- when no TX is active, next shot is scheduled in random `squelch_shots_min_s..squelch_shots_max_s` seconds; shot duration is random `tail_min_ms..tail_max_ms`
-- each idle shot includes `1s` silence before and `1s` silence after (for reliable short-shot playback on clients)
-- `modules.click.pops.*` sinusoidal PTT start/end and in-TX glitch pops (`click_db`, `glitch_*`; legacy flat `click_db` / `glitch_*` still work if `pops` is omitted)
-- `modules.click.impulses` optional sparse RF-style impulses: `enabled`, `prob_at_weak_signal` / `prob_at_strong_signal` (per-frame probability, same signal-strength mapping as noise: weak line → higher rate), `gain_db`
-- `modules.filter.low_cut_hz` / `modules.filter.high_cut_hz` band-pass cutoff range for full channel stream
-- `modules.compressor.*` compressor settings
-- `modules.distortion.*` distortion settings
+- `modules.dsp.noise.signal_dependent` controls whether noise level follows signal strength (`true`) or stays fixed at `min_noise_db` (`false`)
+- `modules.dsp.noise.noise_distribution` `gaussian` (default) or `uniform` (legacy per-sample [-1,1])
+- `modules.dsp.noise.thermal_lowpass_hz` moving-average lowpass (~sample_rate/window); `0` disables; default `8000` matches coarse thermal-noise proxy (see `examples/radio_noise/B_thermal_lp_8kHz.wav` at 48 kHz)
+- `modules.dsp.squelch.*` handles weak-signal gating and TX-end tail (`threshold_percent`, `squelch_min_ms`, `squelch_max_ms`, `tail_*`, `noise_gain`)
+- `modules.dsp.pops.pops.*` sinusoidal PTT start/end and in-TX glitch pops (`click_db`, `glitch_*`; legacy flat `click_db` / `glitch_*` still work if `pops` is omitted)
+- `modules.dsp.clicks.impulses` sparse RF-style impulses: `enabled`, `prob_at_weak_signal` / `prob_at_strong_signal`, `gain_db`; `multi_client_rapid_ms` accelerates clicks while multiple TX are active
+- `modules.dsp.filter.low_cut_hz` / `modules.dsp.filter.high_cut_hz` band-pass cutoff range for full channel stream
+- `modules.dsp.compressor.*` compressor settings
+- `modules.dsp.distortion.*` distortion settings
 
 ## Control Plane (WebSocket `/ws`)
 

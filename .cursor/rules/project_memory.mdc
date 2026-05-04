@@ -26,6 +26,14 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Backend relay: финализирована модульная схема под восстановление «старого» звучания — конфиг `modules` разделён на `generators` и `dsp` (с auto-migration старых flat-полей), `click` разделён на `clicks` (шумовые импульсы, ускорение при multi-TX) и `pops` (синусоидальные start/in-TX/end щелчки).
+- Backend relay: `noise` вынесен в отдельный DSP-модуль (подмешивание по уровню сигнала), а `squelch` вынесен в отдельный DSP-модуль с обработкой `TxEOF`, tail, порогом по проценту сигнала (`threshold_percent`, default 5%), и постановкой post-burst synthetic silence через существующий механизм.
+- Backend relay: концепт `squelch_shots` полностью исключён из runtime/config; отложен до отдельного будущего generator-модуля.
+- Backend relay: `audioModuleControl` расширен входными метаданными (`MultiClientMix`, optional `SignalByte`), которые прокидываются в generator и DSP; модули могут обрабатывать эти поля опционально без изменения базового контракта.
+- Backend relay distortion: добавлены настраиваемые бусты для многопользовательского микса (`multi_client_drive_boost`, `multi_client_mix_boost`) — при одновременной передаче нескольких клиентов DSP может усиливать эффект.
+- Backend relay: в общий модульный контекст добавлен transport-control (`TxActive`, `TxStart`, `TxEOF`) и прокинут в generator/DSP пайплайн; `tx_eof` теперь помечается на stream state и потребляется модулями на тике микшера, а `TxStart/TxEOF` дополнительно вычисляются по переходам активности канала.
+- Backend relay: `click`/`noise-squelch` модули переведены на событийнуую логику через control-контекст (с fallback на переход `ActiveSpeakers` для совместимости), что готовит архитектуру к DSP/FX с tail-обработкой и lifecycle событиями передачи.
+- Backend relay (`cmd/relay`, package `main`): аудио-пайплайн разделён на **generators** (шум/squelch/щелчки — инъекция в микс) и **dspMods** (band-pass, компрессор, дисторшн после генераторов); сборка `go build ./cmd/relay` без изменений; реализация вынесена в отдельные `.go` файлы в той же директории (`audio_context.go`, `module_pipeline.go`, `gen_*.go`, `dsp_*.go`, `audio_helpers.go`).
 - Backend relay: после **явного UDP EOF** джиттер дренируется как раньше, затем в микс подаётся **хвост из нескольких нулевых PCM-кадров** (глубина ≈ `jitter_min_packets` + запас), затем **drop** uplink Opus decoder; при удалении stream state и при сбросе застрявшего джиттера — decoder тоже удаляется. **SquelchIdleSuppressionCount** учитывает и **repeater capture** (`collecting`), чтобы не было паузы squelch при репитере. Если включён **noise/squelch**, глобальный **mix-out** хвост нулей ставится после полного **idle shot**; при **выключенных** idle shots — ещё и с конца **TX tail hiss** (после первого «тихого» тика модулей, чтобы успел terminal click). Выходной микс-encoder не пересоздаётся по таймеру — непрерывность даёт поток кадров на хвосте тишины.
 - Backend relay **noise**: по умолчанию **гауссов** шум (масштаб как у прежнего равномерного по дисперсии через `√(1/3)`), опционально **НЧ** `thermal_lowpass_hz` (скользящее среднее, по умолчанию 8000); `noise_distribution: uniform` — прежнее поведение. **Click**: синусоидальные PTT/глитчи в `pops` (старые плоские поля читаются, если `pops` нет); опционально **impulses** — редкие импульсы на кадр, вероятность от **силы сигнала** как у noise (слабый сигнал → чаще).
 - Android + Windows desktop: если RX **не декодировался** из‑за локального TX / Roger / Call / RX holdoff — перед следующим кадром **пересоздаётся RX Opus decoder** (опционально для щелчка после своей передачи).
@@ -88,10 +96,7 @@ alwaysApply: true
 - Android: tuned background idle battery mode further — `UDP_BG_KEEPALIVE_IDLE_INTERVAL_SEC=50`, `UDP_RECV_TIMEOUT_BACKGROUND_MS=10000`, cached signal-strength polling in background (max once per 50s), immediate keepalive mode switch on app focus change.
 - Android: reduce background battery use (softer UDP keepalive when app not in focus, longer RX socket timeout in background), bind UDP `DatagramSocket` to `ConnectivityManager` active `Network` after handoffs, queue UDP socket recreation until end of TX/call/roger, reset Opus on new `sessionId` and fix playback loop race on reconnect.
 - Implemented server-side configurable Opus parameters (bitrate/complexity/FEC/DTX/application) and handshake propagation.
-- Added and refined idle squelch shot scheduler on server:
-  - timer random `10..squelch_shots` seconds (when idle),
-  - shot duration random `tail_min_ms..tail_max_ms`,
-  - 1s silence before and after shot.
+- Idle squelch shots were previously implemented, but are now removed from runtime/config and postponed to a future dedicated generator module.
 - Changed relay startup config behavior:
   - default uses `./config.json`,
   - optional config path via first CLI argument.

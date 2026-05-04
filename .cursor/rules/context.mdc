@@ -27,10 +27,10 @@ alwaysApply: true
 ## Recent Key Changes (from latest git history)
 - Removed Accessibility service and all background hardware PTT logic (`54380be`).
 - Added relay startup config fallback: default `./config.json`, optional path override via argument (`0126846`).
-- Stabilized squelch behavior with idle-shot scheduling and restored TX-end squelch tail (`d98bb46`, `180a4de`).
+- Stabilized squelch behavior and TX-end squelch tail (`d98bb46`, `180a4de`).
 - Added optional PTT toggle mode and fixed stuck-transmit edge case in Android UI (`971fe35`, `22c90ab`).
 
 ## Next Step
 - Validate tester release behavior without Accessibility service (installability + Play Protect).
-- If needed, tune relay noise/shot defaults (`squelch_shots`, tail ranges) based on field feedback.
+- If needed, tune relay noise/tail defaults based on field feedback.
 - Keep protocol compatibility across Android/Windows when further relay audio settings are added.

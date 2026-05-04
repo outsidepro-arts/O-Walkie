@@ -92,32 +92,53 @@ type opusConfig struct {
 }
 
 type modulesConfig struct {
-	Noise      *noiseConfig      `json:"noise,omitempty"`
-	Click      *clickConfig      `json:"click,omitempty"`
+	Generators generatorsModulesConfig `json:"generators"`
+	DSP        dspModulesConfig        `json:"dsp"`
+	// Legacy flat layout (auto-migrated into generators/dsp during load).
+	Noise      *legacyNoiseConfig `json:"noise,omitempty"`
+	Click      *legacyClickConfig `json:"click,omitempty"`
+	Filter     *filterConfig      `json:"filter,omitempty"`
+	Compressor *compressorConfig  `json:"compressor,omitempty"`
+	Distortion *distortionConfig  `json:"distortion,omitempty"`
+}
+
+type generatorsModulesConfig struct {
+	// Reserved for non-DSP frame initiators.
+}
+
+type dspModulesConfig struct {
+	Clicks     *clicksConfig     `json:"clicks,omitempty"`
+	Pops       *popsConfig       `json:"pops,omitempty"`
+	Noise      *noiseDSPConfig   `json:"noise,omitempty"`
+	Squelch    *squelchDSPConfig `json:"squelch,omitempty"`
 	Filter     *filterConfig     `json:"filter,omitempty"`
 	Compressor *compressorConfig `json:"compressor,omitempty"`
 	Distortion *distortionConfig `json:"distortion,omitempty"`
 }
 
-type noiseConfig struct {
-	Enabled            bool    `json:"enabled"`
-	SignalDependent    bool    `json:"signal_dependent"`
-	MinNoiseDB         float64 `json:"min_noise_db"`
-	MaxNoiseDB         float64 `json:"max_noise_db"`
-	NoiseGain          float64 `json:"noise_gain"`
-	SquelchThresholdDB float64 `json:"squelch_threshold_db"`
-	SquelchMinMs       int     `json:"squelch_min_ms"`
-	SquelchMaxMs       int     `json:"squelch_max_ms"`
-	SquelchShotsMinS   int     `json:"squelch_shots_min_s"`
-	SquelchShotsMaxS   int     `json:"squelch_shots_max_s"`
-	TailNoiseDB        float64 `json:"tail_noise_db"`
-	TailMinMs          int     `json:"tail_min_ms"`
-	TailMaxMs          int     `json:"tail_max_ms"`
+type noiseDSPConfig struct {
+	Enabled         bool    `json:"enabled"`
+	SignalDependent bool    `json:"signal_dependent"`
+	MinNoiseDB      float64 `json:"min_noise_db"`
+	MaxNoiseDB      float64 `json:"max_noise_db"`
+	NoiseGain       float64 `json:"noise_gain"`
 	// NoiseDistribution: "gaussian" (default) or "uniform" (legacy per-sample [-1,1]).
 	NoiseDistribution string `json:"noise_distribution,omitempty"`
 	// ThermalLowpassHz: moving-average lowpass (~SR/window); 0 disables.
 	ThermalLowpassHz float64 `json:"thermal_lowpass_hz,omitempty"`
-	// SynthSilenceTailPackets: zero-PCM frames after each squelch-generated burst (tail / idle shot).
+}
+
+type squelchDSPConfig struct {
+	Enabled bool `json:"enabled"`
+	// Signal threshold percentage (0..100) below which squelch burst is emitted then gated.
+	ThresholdPercent float64 `json:"threshold_percent"`
+	SquelchMinMs     int     `json:"squelch_min_ms"`
+	SquelchMaxMs     int     `json:"squelch_max_ms"`
+	NoiseGain        float64 `json:"noise_gain"`
+	TailNoiseDB      float64 `json:"tail_noise_db"`
+	TailMinMs        int     `json:"tail_min_ms"`
+	TailMaxMs        int     `json:"tail_max_ms"`
+	// SynthSilenceTailPackets: zero-PCM frames after each squelch-generated burst tail.
 	// 0 = default jitter_min_packets+2 (min 4).
 	SynthSilenceTailPackets int `json:"synth_silence_tail_packets,omitempty"`
 }
@@ -134,6 +155,7 @@ type compressorConfig struct {
 // clickPopsConfig: sinusoidal PTT / in-TX pops (legacy flat click_* merged here when pops omitted).
 type clickPopsConfig struct {
 	ClickDB             float64 `json:"click_db"`
+	ClickToneHz         float64 `json:"click_tone_hz,omitempty"`
 	GlitchIntervalMaxMs int     `json:"glitch_interval_max_ms"`
 	GlitchFreqMinHz     float64 `json:"glitch_freq_min_hz"`
 	GlitchFreqMaxHz     float64 `json:"glitch_freq_max_hz"`
@@ -148,11 +170,46 @@ type clickImpulsesConfig struct {
 	GainDB             float64 `json:"gain_db"`
 }
 
-type clickConfig struct {
+type clicksConfig struct {
+	Enabled            bool                 `json:"enabled"`
+	Impulses           *clickImpulsesConfig `json:"impulses,omitempty"`
+	MultiClientRapidMs int                  `json:"multi_client_rapid_ms,omitempty"`
+}
+
+type popsConfig struct {
 	Enabled bool             `json:"enabled"`
 	Pops    *clickPopsConfig `json:"pops,omitempty"`
-	// Legacy flat fields (used when pops is nil)
+	// Legacy flat fields (used when pops is nil).
+	ClickDB             float64 `json:"click_db,omitempty"`
+	ClickToneHz         float64 `json:"click_tone_hz,omitempty"`
+	GlitchIntervalMaxMs int     `json:"glitch_interval_max_ms,omitempty"`
+	GlitchFreqMinHz     float64 `json:"glitch_freq_min_hz,omitempty"`
+	GlitchFreqMaxHz     float64 `json:"glitch_freq_max_hz,omitempty"`
+	GlitchLevelMinDB    float64 `json:"glitch_level_min_db,omitempty"`
+	GlitchLevelMaxDB    float64 `json:"glitch_level_max_db,omitempty"`
+}
+
+type legacyNoiseConfig struct {
+	Enabled                 bool    `json:"enabled"`
+	SignalDependent         bool    `json:"signal_dependent"`
+	MinNoiseDB              float64 `json:"min_noise_db"`
+	MaxNoiseDB              float64 `json:"max_noise_db"`
+	NoiseGain               float64 `json:"noise_gain"`
+	SquelchThresholdDB      float64 `json:"squelch_threshold_db"`
+	SquelchMinMs            int     `json:"squelch_min_ms"`
+	SquelchMaxMs            int     `json:"squelch_max_ms"`
+	TailNoiseDB             float64 `json:"tail_noise_db"`
+	TailMinMs               int     `json:"tail_min_ms"`
+	TailMaxMs               int     `json:"tail_max_ms"`
+	NoiseDistribution       string  `json:"noise_distribution,omitempty"`
+	ThermalLowpassHz        float64 `json:"thermal_lowpass_hz,omitempty"`
+	SynthSilenceTailPackets int     `json:"synth_silence_tail_packets,omitempty"`
+}
+type legacyClickConfig struct {
+	Enabled             bool                 `json:"enabled"`
+	Pops                *clickPopsConfig     `json:"pops,omitempty"`
 	ClickDB             float64              `json:"click_db,omitempty"`
+	ClickToneHz         float64              `json:"click_tone_hz,omitempty"`
 	GlitchIntervalMaxMs int                  `json:"glitch_interval_max_ms,omitempty"`
 	GlitchFreqMinHz     float64              `json:"glitch_freq_min_hz,omitempty"`
 	GlitchFreqMaxHz     float64              `json:"glitch_freq_max_hz,omitempty"`
@@ -168,9 +225,11 @@ type filterConfig struct {
 }
 
 type distortionConfig struct {
-	Enabled bool    `json:"enabled"`
-	Drive   float64 `json:"drive"`
-	Mix     float64 `json:"mix"`
+	Enabled               bool    `json:"enabled"`
+	Drive                 float64 `json:"drive"`
+	Mix                   float64 `json:"mix"`
+	MultiClientDriveBoost float64 `json:"multi_client_drive_boost,omitempty"`
+	MultiClientMixBoost   float64 `json:"multi_client_mix_boost,omitempty"`
 }
 
 type wsMessage struct {
@@ -283,26 +342,6 @@ func (p *audioPacket) isUDPEOFMarker() bool {
 	return len(p.opus) == 0 && p.signalStrength == 0 && p.seq > 0
 }
 
-// audioProcessContext is the pluggable processing contract for channel audio modules.
-// New DSP modules can be injected by implementing audioModule and appending it to channelMixer.modules.
-type audioProcessContext struct {
-	Mixed          []float64
-	AvgSignalByte  float64
-	ActiveSpeakers int
-	NoiseLevelDB   float64
-	EmitFrame      bool
-	DropFrame      bool
-	// SquelchHissJustEnded: synthetic hiss (TX tail or idle-shot noise) ended this tick — terminal click.
-	SquelchHissJustEnded bool
-	// QueueSynthSilenceTail: after this mixed frame, emit zero-PCM tail before going fully idle.
-	QueueSynthSilenceTail bool
-}
-
-type audioModule interface {
-	Name() string
-	Process(ctx *audioProcessContext)
-}
-
 type relayHub struct {
 	clientsMu sync.RWMutex
 	clients   map[uint32]*client
@@ -325,6 +364,7 @@ type speakerStreamState struct {
 	lastSignal   float64
 	lastPCM      []int16
 	missCount    int
+	txEOFPending bool
 
 	// decoderFlushPending/eofAt: after explicit TX EOF, drop per-session Opus decoder once
 	// the jitter queue has drained, so the next transmission does not inherit decoder tail.
@@ -568,7 +608,8 @@ type channelMixer struct {
 	seq          uint32
 	noiseLevelDB float64
 	lastSignal   float64
-	modules      []audioModule
+	generators   []audioModule
+	dspMods      []audioModule
 	modulesCfg   modulesConfig
 
 	repeaterMu    sync.Mutex
@@ -601,8 +642,9 @@ type channelMixer struct {
 	lastFrameAt              time.Time
 	lastFrameExcludedSession uint32 // broadcastMixed exclude for lastFramePayload; 0 = not excluded
 
-	// Zero-PCM frames after squelch-generated bursts (tail / idle shot), before idle.
+	// Zero-PCM frames after squelch-generated burst tail, before idle.
 	synthSilenceRemain int
+	lastTxActive       bool
 }
 
 type repeaterSession struct {
@@ -615,18 +657,22 @@ type repeaterSession struct {
 }
 
 type audioProcessor struct {
-	modules      []audioModule
+	generators   []audioModule
+	dspMods      []audioModule
 	noiseLevelDB float64
 	lastSignal   float64
+	lastTxActive bool
 }
 
 func newAudioProcessor(mcfg modulesConfig) *audioProcessor {
 	noiseFloor := -30.0
-	if mcfg.Noise != nil {
-		noiseFloor = mcfg.Noise.MinNoiseDB
+	if mcfg.DSP.Noise != nil {
+		noiseFloor = mcfg.DSP.Noise.MinNoiseDB
 	}
+	gen, dsp := buildChannelModuleSets(mcfg)
 	return &audioProcessor{
-		modules:      buildAudioModules(mcfg),
+		generators:   gen,
+		dspMods:      dsp,
 		noiseLevelDB: noiseFloor,
 		lastSignal:   255.0,
 	}
@@ -634,8 +680,13 @@ func newAudioProcessor(mcfg modulesConfig) *audioProcessor {
 
 func (p *audioProcessor) process(input []int16, signalByte float64, active bool) ([]int16, bool) {
 	mixed := make([]float64, packetSamples)
+	txStart := active && !p.lastTxActive
+	txEOF := !active && p.lastTxActive
+	p.lastTxActive = active
+	var signalForModules *float64
 	if active {
 		p.lastSignal = signalByte
+		signalForModules = &p.lastSignal
 		limit := len(input)
 		if limit > packetSamples {
 			limit = packetSamples
@@ -649,14 +700,22 @@ func (p *audioProcessor) process(input []int16, signalByte float64, active bool)
 		AvgSignalByte:  p.lastSignal,
 		ActiveSpeakers: boolToInt(active),
 		NoiseLevelDB:   p.noiseLevelDB,
-		EmitFrame:      active,
+		Control: audioModuleControl{
+			TxActive:       active,
+			TxStart:        txStart,
+			TxEOF:          txEOF,
+			MultiClientMix: false,
+			SignalByte:     signalForModules,
+		},
+		EmitFrame: active,
 	}
-	for _, mod := range p.modules {
-		mod.Process(ctx)
-		if ctx.DropFrame {
-			p.noiseLevelDB = ctx.NoiseLevelDB
-			return nil, false
-		}
+	if processModuleChain(p.generators, ctx) {
+		p.noiseLevelDB = ctx.NoiseLevelDB
+		return nil, false
+	}
+	if processModuleChain(p.dspMods, ctx) {
+		p.noiseLevelDB = ctx.NoiseLevelDB
+		return nil, false
 	}
 	p.noiseLevelDB = ctx.NoiseLevelDB
 	if !ctx.EmitFrame {
@@ -679,6 +738,11 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 	applyOpusEncoderConfig(enc)
 	hangoverMs := maxInt(cfg.Server.HangoverMs, normalizePacketMs(cfg.Server.PacketMs)*2)
 	eofTimeoutMs := maxInt(cfg.Server.EOFTimeoutMs, hangoverMs+normalizePacketMs(cfg.Server.PacketMs))
+	gen, dsp := buildChannelModuleSets(mcfg)
+	noiseFloor := -30.0
+	if mcfg.DSP.Noise != nil {
+		noiseFloor = mcfg.DSP.Noise.MinNoiseDB
+	}
 	return &channelMixer{
 		name:               name,
 		hub:                hub,
@@ -687,10 +751,11 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 		participants:       make(map[uint32]struct{}),
 		decoders:           make(map[uint32]*opus.Decoder),
 		encoder:            enc,
-		noiseLevelDB:       -30.0,
+		noiseLevelDB:       noiseFloor,
 		lastSignal:         255.0,
 		modulesCfg:         mcfg,
-		modules:            buildAudioModules(mcfg),
+		generators:         gen,
+		dspMods:            dsp,
 		repeaterState:      make(map[uint32]*repeaterSession),
 		hangoverDur:        time.Duration(hangoverMs) * time.Millisecond,
 		eofTimeoutDur:      time.Duration(eofTimeoutMs) * time.Millisecond,
@@ -825,26 +890,6 @@ func (m *channelMixer) busyWindowExpiredLocked(now time.Time) bool {
 		hold = packetDur
 	}
 	return now.Sub(m.busyLastPacketAt) > hold
-}
-
-func buildAudioModules(mcfg modulesConfig) []audioModule {
-	mods := make([]audioModule, 0, 5)
-	if mcfg.Noise != nil && mcfg.Noise.Enabled {
-		mods = append(mods, newWhiteNoiseSquelchModule(packetDur, *mcfg.Noise))
-	}
-	if mcfg.Click != nil && mcfg.Click.Enabled {
-		mods = append(mods, newClickModule(packetDur, *mcfg.Click))
-	}
-	if mcfg.Filter != nil && mcfg.Filter.Enabled {
-		mods = append(mods, newBandPassModule(configuredSampleRate, *mcfg.Filter))
-	}
-	if mcfg.Compressor != nil && mcfg.Compressor.Enabled {
-		mods = append(mods, newCompressorModule(configuredSampleRate, *mcfg.Compressor))
-	}
-	if mcfg.Distortion != nil && mcfg.Distortion.Enabled {
-		mods = append(mods, newDistortionModule(*mcfg.Distortion))
-	}
-	return mods
 }
 
 func newSpeakerStreamState(jitterMinPackets uint16) *speakerStreamState {
@@ -1217,6 +1262,7 @@ func (m *channelMixer) runLoop() (panicked bool) {
 				st.jitter.forceStartFromMinSeq()
 				st.decoderFlushPending = true
 				st.eofAt = time.Now()
+				st.txEOFPending = true
 			}
 			m.markRepeaterEOF(sid)
 			// Keep already buffered packets for a short natural drain, but disable
@@ -1253,6 +1299,7 @@ func (m *channelMixer) resetAfterLoopFailure() {
 	m.lastFrameMu.Unlock()
 
 	m.synthSilenceRemain = 0
+	m.lastTxActive = false
 }
 
 func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool, now time.Time) {
@@ -1293,8 +1340,8 @@ func (m *channelMixer) synthesizedBurstSilenceTicks() int {
 	if n < 4 {
 		n = 4
 	}
-	if m.modulesCfg.Noise != nil && m.modulesCfg.Noise.SynthSilenceTailPackets > 0 {
-		n = m.modulesCfg.Noise.SynthSilenceTailPackets
+	if m.modulesCfg.DSP.Squelch != nil && m.modulesCfg.DSP.Squelch.Enabled && m.modulesCfg.DSP.Squelch.SynthSilenceTailPackets > 0 {
+		n = m.modulesCfg.DSP.Squelch.SynthSilenceTailPackets
 	}
 	return n
 }
@@ -1330,8 +1377,8 @@ func (m *channelMixer) emitEncodedSilenceFrame(now time.Time, activeSpeakers []u
 	} else if len(activeSpeakers) == 0 && m.lastSingleSpeaker != 0 {
 		packetMs := int(packetDur / time.Millisecond)
 		tailMaxMs := packetMs * 2
-		if m.modulesCfg.Noise != nil && m.modulesCfg.Noise.Enabled {
-			tailMaxMs = maxInt(m.modulesCfg.Noise.TailMaxMs, packetMs*2)
+		if m.modulesCfg.DSP.Squelch != nil && m.modulesCfg.DSP.Squelch.Enabled {
+			tailMaxMs = maxInt(m.modulesCfg.DSP.Squelch.TailMaxMs, packetMs*2)
 		}
 		tailGrace := time.Duration(tailMaxMs) * time.Millisecond
 		if now.Sub(m.lastSingleSpeakerAt) <= tailGrace {
@@ -1347,10 +1394,19 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	activeSpeakers := make([]uint32, 0, len(states))
 	var signalSum float64
 	now := time.Now()
+	txEOF := false
 
 	for sessionID, st := range states {
 		if st == nil {
 			continue
+		}
+		client := m.hub.getClient(sessionID)
+		isRepeater := client != nil && client.isRepeaterMode()
+		if st.txEOFPending {
+			if !isRepeater {
+				txEOF = true
+			}
+			st.txEOFPending = false
 		}
 		m.maybeFlushDecoderAfterEOF(sessionID, st, now)
 		// If a short burst did not reach jitter start threshold and then paused,
@@ -1442,8 +1498,7 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		if !speakerActive || len(pcmFrame) == 0 {
 			continue
 		}
-		client := m.hub.getClient(sessionID)
-		if client != nil && client.isRepeaterMode() {
+		if isRepeater {
 			m.processRepeaterCapture(sessionID, pcmFrame, speakerSignal, now)
 			continue
 		}
@@ -1461,6 +1516,18 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	} else {
 		m.lastSignal = signalSum / float64(len(activeSpeakers))
 	}
+	txActive := len(activeSpeakers) > 0
+	multiClientMix := len(activeSpeakers) > 1
+	txStart := txActive && !m.lastTxActive
+	if !txEOF && !txActive && m.lastTxActive {
+		txEOF = true
+	}
+	m.lastTxActive = txActive
+	var signalForModules *float64
+	avgSignal := signalSum / float64(maxInt(len(activeSpeakers), 1))
+	if txActive {
+		signalForModules = &avgSignal
+	}
 	if len(activeSpeakers) == 1 {
 		m.lastSingleSpeaker = activeSpeakers[0]
 		m.lastSingleSpeakerAt = now
@@ -1476,17 +1543,25 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 
 	ctx := &audioProcessContext{
 		Mixed:          mixed,
-		AvgSignalByte:  signalSum / float64(maxInt(len(activeSpeakers), 1)),
+		AvgSignalByte:  avgSignal,
 		ActiveSpeakers: len(activeSpeakers),
 		NoiseLevelDB:   m.noiseLevelDB,
-		EmitFrame:      len(activeSpeakers) > 0,
+		Control: audioModuleControl{
+			TxActive:       txActive,
+			TxStart:        txStart,
+			TxEOF:          txEOF,
+			MultiClientMix: multiClientMix,
+			SignalByte:     signalForModules,
+		},
+		EmitFrame: txActive,
 	}
-	for _, mod := range m.modules {
-		mod.Process(ctx)
-		if ctx.DropFrame {
-			m.noiseLevelDB = ctx.NoiseLevelDB
-			return
-		}
+	if processModuleChain(m.generators, ctx) {
+		m.noiseLevelDB = ctx.NoiseLevelDB
+		return
+	}
+	if processModuleChain(m.dspMods, ctx) {
+		m.noiseLevelDB = ctx.NoiseLevelDB
+		return
 	}
 	m.noiseLevelDB = ctx.NoiseLevelDB
 	if ctx.QueueSynthSilenceTail {
@@ -1524,8 +1599,8 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		// During post-TX tail frames, avoid feeding a sender its own ending burst.
 		packetMs := int(packetDur / time.Millisecond)
 		tailMaxMs := packetMs * 2
-		if m.modulesCfg.Noise != nil && m.modulesCfg.Noise.Enabled {
-			tailMaxMs = maxInt(m.modulesCfg.Noise.TailMaxMs, packetMs*2)
+		if m.modulesCfg.DSP.Squelch != nil && m.modulesCfg.DSP.Squelch.Enabled {
+			tailMaxMs = maxInt(m.modulesCfg.DSP.Squelch.TailMaxMs, packetMs*2)
 		}
 		tailGrace := time.Duration(tailMaxMs) * time.Millisecond
 		if now.Sub(m.lastSingleSpeakerAt) <= tailGrace {
@@ -1641,410 +1716,6 @@ func (m *channelMixer) playbackRepeaterAfterDelay(sessionID uint32, pcm []int16,
 	}
 }
 
-func hardClip(v int32, threshold int32) int16 {
-	if v > threshold {
-		return int16(threshold)
-	}
-	if v < -threshold {
-		return int16(-threshold)
-	}
-	return int16(v)
-}
-
-func hardClipFloat(v float64, threshold float64) int16 {
-	if v > threshold {
-		return int16(threshold)
-	}
-	if v < -threshold {
-		return int16(-threshold)
-	}
-	return int16(v)
-}
-
-type whiteNoiseSquelchModule struct {
-	white              *whiteNoise
-	frameDuration      time.Duration
-	squelchBurstRemain time.Duration
-	squelchLatched     bool
-	lastActive         bool
-	shotNextAt         time.Time
-	shotPhase          int
-	shotPhaseRemain    time.Duration
-	cfg                noiseConfig
-}
-
-type clickModule struct {
-	clickAmplitude float64
-	freqHz         float64
-	burstSamples   int
-	frameDuration  time.Duration
-	glitchMaxMs    int
-	glitchRemain   time.Duration
-	glitchFreqMin  float64
-	glitchFreqMax  float64
-	glitchAmpMin   float64
-	glitchAmpMax   float64
-	lastActive     bool
-	pendingEnd     bool
-	impulses       *clickImpulsesConfig
-	impulseAmp     float64
-}
-
-func newClickModule(frameDuration time.Duration, cfg clickConfig) *clickModule {
-	pops := mergeClickPops(cfg)
-	amp := 32767.0 * dbToLinear(pops.ClickDB)
-	if amp < 0 {
-		amp = 0
-	}
-	if amp > 32767.0 {
-		amp = 32767.0
-	}
-	m := &clickModule{
-		clickAmplitude: amp,
-		freqHz:         200.0,
-		burstSamples:   configuredSampleRate / 80, // ~12.5 ms at current sample rate.
-		frameDuration:  frameDuration,
-		glitchMaxMs:    maxInt(pops.GlitchIntervalMaxMs, 0),
-		glitchFreqMin:  pops.GlitchFreqMinHz,
-		glitchFreqMax:  pops.GlitchFreqMaxHz,
-		glitchAmpMin:   32767.0 * dbToLinear(pops.GlitchLevelMinDB),
-		glitchAmpMax:   32767.0 * dbToLinear(pops.GlitchLevelMaxDB),
-		impulses:       cfg.Impulses,
-	}
-	if cfg.Impulses != nil && cfg.Impulses.Enabled {
-		m.impulseAmp = 32767.0 * dbToLinear(cfg.Impulses.GainDB)
-		if m.impulseAmp < 0 {
-			m.impulseAmp = 0
-		}
-		if m.impulseAmp > 32767.0 {
-			m.impulseAmp = 32767.0
-		}
-	}
-	return m
-}
-
-func (m *clickModule) Name() string {
-	return "tx_click"
-}
-
-func (m *clickModule) Process(ctx *audioProcessContext) {
-	active := ctx.ActiveSpeakers > 0
-	if active && !m.lastActive {
-		m.injectClick(ctx, 1.0)
-		ctx.EmitFrame = true
-		m.pendingEnd = false
-		m.scheduleNextGlitch()
-	} else if !active && m.lastActive {
-		m.pendingEnd = true
-		m.glitchRemain = 0
-	}
-	if active {
-		m.processRandomGlitchClicks(ctx)
-	}
-
-	if !active && m.pendingEnd && (!ctx.EmitFrame || ctx.SquelchHissJustEnded) {
-		m.injectClick(ctx, -1.0)
-		ctx.EmitFrame = true
-		m.pendingEnd = false
-		m.lastActive = false
-		m.maybeInjectRFImpulses(ctx)
-		return
-	}
-	m.lastActive = active
-	m.maybeInjectRFImpulses(ctx)
-}
-
-func (m *clickModule) maybeInjectRFImpulses(ctx *audioProcessContext) {
-	if m.impulses == nil || !m.impulses.Enabled || m.impulseAmp <= 0 || len(ctx.Mixed) == 0 {
-		return
-	}
-	p := mapSignalByteToImpulseProbability(ctx.AvgSignalByte, *m.impulses)
-	if p <= 0 || rand.Float64() >= p {
-		return
-	}
-	i := rand.Intn(len(ctx.Mixed))
-	if rand.Intn(2) == 0 {
-		ctx.Mixed[i] -= m.impulseAmp
-	} else {
-		ctx.Mixed[i] += m.impulseAmp
-	}
-	ctx.EmitFrame = true
-}
-
-func (m *clickModule) processRandomGlitchClicks(ctx *audioProcessContext) {
-	if m.glitchMaxMs <= 0 || len(ctx.Mixed) == 0 || m.glitchAmpMax <= 0 {
-		return
-	}
-	if m.glitchRemain <= 0 {
-		freq := randomFloat64(m.glitchFreqMin, m.glitchFreqMax)
-		amp := randomFloat64(m.glitchAmpMin, m.glitchAmpMax)
-		m.injectClickWithParams(ctx, 1.0, freq, amp)
-		m.scheduleNextGlitch()
-		return
-	}
-	m.glitchRemain -= m.frameDuration
-}
-
-func (m *clickModule) scheduleNextGlitch() {
-	if m.glitchMaxMs <= 0 {
-		m.glitchRemain = 0
-		return
-	}
-	m.glitchRemain = randomDurationMs(1, m.glitchMaxMs)
-}
-
-func (m *clickModule) injectClick(ctx *audioProcessContext, sign float64) {
-	m.injectClickWithParams(ctx, sign, m.freqHz, m.clickAmplitude)
-}
-
-func (m *clickModule) injectClickWithParams(ctx *audioProcessContext, sign float64, freqHz float64, amplitude float64) {
-	if len(ctx.Mixed) == 0 || amplitude <= 0 || m.burstSamples <= 0 || freqHz <= 0 {
-		return
-	}
-	limit := m.burstSamples
-	if limit > len(ctx.Mixed) {
-		limit = len(ctx.Mixed)
-	}
-	phaseOffset := 0.0
-	if sign < 0 {
-		phaseOffset = math.Pi
-	}
-	for i := 0; i < limit; i++ {
-		t := float64(i) / float64(configuredSampleRate)
-		env := math.Exp(-4.0 * float64(i) / float64(limit))
-		wave := math.Sin(2.0*math.Pi*freqHz*t + phaseOffset)
-		ctx.Mixed[i] += wave * amplitude * env
-	}
-}
-
-func newWhiteNoiseSquelchModule(frameDuration time.Duration, cfg noiseConfig) *whiteNoiseSquelchModule {
-	return &whiteNoiseSquelchModule{
-		white:         newWhiteNoise(cfg),
-		frameDuration: frameDuration,
-		cfg:           cfg,
-	}
-}
-
-func (m *whiteNoiseSquelchModule) Name() string {
-	return "white_noise_squelch"
-}
-
-const (
-	shotPhaseNone = iota
-	shotPhasePreSilence
-	shotPhaseNoise
-	shotPhasePostSilence
-)
-
-func (m *whiteNoiseSquelchModule) Process(ctx *audioProcessContext) {
-	now := time.Now()
-	if ctx.ActiveSpeakers <= 0 {
-		// End-of-transmission tail burst: jump to 0 dB and emit white hiss briefly.
-		if m.lastActive && m.squelchBurstRemain <= 0 {
-			m.squelchBurstRemain = randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs)
-		}
-		m.lastActive = false
-		if m.squelchBurstRemain > 0 {
-			noiseAmplitude := m.cfg.NoiseGain * dbToLinear(m.cfg.TailNoiseDB)
-			for i := range ctx.Mixed {
-				ctx.Mixed[i] += m.white.next() * noiseAmplitude
-			}
-			ctx.EmitFrame = true
-			m.squelchBurstRemain -= m.frameDuration
-			if m.squelchBurstRemain <= 0 {
-				m.squelchBurstRemain = 0
-				ctx.SquelchHissJustEnded = true
-				ctx.QueueSynthSilenceTail = true
-				if m.cfg.SquelchShotsMaxS > 0 {
-					m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
-				}
-			}
-			return
-		}
-		if m.cfg.SquelchShotsMaxS > 0 {
-			m.squelchLatched = false
-			m.processIdleShots(ctx, now)
-			return
-		}
-		m.squelchLatched = false
-		ctx.EmitFrame = false
-		return
-	}
-	m.lastActive = true
-	m.shotNextAt = time.Time{}
-	m.shotPhase = shotPhaseNone
-	m.shotPhaseRemain = 0
-
-	noiseDB := m.cfg.MinNoiseDB
-	if m.cfg.SignalDependent {
-		noiseDB = mapSignalByteToNoiseDB(ctx.AvgSignalByte, m.cfg)
-	}
-	ctx.NoiseLevelDB = noiseDB
-	noiseAmplitude := m.cfg.NoiseGain * dbToLinear(noiseDB)
-
-	// Squelch behavior: when the line is too weak, emit a short burst of hiss then gate output.
-	if noiseDB >= m.cfg.SquelchThresholdDB {
-		if m.squelchLatched {
-			ctx.DropFrame = true
-			return
-		}
-		if m.squelchBurstRemain <= 0 {
-			m.squelchBurstRemain = randomDurationMs(m.cfg.SquelchMinMs, m.cfg.SquelchMaxMs)
-		}
-		for i := range ctx.Mixed {
-			ctx.Mixed[i] += m.white.next() * noiseAmplitude
-		}
-		m.squelchBurstRemain -= m.frameDuration
-		if m.squelchBurstRemain <= 0 {
-			m.squelchLatched = true
-			ctx.DropFrame = true
-		}
-		return
-	}
-
-	m.squelchLatched = false
-	m.squelchBurstRemain = 0
-	for i := range ctx.Mixed {
-		ctx.Mixed[i] += m.white.next() * noiseAmplitude
-	}
-}
-
-func (m *whiteNoiseSquelchModule) processIdleShots(ctx *audioProcessContext, now time.Time) {
-	if m.shotPhase == shotPhaseNone {
-		if m.shotNextAt.IsZero() {
-			m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
-			ctx.EmitFrame = false
-			return
-		}
-		if now.Before(m.shotNextAt) {
-			ctx.EmitFrame = false
-			return
-		}
-		m.shotPhase = shotPhasePreSilence
-		m.shotPhaseRemain = time.Second
-	}
-
-	switch m.shotPhase {
-	case shotPhasePreSilence:
-		ctx.EmitFrame = true
-		m.advanceShotPhase(ctx, now, randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs))
-	case shotPhaseNoise:
-		// Use the same hiss profile as TX-end tail to keep squelch shots consistent.
-		noiseAmplitude := m.cfg.NoiseGain * dbToLinear(m.cfg.TailNoiseDB)
-		for i := range ctx.Mixed {
-			ctx.Mixed[i] += m.white.next() * noiseAmplitude
-		}
-		ctx.EmitFrame = true
-		m.advanceShotPhase(ctx, now, time.Second)
-	case shotPhasePostSilence:
-		ctx.EmitFrame = true
-		m.advanceShotPhase(ctx, now, 0)
-	default:
-		ctx.EmitFrame = false
-	}
-}
-
-func (m *whiteNoiseSquelchModule) advanceShotPhase(ctx *audioProcessContext, now time.Time, nextPhaseDuration time.Duration) {
-	m.shotPhaseRemain -= m.frameDuration
-	if m.shotPhaseRemain > 0 {
-		return
-	}
-	switch m.shotPhase {
-	case shotPhasePreSilence:
-		m.shotPhase = shotPhaseNoise
-		m.shotPhaseRemain = nextPhaseDuration
-	case shotPhaseNoise:
-		ctx.SquelchHissJustEnded = true
-		m.shotPhase = shotPhasePostSilence
-		m.shotPhaseRemain = nextPhaseDuration
-	case shotPhasePostSilence:
-		m.shotPhase = shotPhaseNone
-		m.shotPhaseRemain = 0
-		m.shotNextAt = now.Add(randomDurationSec(m.cfg.SquelchShotsMinS, m.cfg.SquelchShotsMaxS))
-		ctx.QueueSynthSilenceTail = true
-	default:
-		m.shotPhase = shotPhaseNone
-		m.shotPhaseRemain = 0
-	}
-}
-
-func mergeClickPops(cfg clickConfig) clickPopsConfig {
-	if cfg.Pops != nil {
-		return *cfg.Pops
-	}
-	return clickPopsConfig{
-		ClickDB:             cfg.ClickDB,
-		GlitchIntervalMaxMs: cfg.GlitchIntervalMaxMs,
-		GlitchFreqMinHz:     cfg.GlitchFreqMinHz,
-		GlitchFreqMaxHz:     cfg.GlitchFreqMaxHz,
-		GlitchLevelMinDB:    cfg.GlitchLevelMinDB,
-		GlitchLevelMaxDB:    cfg.GlitchLevelMaxDB,
-	}
-}
-
-func mapSignalByteToImpulseProbability(signalByte float64, c clickImpulsesConfig) float64 {
-	pct := (signalByte / 255.0) * 100.0
-	if pct <= 10.0 {
-		return c.ProbAtWeakSignal
-	}
-	if pct >= 100.0 {
-		return c.ProbAtStrongSignal
-	}
-	return c.ProbAtWeakSignal + ((pct-10.0)/90.0)*(c.ProbAtStrongSignal-c.ProbAtWeakSignal)
-}
-
-func mapSignalByteToNoiseDB(signalByte float64, cfg noiseConfig) float64 {
-	pct := (signalByte / 255.0) * 100.0
-	if pct <= 10.0 {
-		return cfg.MaxNoiseDB
-	}
-	if pct >= 100.0 {
-		return cfg.MinNoiseDB
-	}
-	// Linear interpolation in dB domain:
-	// 10% -> max noise dB, 100% -> min noise dB.
-	return cfg.MaxNoiseDB - ((pct-10.0)/90.0)*(cfg.MaxNoiseDB-cfg.MinNoiseDB)
-}
-
-func dbToLinear(db float64) float64 {
-	return math.Pow(10.0, db/20.0)
-}
-
-func randomDurationMs(minMs int, maxMs int) time.Duration {
-	if maxMs <= minMs {
-		return time.Duration(minMs) * time.Millisecond
-	}
-	return time.Duration(minMs+rand.Intn(maxMs-minMs+1)) * time.Millisecond
-}
-
-func randomDurationSec(minSec int, maxSec int) time.Duration {
-	if maxSec <= minSec {
-		return time.Duration(minSec) * time.Second
-	}
-	return time.Duration(minSec+rand.Intn(maxSec-minSec+1)) * time.Second
-}
-
-func randomFloat64(min float64, max float64) float64 {
-	if max <= min {
-		return min
-	}
-	return min + rand.Float64()*(max-min)
-}
-
-func maxInt(a int, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func boolToInt(v bool) int {
-	if v {
-		return 1
-	}
-	return 0
-}
-
 func normalizePacketMs(ms int) int {
 	if ms <= 0 {
 		return defaultPacketMs
@@ -2144,269 +1815,6 @@ func applyAudioTiming(sampleRate int, packetMs int) {
 	packetSamples = configuredSampleRate * norm / 1000
 }
 
-type whiteNoise struct {
-	gaussian   bool
-	win        int
-	buf        []float64
-	sum        float64
-	pos        int
-	count      int
-	hasSpare   bool
-	spareGauss float64
-}
-
-func newWhiteNoise(cfg noiseConfig) *whiteNoise {
-	w := &whiteNoise{}
-	switch strings.ToLower(strings.TrimSpace(cfg.NoiseDistribution)) {
-	case "", "gaussian":
-		w.gaussian = true
-	case "uniform":
-		w.gaussian = false
-	default:
-		w.gaussian = true
-	}
-	if cfg.ThermalLowpassHz > 0 && configuredSampleRate > 0 {
-		win := int(float64(configuredSampleRate) / cfg.ThermalLowpassHz)
-		if win < 2 {
-			win = 2
-		}
-		w.win = win
-		w.buf = make([]float64, win)
-	}
-	return w
-}
-
-func (w *whiteNoise) nextRaw() float64 {
-	if !w.gaussian {
-		return rand.Float64()*2 - 1
-	}
-	if w.hasSpare {
-		w.hasSpare = false
-		return w.spareGauss * math.Sqrt(1.0/3.0)
-	}
-	u1 := rand.Float64()
-	for u1 <= 1e-12 {
-		u1 = rand.Float64()
-	}
-	u2 := rand.Float64()
-	mag := math.Sqrt(-2.0 * math.Log(u1))
-	z0 := mag * math.Cos(2*math.Pi*u2)
-	z1 := mag * math.Sin(2*math.Pi*u2)
-	w.spareGauss = z1
-	w.hasSpare = true
-	return z0 * math.Sqrt(1.0/3.0)
-}
-
-func (w *whiteNoise) next() float64 {
-	x := w.nextRaw()
-	if w.win <= 0 {
-		return x
-	}
-	if w.count < w.win {
-		w.buf[w.pos] = x
-		w.sum += x
-		w.pos = (w.pos + 1) % w.win
-		w.count++
-		return w.sum / float64(w.count)
-	}
-	old := w.buf[w.pos]
-	w.buf[w.pos] = x
-	w.sum += x - old
-	w.pos = (w.pos + 1) % w.win
-	return w.sum / float64(w.win)
-}
-
-type compressorModule struct {
-	thresholdDB  float64
-	ratio        float64
-	attackCoeff  float64
-	releaseCoeff float64
-	makeupGain   float64
-	envelopeDB   float64
-}
-
-func newCompressorModule(sr int, cfg compressorConfig) *compressorModule {
-	attackSec := cfg.AttackMs / 1000.0
-	releaseSec := cfg.ReleaseMs / 1000.0
-	if attackSec <= 0 {
-		attackSec = 0.005
-	}
-	if releaseSec <= 0 {
-		releaseSec = 0.08
-	}
-	return &compressorModule{
-		thresholdDB:  cfg.ThresholdDB,
-		ratio:        cfg.Ratio,
-		attackCoeff:  math.Exp(-1.0 / (float64(sr) * attackSec)),
-		releaseCoeff: math.Exp(-1.0 / (float64(sr) * releaseSec)),
-		makeupGain:   dbToLinear(cfg.MakeupDB),
-		envelopeDB:   -90.0,
-	}
-}
-
-func (m *compressorModule) Name() string {
-	return "compressor"
-}
-
-func (m *compressorModule) Process(ctx *audioProcessContext) {
-	for i := range ctx.Mixed {
-		x := ctx.Mixed[i]
-		amp := math.Abs(x)
-		inDB := -90.0
-		if amp > 1e-9 {
-			inDB = 20.0 * math.Log10(amp/32768.0)
-		}
-
-		// Attack when level rises, release when level falls.
-		if inDB > m.envelopeDB {
-			m.envelopeDB = m.attackCoeff*m.envelopeDB + (1.0-m.attackCoeff)*inDB
-		} else {
-			m.envelopeDB = m.releaseCoeff*m.envelopeDB + (1.0-m.releaseCoeff)*inDB
-		}
-
-		gainDB := 0.0
-		if m.envelopeDB > m.thresholdDB {
-			over := m.envelopeDB - m.thresholdDB
-			compressedOver := over / m.ratio
-			gainDB = compressedOver - over // negative attenuation
-		}
-		gain := dbToLinear(gainDB) * m.makeupGain
-		ctx.Mixed[i] = x * gain
-	}
-}
-
-type distortionModule struct {
-	drive float64
-	mix   float64
-}
-
-func newDistortionModule(cfg distortionConfig) *distortionModule {
-	return &distortionModule{
-		drive: cfg.Drive,
-		mix:   cfg.Mix,
-	}
-}
-
-func (m *distortionModule) Name() string {
-	return "distortion"
-}
-
-func (m *distortionModule) Process(ctx *audioProcessContext) {
-	for i := range ctx.Mixed {
-		dry := ctx.Mixed[i] / 32768.0
-		wet := math.Tanh(dry * m.drive)
-		out := dry*(1.0-m.mix) + wet*m.mix
-		ctx.Mixed[i] = out * 32768.0
-	}
-}
-
-type bandPassModule struct {
-	filter *bandPass
-}
-
-func newBandPassModule(sr int, cfg filterConfig) *bandPassModule {
-	return &bandPassModule{
-		filter: newBandPass(sr, cfg.LowCutHz, cfg.HighCutHz),
-	}
-}
-
-func (m *bandPassModule) Name() string {
-	return "band_pass"
-}
-
-func (m *bandPassModule) Process(ctx *audioProcessContext) {
-	if m.filter == nil {
-		return
-	}
-	for i := range ctx.Mixed {
-		ctx.Mixed[i] = m.filter.processSample(ctx.Mixed[i])
-	}
-}
-
-type onePoleHP struct {
-	alpha float64
-	prevX float64
-	prevY float64
-}
-
-func newOnePoleHP(sr int, cutoff float64) *onePoleHP {
-	dt := 1.0 / float64(sr)
-	rc := 1.0 / (2.0 * math.Pi * cutoff)
-	alpha := rc / (rc + dt)
-	return &onePoleHP{alpha: alpha}
-}
-
-func (f *onePoleHP) process(x float64) float64 {
-	y := f.alpha * (f.prevY + x - f.prevX)
-	f.prevX = x
-	f.prevY = y
-	return y
-}
-
-type onePoleLP struct {
-	alpha float64
-	prevY float64
-}
-
-func newOnePoleLP(sr int, cutoff float64) *onePoleLP {
-	dt := 1.0 / float64(sr)
-	rc := 1.0 / (2.0 * math.Pi * cutoff)
-	alpha := dt / (rc + dt)
-	return &onePoleLP{alpha: alpha}
-}
-
-func (f *onePoleLP) process(x float64) float64 {
-	f.prevY = f.prevY + f.alpha*(x-f.prevY)
-	return f.prevY
-}
-
-type bandPass struct {
-	hp []*onePoleHP
-	lp []*onePoleLP
-}
-
-func newBandPass(sr int, lowCut float64, highCut float64) *bandPass {
-	const poles = 4 // 4 * 6 dB/oct = 24 dB/oct per side
-	if lowCut <= 0 && highCut <= 0 {
-		return nil
-	}
-	hp := make([]*onePoleHP, 0, poles)
-	lp := make([]*onePoleLP, 0, poles)
-	if lowCut > 0 {
-		for i := 0; i < poles; i++ {
-			hp = append(hp, newOnePoleHP(sr, lowCut))
-		}
-	}
-	if highCut > 0 {
-		for i := 0; i < poles; i++ {
-			lp = append(lp, newOnePoleLP(sr, highCut))
-		}
-	}
-	return &bandPass{
-		hp: hp,
-		lp: lp,
-	}
-}
-
-func (b *bandPass) process(frame []int16) {
-	for i := range frame {
-		x := float64(frame[i])
-		z := b.processSample(x)
-		frame[i] = hardClip(int32(z), 32767)
-	}
-}
-
-func (b *bandPass) processSample(x float64) float64 {
-	y := x
-	for _, hp := range b.hp {
-		y = hp.process(y)
-	}
-	for _, lp := range b.lp {
-		y = lp.process(y)
-	}
-	return y
-}
-
 func parseAudioPacket(buf []byte, n int, src *net.UDPAddr) (*audioPacket, error) {
 	if n < 9 {
 		return nil, errors.New("packet too short")
@@ -2480,51 +1888,68 @@ func defaultConfig() appConfig {
 			TransmitTimeoutSec: 0,
 		},
 		Modules: modulesConfig{
-			Noise: &noiseConfig{
-				Enabled:            true,
-				SignalDependent:    true,
-				MinNoiseDB:         -20.0,
-				MaxNoiseDB:         -3.0,
-				NoiseGain:          1200.0,
-				SquelchThresholdDB: -3.0,
-				SquelchMinMs:       50,
-				SquelchMaxMs:       150,
-				SquelchShotsMinS:   10,
-				SquelchShotsMaxS:   0,
-				TailNoiseDB:        0.0,
-				TailMinMs:          15,
-				TailMaxMs:          60,
-				NoiseDistribution:  "gaussian",
-				ThermalLowpassHz:   8000,
-			},
-			Click: &clickConfig{
-				Enabled: true,
-				Pops: &clickPopsConfig{
-					ClickDB:             -8.0,
-					GlitchIntervalMaxMs: 0,
-					GlitchFreqMinHz:     120.0,
-					GlitchFreqMaxHz:     360.0,
-					GlitchLevelMinDB:    -14.0,
-					GlitchLevelMaxDB:    -6.0,
+			Generators: generatorsModulesConfig{},
+			DSP: dspModulesConfig{
+				Clicks: &clicksConfig{
+					Enabled: true,
+					Impulses: &clickImpulsesConfig{
+						Enabled:            false,
+						ProbAtWeakSignal:   0.10,
+						ProbAtStrongSignal: 0.01,
+						GainDB:             -8.0,
+					},
+					MultiClientRapidMs: 0, // 0 = every frame while multi-client TX is active.
 				},
-			},
-			Filter: &filterConfig{
-				Enabled:   true,
-				LowCutHz:  300.0,
-				HighCutHz: 3000.0,
-			},
-			Compressor: &compressorConfig{
-				Enabled:     true,
-				ThresholdDB: -18.0,
-				Ratio:       3.2,
-				AttackMs:    5.0,
-				ReleaseMs:   80.0,
-				MakeupDB:    4.0,
-			},
-			Distortion: &distortionConfig{
-				Enabled: true,
-				Drive:   1.35,
-				Mix:     0.28,
+				Pops: &popsConfig{
+					Enabled: true,
+					Pops: &clickPopsConfig{
+						ClickDB:             -8.0,
+						ClickToneHz:         200.0,
+						GlitchIntervalMaxMs: 0,
+						GlitchFreqMinHz:     120.0,
+						GlitchFreqMaxHz:     360.0,
+						GlitchLevelMinDB:    -14.0,
+						GlitchLevelMaxDB:    -6.0,
+					},
+				},
+				Noise: &noiseDSPConfig{
+					Enabled:           true,
+					SignalDependent:   true,
+					MinNoiseDB:        -20.0,
+					MaxNoiseDB:        -3.0,
+					NoiseGain:         1200.0,
+					NoiseDistribution: "gaussian",
+					ThermalLowpassHz:  8000,
+				},
+				Squelch: &squelchDSPConfig{
+					Enabled:                 true,
+					ThresholdPercent:        5.0,
+					SquelchMinMs:            50,
+					SquelchMaxMs:            150,
+					NoiseGain:               1200.0,
+					TailNoiseDB:             0.0,
+					TailMinMs:               15,
+					TailMaxMs:               60,
+					SynthSilenceTailPackets: 0,
+				},
+				Filter: &filterConfig{
+					Enabled:   true,
+					LowCutHz:  300.0,
+					HighCutHz: 3000.0,
+				},
+				Compressor: &compressorConfig{
+					Enabled:     true,
+					ThresholdDB: -18.0,
+					Ratio:       3.2,
+					AttackMs:    5.0,
+					ReleaseMs:   80.0,
+					MakeupDB:    4.0,
+				},
+				Distortion: &distortionConfig{
+					Enabled: true,
+					Drive:   1.35,
+					Mix:     0.28,
+				},
 			},
 		},
 	}
@@ -2543,6 +1968,7 @@ func loadConfig(path string) (appConfig, error) {
 	cfg.Server.JitterMinPkts = normalizeJitterMinPackets(cfg.Server.JitterMinPkts)
 	cfg.Server.Opus = normalizeOpusConfig(cfg.Server.Opus)
 	normalizeServerListenPort(&cfg.Server)
+	normalizeModulesConfig(&cfg.Modules)
 	if err := validateConfig(cfg); err != nil {
 		return appConfig{}, err
 	}
@@ -2588,6 +2014,79 @@ func normalizeServerListenPort(s *serverConfig) {
 	s.LegacyUdpAddr = ""
 }
 
+func normalizeModulesConfig(m *modulesConfig) {
+	if m == nil {
+		return
+	}
+	// Migrate legacy flat layout into the new generators/dsp layout when missing.
+	if m.Noise != nil {
+		if m.DSP.Noise == nil {
+			m.DSP.Noise = &noiseDSPConfig{
+				Enabled:           m.Noise.Enabled,
+				SignalDependent:   m.Noise.SignalDependent,
+				MinNoiseDB:        m.Noise.MinNoiseDB,
+				MaxNoiseDB:        m.Noise.MaxNoiseDB,
+				NoiseGain:         m.Noise.NoiseGain,
+				NoiseDistribution: m.Noise.NoiseDistribution,
+				ThermalLowpassHz:  m.Noise.ThermalLowpassHz,
+			}
+		}
+		if m.DSP.Squelch == nil {
+			thresholdPct := 5.0
+			if m.Noise.SignalDependent && m.Noise.MaxNoiseDB > m.Noise.MinNoiseDB {
+				thresholdPct = 10.0 + 90.0*((m.Noise.MaxNoiseDB-m.Noise.SquelchThresholdDB)/(m.Noise.MaxNoiseDB-m.Noise.MinNoiseDB))
+				if thresholdPct < 0 {
+					thresholdPct = 0
+				}
+				if thresholdPct > 100 {
+					thresholdPct = 100
+				}
+			}
+			m.DSP.Squelch = &squelchDSPConfig{
+				Enabled:                 m.Noise.Enabled,
+				ThresholdPercent:        thresholdPct,
+				SquelchMinMs:            m.Noise.SquelchMinMs,
+				SquelchMaxMs:            m.Noise.SquelchMaxMs,
+				NoiseGain:               m.Noise.NoiseGain,
+				TailNoiseDB:             m.Noise.TailNoiseDB,
+				TailMinMs:               m.Noise.TailMinMs,
+				TailMaxMs:               m.Noise.TailMaxMs,
+				SynthSilenceTailPackets: m.Noise.SynthSilenceTailPackets,
+			}
+		}
+	}
+	if m.Click != nil {
+		if m.DSP.Pops == nil {
+			m.DSP.Pops = &popsConfig{
+				Enabled:             m.Click.Enabled,
+				Pops:                m.Click.Pops,
+				ClickDB:             m.Click.ClickDB,
+				ClickToneHz:         m.Click.ClickToneHz,
+				GlitchIntervalMaxMs: m.Click.GlitchIntervalMaxMs,
+				GlitchFreqMinHz:     m.Click.GlitchFreqMinHz,
+				GlitchFreqMaxHz:     m.Click.GlitchFreqMaxHz,
+				GlitchLevelMinDB:    m.Click.GlitchLevelMinDB,
+				GlitchLevelMaxDB:    m.Click.GlitchLevelMaxDB,
+			}
+		}
+		if m.DSP.Clicks == nil {
+			m.DSP.Clicks = &clicksConfig{
+				Enabled:  m.Click.Enabled,
+				Impulses: m.Click.Impulses,
+			}
+		}
+	}
+	if m.Filter != nil && m.DSP.Filter == nil {
+		m.DSP.Filter = m.Filter
+	}
+	if m.Compressor != nil && m.DSP.Compressor == nil {
+		m.DSP.Compressor = m.Compressor
+	}
+	if m.Distortion != nil && m.DSP.Distortion == nil {
+		m.DSP.Distortion = m.Distortion
+	}
+}
+
 func validateConfig(cfg appConfig) error {
 	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
 		return errors.New("server.port must be between 1 and 65535")
@@ -2622,96 +2121,108 @@ func validateConfig(cfg appConfig) error {
 	if cfg.Server.TransmitTimeoutSec < 0 {
 		return errors.New("server.transmit_timeout must be >= 0")
 	}
-	if cfg.Modules.Compressor != nil && cfg.Modules.Compressor.Enabled {
-		if cfg.Modules.Compressor.Ratio <= 0 {
+	if cfg.Modules.DSP.Compressor != nil && cfg.Modules.DSP.Compressor.Enabled {
+		if cfg.Modules.DSP.Compressor.Ratio <= 0 {
 			return errors.New("modules.compressor.ratio must be > 0")
 		}
 	}
-	if cfg.Modules.Noise != nil && cfg.Modules.Noise.Enabled {
-		if cfg.Modules.Noise.NoiseGain <= 0 {
-			return errors.New("modules.noise.noise_gain must be > 0")
+	if cfg.Modules.DSP.Noise != nil && cfg.Modules.DSP.Noise.Enabled {
+		if cfg.Modules.DSP.Noise.NoiseGain <= 0 {
+			return errors.New("modules.dsp.noise.noise_gain must be > 0")
 		}
-		if cfg.Modules.Noise.SquelchShotsMinS < 0 {
-			return errors.New("modules.noise.squelch_shots_min_s must be >= 0")
+		if cfg.Modules.DSP.Noise.NoiseDistribution == "" {
+			cfg.Modules.DSP.Noise.NoiseDistribution = "gaussian"
 		}
-		if cfg.Modules.Noise.SquelchShotsMaxS < 0 {
-			return errors.New("modules.noise.squelch_shots_max_s must be >= 0")
+		if cfg.Modules.DSP.Noise.NoiseDistribution != "gaussian" && cfg.Modules.DSP.Noise.NoiseDistribution != "uniform" {
+			return errors.New("modules.dsp.noise.noise_distribution must be gaussian or uniform")
 		}
-		if cfg.Modules.Noise.SquelchShotsMaxS > 0 {
-			if cfg.Modules.Noise.SquelchShotsMinS <= 0 {
-				return errors.New("modules.noise.squelch_shots_min_s must be > 0 when squelch shots are enabled")
-			}
-			if cfg.Modules.Noise.SquelchShotsMaxS < cfg.Modules.Noise.SquelchShotsMinS {
-				return errors.New("modules.noise.squelch_shots_max_s must be >= squelch_shots_min_s")
-			}
+		if cfg.Modules.DSP.Noise.ThermalLowpassHz < 0 {
+			return errors.New("modules.dsp.noise.thermal_lowpass_hz must be >= 0")
 		}
-		if cfg.Modules.Noise.SquelchMinMs <= 0 || cfg.Modules.Noise.SquelchMaxMs < cfg.Modules.Noise.SquelchMinMs {
-			return errors.New("modules.noise squelch range is invalid")
-		}
-		if cfg.Modules.Noise.TailMinMs <= 0 || cfg.Modules.Noise.TailMaxMs < cfg.Modules.Noise.TailMinMs {
-			return errors.New("modules.noise tail range is invalid")
-		}
-		if cfg.Modules.Noise.NoiseDistribution == "" {
-			cfg.Modules.Noise.NoiseDistribution = "gaussian"
-		}
-		if cfg.Modules.Noise.NoiseDistribution != "gaussian" && cfg.Modules.Noise.NoiseDistribution != "uniform" {
-			return errors.New("modules.noise.noise_distribution must be gaussian or uniform")
-		}
-		if cfg.Modules.Noise.ThermalLowpassHz < 0 {
-			return errors.New("modules.noise.thermal_lowpass_hz must be >= 0")
-		}
-		if cfg.Modules.Noise.SynthSilenceTailPackets < 0 {
-			return errors.New("modules.noise.synth_silence_tail_packets must be >= 0")
+		if cfg.Modules.DSP.Noise.MaxNoiseDB < cfg.Modules.DSP.Noise.MinNoiseDB {
+			return errors.New("modules.dsp.noise min/max noise range is invalid")
 		}
 	}
-	if cfg.Modules.Click != nil && cfg.Modules.Click.Enabled {
-		pops := mergeClickPops(*cfg.Modules.Click)
+	if cfg.Modules.DSP.Squelch != nil && cfg.Modules.DSP.Squelch.Enabled {
+		if cfg.Modules.DSP.Squelch.ThresholdPercent < 0 || cfg.Modules.DSP.Squelch.ThresholdPercent > 100 {
+			return errors.New("modules.dsp.squelch.threshold_percent must be in [0..100]")
+		}
+		if cfg.Modules.DSP.Squelch.NoiseGain <= 0 {
+			return errors.New("modules.dsp.squelch.noise_gain must be > 0")
+		}
+		if cfg.Modules.DSP.Squelch.SquelchMinMs <= 0 || cfg.Modules.DSP.Squelch.SquelchMaxMs < cfg.Modules.DSP.Squelch.SquelchMinMs {
+			return errors.New("modules.dsp.squelch squelch range is invalid")
+		}
+		if cfg.Modules.DSP.Squelch.TailMinMs <= 0 || cfg.Modules.DSP.Squelch.TailMaxMs < cfg.Modules.DSP.Squelch.TailMinMs {
+			return errors.New("modules.dsp.squelch tail range is invalid")
+		}
+		if cfg.Modules.DSP.Squelch.SynthSilenceTailPackets < 0 {
+			return errors.New("modules.dsp.squelch.synth_silence_tail_packets must be >= 0")
+		}
+	}
+	if cfg.Modules.DSP.Pops != nil && cfg.Modules.DSP.Pops.Enabled {
+		pops := mergePopsConfig(*cfg.Modules.DSP.Pops)
 		if math.IsNaN(pops.ClickDB) || math.IsInf(pops.ClickDB, 0) {
-			return errors.New("modules.click pops.click_db must be a finite number")
+			return errors.New("modules.dsp.pops.click_db must be a finite number")
+		}
+		if pops.ClickToneHz != 0 && (math.IsNaN(pops.ClickToneHz) || math.IsInf(pops.ClickToneHz, 0) || pops.ClickToneHz <= 0) {
+			return errors.New("modules.dsp.pops.click_tone_hz must be > 0 when set")
 		}
 		if pops.GlitchIntervalMaxMs < 0 {
-			return errors.New("modules.click pops.glitch_interval_max_ms must be >= 0")
+			return errors.New("modules.dsp.pops.glitch_interval_max_ms must be >= 0")
 		}
 		if math.IsNaN(pops.GlitchFreqMinHz) || math.IsInf(pops.GlitchFreqMinHz, 0) ||
 			math.IsNaN(pops.GlitchFreqMaxHz) || math.IsInf(pops.GlitchFreqMaxHz, 0) {
-			return errors.New("modules.click pops glitch_freq range must be finite")
+			return errors.New("modules.dsp.pops glitch_freq range must be finite")
 		}
 		if pops.GlitchFreqMinHz <= 0 || pops.GlitchFreqMaxHz < pops.GlitchFreqMinHz {
-			return errors.New("modules.click pops glitch_freq range is invalid")
+			return errors.New("modules.dsp.pops glitch_freq range is invalid")
 		}
 		if math.IsNaN(pops.GlitchLevelMinDB) || math.IsInf(pops.GlitchLevelMinDB, 0) ||
 			math.IsNaN(pops.GlitchLevelMaxDB) || math.IsInf(pops.GlitchLevelMaxDB, 0) {
-			return errors.New("modules.click pops glitch_level range must be finite")
+			return errors.New("modules.dsp.pops glitch_level range must be finite")
 		}
 		if pops.GlitchLevelMaxDB < pops.GlitchLevelMinDB {
-			return errors.New("modules.click pops glitch_level range is invalid")
+			return errors.New("modules.dsp.pops glitch_level range is invalid")
 		}
-		if cfg.Modules.Click.Impulses != nil && cfg.Modules.Click.Impulses.Enabled {
-			im := cfg.Modules.Click.Impulses
+	}
+	if cfg.Modules.DSP.Clicks != nil && cfg.Modules.DSP.Clicks.Enabled {
+		if cfg.Modules.DSP.Clicks.MultiClientRapidMs < 0 {
+			return errors.New("modules.dsp.clicks.multi_client_rapid_ms must be >= 0")
+		}
+		if cfg.Modules.DSP.Clicks.Impulses != nil && cfg.Modules.DSP.Clicks.Impulses.Enabled {
+			im := cfg.Modules.DSP.Clicks.Impulses
 			if im.ProbAtWeakSignal < 0 || im.ProbAtWeakSignal > 1 || im.ProbAtStrongSignal < 0 || im.ProbAtStrongSignal > 1 {
-				return errors.New("modules.click.impulses prob_at_*_signal must be in [0..1]")
+				return errors.New("modules.dsp.clicks.impulses prob_at_*_signal must be in [0..1]")
 			}
 			if math.IsNaN(im.GainDB) || math.IsInf(im.GainDB, 0) {
-				return errors.New("modules.click.impulses.gain_db must be finite")
+				return errors.New("modules.dsp.clicks.impulses.gain_db must be finite")
 			}
 		}
 	}
-	if cfg.Modules.Distortion != nil && cfg.Modules.Distortion.Enabled {
-		if cfg.Modules.Distortion.Mix < 0 || cfg.Modules.Distortion.Mix > 1 {
-			return errors.New("modules.distortion.mix must be in [0..1]")
+	if cfg.Modules.DSP.Distortion != nil && cfg.Modules.DSP.Distortion.Enabled {
+		if cfg.Modules.DSP.Distortion.Mix < 0 || cfg.Modules.DSP.Distortion.Mix > 1 {
+			return errors.New("modules.dsp.distortion.mix must be in [0..1]")
+		}
+		if math.IsNaN(cfg.Modules.DSP.Distortion.MultiClientDriveBoost) || math.IsInf(cfg.Modules.DSP.Distortion.MultiClientDriveBoost, 0) ||
+			math.IsNaN(cfg.Modules.DSP.Distortion.MultiClientMixBoost) || math.IsInf(cfg.Modules.DSP.Distortion.MultiClientMixBoost, 0) {
+			return errors.New("modules.dsp.distortion multi_client_*_boost must be finite")
+		}
+		if cfg.Modules.DSP.Distortion.MultiClientDriveBoost < 0 || cfg.Modules.DSP.Distortion.MultiClientMixBoost < 0 {
+			return errors.New("modules.dsp.distortion multi_client_*_boost must be >= 0")
 		}
 	}
-	if cfg.Modules.Filter != nil && cfg.Modules.Filter.Enabled {
-		if math.IsNaN(cfg.Modules.Filter.LowCutHz) || math.IsInf(cfg.Modules.Filter.LowCutHz, 0) ||
-			math.IsNaN(cfg.Modules.Filter.HighCutHz) || math.IsInf(cfg.Modules.Filter.HighCutHz, 0) {
-			return errors.New("modules.filter cutoff range must be finite")
+	if cfg.Modules.DSP.Filter != nil && cfg.Modules.DSP.Filter.Enabled {
+		if math.IsNaN(cfg.Modules.DSP.Filter.LowCutHz) || math.IsInf(cfg.Modules.DSP.Filter.LowCutHz, 0) ||
+			math.IsNaN(cfg.Modules.DSP.Filter.HighCutHz) || math.IsInf(cfg.Modules.DSP.Filter.HighCutHz, 0) {
+			return errors.New("modules.dsp.filter cutoff range must be finite")
 		}
-		if cfg.Modules.Filter.LowCutHz < 0 || cfg.Modules.Filter.HighCutHz < 0 {
-			return errors.New("modules.filter cutoff range is invalid")
+		if cfg.Modules.DSP.Filter.LowCutHz < 0 || cfg.Modules.DSP.Filter.HighCutHz < 0 {
+			return errors.New("modules.dsp.filter cutoff range is invalid")
 		}
-		if cfg.Modules.Filter.LowCutHz > 0 && cfg.Modules.Filter.HighCutHz > 0 &&
-			cfg.Modules.Filter.HighCutHz <= cfg.Modules.Filter.LowCutHz {
-			return errors.New("modules.filter cutoff range is invalid")
+		if cfg.Modules.DSP.Filter.LowCutHz > 0 && cfg.Modules.DSP.Filter.HighCutHz > 0 &&
+			cfg.Modules.DSP.Filter.HighCutHz <= cfg.Modules.DSP.Filter.LowCutHz {
+			return errors.New("modules.dsp.filter cutoff range is invalid")
 		}
 	}
 	return nil
