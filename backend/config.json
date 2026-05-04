@@ -21,8 +21,8 @@
     "generators": {
       "squelch_shots": {
         "enabled": true,
-        "interval_min_ms": 5000,
-        "interval_max_ms": 15000,
+        "interval_min_ms": 80000,
+        "interval_max_ms": 600000,
         "silence_min_ms": 50,
         "silence_max_ms": 200,
         "signal_min_percent": 4.0,
