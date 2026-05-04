@@ -104,6 +104,7 @@ type modulesConfig struct {
 
 type generatorsModulesConfig struct {
 	// Reserved for non-DSP frame initiators.
+	SquelchShots *squelchShotsGeneratorConfig `json:"squelch_shots,omitempty"`
 }
 
 type dspModulesConfig struct {
@@ -141,6 +142,19 @@ type squelchDSPConfig struct {
 	// SynthSilenceTailPackets: zero-PCM frames after each squelch-generated burst tail.
 	// 0 = default jitter_min_packets+2 (min 4).
 	SynthSilenceTailPackets int `json:"synth_silence_tail_packets,omitempty"`
+}
+
+type squelchShotsGeneratorConfig struct {
+	Enabled bool `json:"enabled"`
+	// Random timer range before a shot is started.
+	IntervalMinMs int `json:"interval_min_ms"`
+	IntervalMaxMs int `json:"interval_max_ms"`
+	// Random duration of "silent transmission" after the start tick.
+	SilenceMinMs int `json:"silence_min_ms"`
+	SilenceMaxMs int `json:"silence_max_ms"`
+	// Random signal level range used for generated transmission (0..100).
+	SignalMinPercent float64 `json:"signal_min_percent"`
+	SignalMaxPercent float64 `json:"signal_max_percent"`
 }
 
 type compressorConfig struct {
@@ -1888,7 +1902,17 @@ func defaultConfig() appConfig {
 			TransmitTimeoutSec: 0,
 		},
 		Modules: modulesConfig{
-			Generators: generatorsModulesConfig{},
+			Generators: generatorsModulesConfig{
+				SquelchShots: &squelchShotsGeneratorConfig{
+					Enabled:          false,
+					IntervalMinMs:    60000,
+					IntervalMaxMs:    180000,
+					SilenceMinMs:     50,
+					SilenceMaxMs:     200,
+					SignalMinPercent: 4.0,
+					SignalMaxPercent: 18.0,
+				},
+			},
 			DSP: dspModulesConfig{
 				Clicks: &clicksConfig{
 					Enabled: true,
@@ -2141,6 +2165,22 @@ func validateConfig(cfg appConfig) error {
 		}
 		if cfg.Modules.DSP.Noise.MaxNoiseDB < cfg.Modules.DSP.Noise.MinNoiseDB {
 			return errors.New("modules.dsp.noise min/max noise range is invalid")
+		}
+	}
+	if cfg.Modules.Generators.SquelchShots != nil && cfg.Modules.Generators.SquelchShots.Enabled {
+		shots := cfg.Modules.Generators.SquelchShots
+		if shots.IntervalMinMs <= 0 || shots.IntervalMaxMs < shots.IntervalMinMs {
+			return errors.New("modules.generators.squelch_shots interval range is invalid")
+		}
+		if shots.SilenceMinMs <= 0 || shots.SilenceMaxMs < shots.SilenceMinMs {
+			return errors.New("modules.generators.squelch_shots silence range is invalid")
+		}
+		if math.IsNaN(shots.SignalMinPercent) || math.IsInf(shots.SignalMinPercent, 0) ||
+			math.IsNaN(shots.SignalMaxPercent) || math.IsInf(shots.SignalMaxPercent, 0) {
+			return errors.New("modules.generators.squelch_shots signal percent range must be finite")
+		}
+		if shots.SignalMinPercent < 0 || shots.SignalMaxPercent > 100 || shots.SignalMaxPercent < shots.SignalMinPercent {
+			return errors.New("modules.generators.squelch_shots signal percent range is invalid")
 		}
 	}
 	if cfg.Modules.DSP.Squelch != nil && cfg.Modules.DSP.Squelch.Enabled {

@@ -1,8 +1,11 @@
 package main
 
 func buildChannelModuleSets(mcfg modulesConfig) (generators []audioModule, dsp []audioModule) {
-	generators = make([]audioModule, 0)
+	generators = make([]audioModule, 0, 1)
 	dsp = make([]audioModule, 0, 7)
+	if mcfg.Generators.SquelchShots != nil && mcfg.Generators.SquelchShots.Enabled {
+		generators = append(generators, newSquelchShotsGenerator(*mcfg.Generators.SquelchShots))
+	}
 	if mcfg.DSP.Pops != nil && mcfg.DSP.Pops.Enabled {
 		dsp = append(dsp, newPopsModule(packetDur, *mcfg.DSP.Pops))
 	}
