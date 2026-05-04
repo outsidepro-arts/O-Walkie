@@ -137,6 +137,11 @@ type squelchDSPConfig struct {
 	ThresholdPercent float64 `json:"threshold_percent"`
 	SquelchMinMs     int     `json:"squelch_min_ms"`
 	SquelchMaxMs     int     `json:"squelch_max_ms"`
+	// Squelch hiss uses the same white-noise generator shape as modules.dsp.noise (not its level mapping).
+	// NoiseDistribution: "gaussian" (default) or "uniform" (legacy per-sample [-1,1]).
+	NoiseDistribution string `json:"noise_distribution,omitempty"`
+	// ThermalLowpassHz: moving-average lowpass (~SR/window); 0 disables.
+	ThermalLowpassHz float64 `json:"thermal_lowpass_hz,omitempty"`
 	NoiseGain        float64 `json:"noise_gain"`
 	TailNoiseDB      float64 `json:"tail_noise_db"`
 	TailMinMs        int     `json:"tail_min_ms"`
@@ -168,18 +173,8 @@ type compressorConfig struct {
 	MakeupDB    float64 `json:"makeup_db"`
 }
 
-// clickPopsConfig: sinusoidal PTT / in-TX pops (legacy flat click_* merged here when pops omitted).
-type clickPopsConfig struct {
-	ClickDB             float64 `json:"click_db"`
-	ClickToneHz         float64 `json:"click_tone_hz,omitempty"`
-	GlitchIntervalMaxMs int     `json:"glitch_interval_max_ms"`
-	GlitchFreqMinHz     float64 `json:"glitch_freq_min_hz"`
-	GlitchFreqMaxHz     float64 `json:"glitch_freq_max_hz"`
-	GlitchLevelMinDB    float64 `json:"glitch_level_min_db"`
-	GlitchLevelMaxDB    float64 `json:"glitch_level_max_db"`
-}
-
-type clickImpulsesConfig struct {
+// legacyClickImpulses: only for migrating legacy modules.click JSON (nested impulses block).
+type legacyClickImpulses struct {
 	Enabled            bool    `json:"enabled"`
 	ProbAtWeakSignal   float64 `json:"prob_at_weak_signal"`
 	ProbAtStrongSignal float64 `json:"prob_at_strong_signal"`
@@ -187,15 +182,17 @@ type clickImpulsesConfig struct {
 }
 
 type clicksConfig struct {
-	Enabled            bool                 `json:"enabled"`
-	Impulses           *clickImpulsesConfig `json:"impulses,omitempty"`
-	MultiClientRapidMs int                  `json:"multi_client_rapid_ms,omitempty"`
+	Enabled            bool `json:"enabled"`
+	MultiClientRapidMs int  `json:"multi_client_rapid_ms,omitempty"`
+	// RF-style sparse impulses (flat under modules.dsp.clicks); on/off is clicks.enabled only.
+	ImpulseProbAtWeak   float64 `json:"impulse_prob_at_weak_signal,omitempty"`
+	ImpulseProbAtStrong float64 `json:"impulse_prob_at_strong_signal,omitempty"`
+	ImpulseGainDB       float64 `json:"impulse_gain_db,omitempty"`
 }
 
+// popsConfig: sinusoidal PTT / in-TX glitch pops (flat under modules.dsp.pops).
 type popsConfig struct {
-	Enabled bool             `json:"enabled"`
-	Pops    *clickPopsConfig `json:"pops,omitempty"`
-	// Legacy flat fields (used when pops is nil).
+	Enabled             bool    `json:"enabled"`
 	ClickDB             float64 `json:"click_db,omitempty"`
 	ClickToneHz         float64 `json:"click_tone_hz,omitempty"`
 	GlitchIntervalMaxMs int     `json:"glitch_interval_max_ms,omitempty"`
@@ -223,7 +220,6 @@ type legacyNoiseConfig struct {
 }
 type legacyClickConfig struct {
 	Enabled             bool                 `json:"enabled"`
-	Pops                *clickPopsConfig     `json:"pops,omitempty"`
 	ClickDB             float64              `json:"click_db,omitempty"`
 	ClickToneHz         float64              `json:"click_tone_hz,omitempty"`
 	GlitchIntervalMaxMs int                  `json:"glitch_interval_max_ms,omitempty"`
@@ -231,7 +227,7 @@ type legacyClickConfig struct {
 	GlitchFreqMaxHz     float64              `json:"glitch_freq_max_hz,omitempty"`
 	GlitchLevelMinDB    float64              `json:"glitch_level_min_db,omitempty"`
 	GlitchLevelMaxDB    float64              `json:"glitch_level_max_db,omitempty"`
-	Impulses            *clickImpulsesConfig `json:"impulses,omitempty"`
+	Impulses            *legacyClickImpulses `json:"impulses,omitempty"`
 }
 
 type filterConfig struct {
@@ -1918,26 +1914,21 @@ func defaultConfig() appConfig {
 			DSP: dspModulesConfig{
 				Chain: []string{"pops", "clicks", "noise", "squelch", "filter", "compressor", "distortion"},
 				Clicks: &clicksConfig{
-					Enabled: true,
-					Impulses: &clickImpulsesConfig{
-						Enabled:            false,
-						ProbAtWeakSignal:   0.10,
-						ProbAtStrongSignal: 0.01,
-						GainDB:             -8.0,
-					},
-					MultiClientRapidMs: 0, // 0 = every frame while multi-client TX is active.
+					Enabled:             false,
+					ImpulseProbAtWeak:   0.10,
+					ImpulseProbAtStrong: 0.01,
+					ImpulseGainDB:       -8.0,
+					MultiClientRapidMs:  0, // 0 = every frame while multi-client TX is active.
 				},
 				Pops: &popsConfig{
-					Enabled: true,
-					Pops: &clickPopsConfig{
-						ClickDB:             -8.0,
-						ClickToneHz:         200.0,
-						GlitchIntervalMaxMs: 0,
-						GlitchFreqMinHz:     120.0,
-						GlitchFreqMaxHz:     360.0,
-						GlitchLevelMinDB:    -14.0,
-						GlitchLevelMaxDB:    -6.0,
-					},
+					Enabled:             true,
+					ClickDB:             -8.0,
+					ClickToneHz:         200.0,
+					GlitchIntervalMaxMs: 0,
+					GlitchFreqMinHz:     120.0,
+					GlitchFreqMaxHz:     360.0,
+					GlitchLevelMinDB:    -14.0,
+					GlitchLevelMaxDB:    -6.0,
 				},
 				Noise: &noiseDSPConfig{
 					Enabled:           true,
@@ -1953,6 +1944,8 @@ func defaultConfig() appConfig {
 					ThresholdPercent:        5.0,
 					SquelchMinMs:            50,
 					SquelchMaxMs:            150,
+					NoiseDistribution:       "gaussian",
+					ThermalLowpassHz:        8000,
 					NoiseGain:               1200.0,
 					TailNoiseDB:             0.0,
 					TailMinMs:               15,
@@ -2082,6 +2075,8 @@ func normalizeModulesConfig(m *modulesConfig) {
 				ThresholdPercent:        thresholdPct,
 				SquelchMinMs:            m.Noise.SquelchMinMs,
 				SquelchMaxMs:            m.Noise.SquelchMaxMs,
+				NoiseDistribution:       m.Noise.NoiseDistribution,
+				ThermalLowpassHz:        m.Noise.ThermalLowpassHz,
 				NoiseGain:               m.Noise.NoiseGain,
 				TailNoiseDB:             m.Noise.TailNoiseDB,
 				TailMinMs:               m.Noise.TailMinMs,
@@ -2094,7 +2089,6 @@ func normalizeModulesConfig(m *modulesConfig) {
 		if m.DSP.Pops == nil {
 			m.DSP.Pops = &popsConfig{
 				Enabled:             m.Click.Enabled,
-				Pops:                m.Click.Pops,
 				ClickDB:             m.Click.ClickDB,
 				ClickToneHz:         m.Click.ClickToneHz,
 				GlitchIntervalMaxMs: m.Click.GlitchIntervalMaxMs,
@@ -2105,10 +2099,13 @@ func normalizeModulesConfig(m *modulesConfig) {
 			}
 		}
 		if m.DSP.Clicks == nil {
-			m.DSP.Clicks = &clicksConfig{
-				Enabled:  m.Click.Enabled,
-				Impulses: m.Click.Impulses,
+			cc := clicksConfig{Enabled: m.Click.Enabled}
+			if m.Click.Impulses != nil {
+				cc.ImpulseProbAtWeak = m.Click.Impulses.ProbAtWeakSignal
+				cc.ImpulseProbAtStrong = m.Click.Impulses.ProbAtStrongSignal
+				cc.ImpulseGainDB = m.Click.Impulses.GainDB
 			}
+			m.DSP.Clicks = &cc
 		}
 	}
 	if m.Filter != nil && m.DSP.Filter == nil {
@@ -2216,6 +2213,18 @@ func validateConfig(cfg appConfig) error {
 		if cfg.Modules.DSP.Squelch.NoiseGain <= 0 {
 			return errors.New("modules.dsp.squelch.noise_gain must be > 0")
 		}
+		if math.IsNaN(cfg.Modules.DSP.Squelch.TailNoiseDB) || math.IsInf(cfg.Modules.DSP.Squelch.TailNoiseDB, 0) {
+			return errors.New("modules.dsp.squelch.tail_noise_db must be finite")
+		}
+		if cfg.Modules.DSP.Squelch.NoiseDistribution == "" {
+			cfg.Modules.DSP.Squelch.NoiseDistribution = "gaussian"
+		}
+		if cfg.Modules.DSP.Squelch.NoiseDistribution != "gaussian" && cfg.Modules.DSP.Squelch.NoiseDistribution != "uniform" {
+			return errors.New("modules.dsp.squelch.noise_distribution must be gaussian or uniform")
+		}
+		if cfg.Modules.DSP.Squelch.ThermalLowpassHz < 0 {
+			return errors.New("modules.dsp.squelch.thermal_lowpass_hz must be >= 0")
+		}
 		if cfg.Modules.DSP.Squelch.SquelchMinMs <= 0 || cfg.Modules.DSP.Squelch.SquelchMaxMs < cfg.Modules.DSP.Squelch.SquelchMinMs {
 			return errors.New("modules.dsp.squelch squelch range is invalid")
 		}
@@ -2227,28 +2236,28 @@ func validateConfig(cfg appConfig) error {
 		}
 	}
 	if cfg.Modules.DSP.Pops != nil && cfg.Modules.DSP.Pops.Enabled {
-		pops := mergePopsConfig(*cfg.Modules.DSP.Pops)
-		if math.IsNaN(pops.ClickDB) || math.IsInf(pops.ClickDB, 0) {
+		p := cfg.Modules.DSP.Pops
+		if math.IsNaN(p.ClickDB) || math.IsInf(p.ClickDB, 0) {
 			return errors.New("modules.dsp.pops.click_db must be a finite number")
 		}
-		if pops.ClickToneHz != 0 && (math.IsNaN(pops.ClickToneHz) || math.IsInf(pops.ClickToneHz, 0) || pops.ClickToneHz <= 0) {
+		if p.ClickToneHz != 0 && (math.IsNaN(p.ClickToneHz) || math.IsInf(p.ClickToneHz, 0) || p.ClickToneHz <= 0) {
 			return errors.New("modules.dsp.pops.click_tone_hz must be > 0 when set")
 		}
-		if pops.GlitchIntervalMaxMs < 0 {
+		if p.GlitchIntervalMaxMs < 0 {
 			return errors.New("modules.dsp.pops.glitch_interval_max_ms must be >= 0")
 		}
-		if math.IsNaN(pops.GlitchFreqMinHz) || math.IsInf(pops.GlitchFreqMinHz, 0) ||
-			math.IsNaN(pops.GlitchFreqMaxHz) || math.IsInf(pops.GlitchFreqMaxHz, 0) {
+		if math.IsNaN(p.GlitchFreqMinHz) || math.IsInf(p.GlitchFreqMinHz, 0) ||
+			math.IsNaN(p.GlitchFreqMaxHz) || math.IsInf(p.GlitchFreqMaxHz, 0) {
 			return errors.New("modules.dsp.pops glitch_freq range must be finite")
 		}
-		if pops.GlitchFreqMinHz <= 0 || pops.GlitchFreqMaxHz < pops.GlitchFreqMinHz {
+		if p.GlitchFreqMinHz <= 0 || p.GlitchFreqMaxHz < p.GlitchFreqMinHz {
 			return errors.New("modules.dsp.pops glitch_freq range is invalid")
 		}
-		if math.IsNaN(pops.GlitchLevelMinDB) || math.IsInf(pops.GlitchLevelMinDB, 0) ||
-			math.IsNaN(pops.GlitchLevelMaxDB) || math.IsInf(pops.GlitchLevelMaxDB, 0) {
+		if math.IsNaN(p.GlitchLevelMinDB) || math.IsInf(p.GlitchLevelMinDB, 0) ||
+			math.IsNaN(p.GlitchLevelMaxDB) || math.IsInf(p.GlitchLevelMaxDB, 0) {
 			return errors.New("modules.dsp.pops glitch_level range must be finite")
 		}
-		if pops.GlitchLevelMaxDB < pops.GlitchLevelMinDB {
+		if p.GlitchLevelMaxDB < p.GlitchLevelMinDB {
 			return errors.New("modules.dsp.pops glitch_level range is invalid")
 		}
 	}
@@ -2256,14 +2265,12 @@ func validateConfig(cfg appConfig) error {
 		if cfg.Modules.DSP.Clicks.MultiClientRapidMs < 0 {
 			return errors.New("modules.dsp.clicks.multi_client_rapid_ms must be >= 0")
 		}
-		if cfg.Modules.DSP.Clicks.Impulses != nil && cfg.Modules.DSP.Clicks.Impulses.Enabled {
-			im := cfg.Modules.DSP.Clicks.Impulses
-			if im.ProbAtWeakSignal < 0 || im.ProbAtWeakSignal > 1 || im.ProbAtStrongSignal < 0 || im.ProbAtStrongSignal > 1 {
-				return errors.New("modules.dsp.clicks.impulses prob_at_*_signal must be in [0..1]")
-			}
-			if math.IsNaN(im.GainDB) || math.IsInf(im.GainDB, 0) {
-				return errors.New("modules.dsp.clicks.impulses.gain_db must be finite")
-			}
+		c := cfg.Modules.DSP.Clicks
+		if c.ImpulseProbAtWeak < 0 || c.ImpulseProbAtWeak > 1 || c.ImpulseProbAtStrong < 0 || c.ImpulseProbAtStrong > 1 {
+			return errors.New("modules.dsp.clicks impulse_prob_at_*_signal must be in [0..1]")
+		}
+		if math.IsNaN(c.ImpulseGainDB) || math.IsInf(c.ImpulseGainDB, 0) {
+			return errors.New("modules.dsp.clicks.impulse_gain_db must be finite")
 		}
 	}
 	if cfg.Modules.DSP.Distortion != nil && cfg.Modules.DSP.Distortion.Enabled {

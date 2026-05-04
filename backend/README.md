@@ -35,9 +35,10 @@ go run ./cmd/relay ./config.json
 - `modules.dsp.noise.signal_dependent` controls whether noise level follows signal strength (`true`) or stays fixed at `min_noise_db` (`false`)
 - `modules.dsp.noise.noise_distribution` `gaussian` (default) or `uniform` (legacy per-sample [-1,1])
 - `modules.dsp.noise.thermal_lowpass_hz` moving-average lowpass (~sample_rate/window); `0` disables; default `8000` matches coarse thermal-noise proxy (see `examples/radio_noise/B_thermal_lp_8kHz.wav` at 48 kHz)
-- `modules.dsp.squelch.*` handles weak-signal gating and TX-end tail (`threshold_percent`, `squelch_min_ms`, `squelch_max_ms`, `tail_*`, `noise_gain`)
-- `modules.dsp.pops.pops.*` sinusoidal PTT start/end and in-TX glitch pops (`click_db`, `glitch_*`; legacy flat `click_db` / `glitch_*` still work if `pops` is omitted)
-- `modules.dsp.clicks.impulses` sparse RF-style impulses: `enabled`, `prob_at_weak_signal` / `prob_at_strong_signal`, `gain_db`; `multi_client_rapid_ms` accelerates clicks while multiple TX are active
+- `modules.dsp.squelch.*` handles weak-signal gating and TX-end tail (`threshold_percent`, `squelch_min_ms`, `squelch_max_ms`, `tail_noise_db`, `tail_*` ms, `noise_gain`)
+- `modules.dsp.squelch.noise_distribution` / `thermal_lowpass_hz` match the **noise generator** used in `modules.dsp.noise` (weak-signal burst and EOF tail both use `tail_noise_db` for level)
+- `modules.dsp.pops.*` sinusoidal PTT start/end and in-TX glitch pops (`click_db`, `click_tone_hz`, `glitch_*`)
+- `modules.dsp.clicks` sparse RF-style impulses (when `enabled`): `impulse_prob_at_weak_signal` / `impulse_prob_at_strong_signal`, `impulse_gain_db`; `multi_client_rapid_ms` accelerates clicks while multiple TX are active
 - `modules.dsp.filter.low_cut_hz` / `modules.dsp.filter.high_cut_hz` band-pass cutoff range for full channel stream
 - `modules.dsp.chain` ordered list of DSP plugin names (`pops`, `clicks`, `noise`, `squelch`, `filter`, `dispersion`, `compressor`, `distortion`); add `"dispersion"` where you want phase-dispersion in the chain
 - `modules.dsp.dispersion.*` cascaded allpass (flat magnitude, frequency-dependent phase): `stages` (1..512), `center_hz`, `resonance` (Q, >0), `spread_octaves`, `spread_style` `octaves`|`linear`; pure signal path, ignores TX/control events

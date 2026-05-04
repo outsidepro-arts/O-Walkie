@@ -125,8 +125,13 @@ type squelchDSPModule struct {
 }
 
 func newSquelchDSPModule(frameDuration time.Duration, cfg squelchDSPConfig) *squelchDSPModule {
+	distribution := cfg.NoiseDistribution
+	if strings.TrimSpace(distribution) == "" {
+		distribution = "gaussian"
+	}
+	cfg.NoiseDistribution = distribution
 	return &squelchDSPModule{
-		white:         newWhiteNoise("gaussian", 0),
+		white:         newWhiteNoise(distribution, cfg.ThermalLowpassHz),
 		frameDuration: frameDuration,
 		cfg:           cfg,
 	}

@@ -7,7 +7,8 @@ import (
 )
 
 type clicksModule struct {
-	impulses      *clickImpulsesConfig
+	probWeak      float64
+	probStrong    float64
 	impulseAmp    float64
 	rapidInterval time.Duration
 	rapidRemain   time.Duration
@@ -15,19 +16,18 @@ type clicksModule struct {
 
 func newClicksModule(cfg clicksConfig) *clicksModule {
 	m := &clicksModule{
-		impulses: cfg.Impulses,
+		probWeak:   cfg.ImpulseProbAtWeak,
+		probStrong: cfg.ImpulseProbAtStrong,
 	}
 	if cfg.MultiClientRapidMs > 0 {
 		m.rapidInterval = time.Duration(cfg.MultiClientRapidMs) * time.Millisecond
 	}
-	if cfg.Impulses != nil && cfg.Impulses.Enabled {
-		m.impulseAmp = 32767.0 * dbToLinear(cfg.Impulses.GainDB)
-		if m.impulseAmp < 0 {
-			m.impulseAmp = 0
-		}
-		if m.impulseAmp > 32767.0 {
-			m.impulseAmp = 32767.0
-		}
+	m.impulseAmp = 32767.0 * dbToLinear(cfg.ImpulseGainDB)
+	if m.impulseAmp < 0 {
+		m.impulseAmp = 0
+	}
+	if m.impulseAmp > 32767.0 {
+		m.impulseAmp = 32767.0
 	}
 	return m
 }
@@ -35,7 +35,7 @@ func newClicksModule(cfg clicksConfig) *clicksModule {
 func (m *clicksModule) Name() string { return "clicks" }
 
 func (m *clicksModule) Process(ctx *audioProcessContext) {
-	if m.impulses == nil || !m.impulses.Enabled || m.impulseAmp <= 0 || len(ctx.Mixed) == 0 {
+	if m.impulseAmp <= 0 || len(ctx.Mixed) == 0 {
 		return
 	}
 	// With multiple active transmitters we can accelerate click generation
@@ -57,7 +57,7 @@ func (m *clicksModule) Process(ctx *audioProcessContext) {
 	if ctx.Control.SignalByte != nil {
 		signalByte = *ctx.Control.SignalByte
 	}
-	p := mapSignalByteToImpulseProbability(signalByte, *m.impulses)
+	p := mapSignalByteToImpulseProbability(signalByte, m.probWeak, m.probStrong)
 	if p <= 0 || rand.Float64() >= p {
 		return
 	}
@@ -89,12 +89,11 @@ type popsModule struct {
 }
 
 func newPopsModule(frameDuration time.Duration, cfg popsConfig) *popsModule {
-	pops := mergePopsConfig(cfg)
-	clickToneHz := pops.ClickToneHz
+	clickToneHz := cfg.ClickToneHz
 	if clickToneHz <= 0 {
 		clickToneHz = 200.0
 	}
-	amp := 32767.0 * dbToLinear(pops.ClickDB)
+	amp := 32767.0 * dbToLinear(cfg.ClickDB)
 	if amp < 0 {
 		amp = 0
 	}
@@ -106,11 +105,11 @@ func newPopsModule(frameDuration time.Duration, cfg popsConfig) *popsModule {
 		freqHz:         clickToneHz,
 		burstSamples:   configuredSampleRate / 80, // ~12.5 ms
 		frameDuration:  frameDuration,
-		glitchMaxMs:    maxInt(pops.GlitchIntervalMaxMs, 0),
-		glitchFreqMin:  pops.GlitchFreqMinHz,
-		glitchFreqMax:  pops.GlitchFreqMaxHz,
-		glitchAmpMin:   32767.0 * dbToLinear(pops.GlitchLevelMinDB),
-		glitchAmpMax:   32767.0 * dbToLinear(pops.GlitchLevelMaxDB),
+		glitchMaxMs:    maxInt(cfg.GlitchIntervalMaxMs, 0),
+		glitchFreqMin:  cfg.GlitchFreqMinHz,
+		glitchFreqMax:  cfg.GlitchFreqMaxHz,
+		glitchAmpMin:   32767.0 * dbToLinear(cfg.GlitchLevelMinDB),
+		glitchAmpMax:   32767.0 * dbToLinear(cfg.GlitchLevelMaxDB),
 	}
 }
 
@@ -183,28 +182,13 @@ func (m *popsModule) injectClickWithParams(ctx *audioProcessContext, sign float6
 	}
 }
 
-func mergePopsConfig(cfg popsConfig) clickPopsConfig {
-	if cfg.Pops != nil {
-		return *cfg.Pops
-	}
-	return clickPopsConfig{
-		ClickDB:             cfg.ClickDB,
-		ClickToneHz:         cfg.ClickToneHz,
-		GlitchIntervalMaxMs: cfg.GlitchIntervalMaxMs,
-		GlitchFreqMinHz:     cfg.GlitchFreqMinHz,
-		GlitchFreqMaxHz:     cfg.GlitchFreqMaxHz,
-		GlitchLevelMinDB:    cfg.GlitchLevelMinDB,
-		GlitchLevelMaxDB:    cfg.GlitchLevelMaxDB,
-	}
-}
-
-func mapSignalByteToImpulseProbability(signalByte float64, c clickImpulsesConfig) float64 {
+func mapSignalByteToImpulseProbability(signalByte, probWeak, probStrong float64) float64 {
 	pct := (signalByte / 255.0) * 100.0
 	if pct <= 10.0 {
-		return c.ProbAtWeakSignal
+		return probWeak
 	}
 	if pct >= 100.0 {
-		return c.ProbAtStrongSignal
+		return probStrong
 	}
-	return c.ProbAtWeakSignal + ((pct-10.0)/90.0)*(c.ProbAtStrongSignal-c.ProbAtWeakSignal)
+	return probWeak + ((pct-10.0)/90.0)*(probStrong-probWeak)
 }
