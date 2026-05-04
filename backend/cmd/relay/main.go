@@ -114,6 +114,7 @@ type dspModulesConfig struct {
 	Noise      *noiseDSPConfig   `json:"noise,omitempty"`
 	Squelch    *squelchDSPConfig `json:"squelch,omitempty"`
 	Filter     *filterConfig     `json:"filter,omitempty"`
+	Dispersion *dispersionConfig `json:"dispersion,omitempty"`
 	Compressor *compressorConfig `json:"compressor,omitempty"`
 	Distortion *distortionConfig `json:"distortion,omitempty"`
 }
@@ -1963,6 +1964,14 @@ func defaultConfig() appConfig {
 					LowCutHz:  300.0,
 					HighCutHz: 3000.0,
 				},
+				Dispersion: &dispersionConfig{
+					Enabled:       false,
+					Stages:        24,
+					CenterHz:      800.0,
+					Resonance:     0.55,
+					SpreadOctaves: 0.12,
+					SpreadStyle:   "octaves",
+				},
 				Compressor: &compressorConfig{
 					Enabled:     true,
 					ThresholdDB: -18.0,
@@ -2187,7 +2196,7 @@ func validateConfig(cfg appConfig) error {
 	}
 	if len(cfg.Modules.DSP.Chain) > 0 {
 		allowed := map[string]struct{}{
-			"pops": {}, "clicks": {}, "noise": {}, "squelch": {}, "filter": {}, "compressor": {}, "distortion": {},
+			"pops": {}, "clicks": {}, "noise": {}, "squelch": {}, "filter": {}, "dispersion": {}, "compressor": {}, "distortion": {},
 		}
 		seen := make(map[string]struct{}, len(cfg.Modules.DSP.Chain))
 		for _, name := range cfg.Modules.DSP.Chain {
@@ -2280,6 +2289,36 @@ func validateConfig(cfg appConfig) error {
 		if cfg.Modules.DSP.Filter.LowCutHz > 0 && cfg.Modules.DSP.Filter.HighCutHz > 0 &&
 			cfg.Modules.DSP.Filter.HighCutHz <= cfg.Modules.DSP.Filter.LowCutHz {
 			return errors.New("modules.dsp.filter cutoff range is invalid")
+		}
+	}
+	if cfg.Modules.DSP.Dispersion != nil && cfg.Modules.DSP.Dispersion.Enabled {
+		d := cfg.Modules.DSP.Dispersion
+		sr := float64(cfg.Server.SampleRate)
+		if sr <= 0 {
+			return errors.New("server.sample_rate must be > 0 for modules.dsp.dispersion")
+		}
+		nyq := sr / dispersionNyquistDiv
+		if d.Stages < 1 || d.Stages > dispersionMaxStages {
+			return fmt.Errorf("modules.dsp.dispersion.stages must be in [1..%d]", dispersionMaxStages)
+		}
+		if math.IsNaN(d.CenterHz) || math.IsInf(d.CenterHz, 0) {
+			return errors.New("modules.dsp.dispersion.center_hz must be finite")
+		}
+		if d.CenterHz < dispersionMinHz || d.CenterHz > nyq {
+			return fmt.Errorf("modules.dsp.dispersion.center_hz must be in [%.g..%.g] Hz", dispersionMinHz, nyq)
+		}
+		if math.IsNaN(d.Resonance) || math.IsInf(d.Resonance, 0) || d.Resonance <= 0 {
+			return errors.New("modules.dsp.dispersion.resonance must be > 0")
+		}
+		if math.IsNaN(d.SpreadOctaves) || math.IsInf(d.SpreadOctaves, 0) {
+			return errors.New("modules.dsp.dispersion.spread_octaves must be finite")
+		}
+		if d.SpreadOctaves < -10 || d.SpreadOctaves > 10 {
+			return errors.New("modules.dsp.dispersion.spread_octaves must be in [-10..10]")
+		}
+		style := strings.ToLower(strings.TrimSpace(d.SpreadStyle))
+		if style != "" && style != "octaves" && style != "linear" {
+			return errors.New("modules.dsp.dispersion.spread_style must be octaves or linear")
 		}
 	}
 	return nil

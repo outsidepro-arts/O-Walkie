@@ -26,6 +26,7 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Backend relay: DSP-модуль `dispersion` (`dsp_dispersion.go`) — каскад allpass-биквадов с разводкой частот (октавы/линейно), как у open-source Diopser; только обработка `ctx.Mixed`, без `Control`; конфиг `modules.dsp.dispersion`, имя в `modules.dsp.chain` — `dispersion`.
 - Android: при активной **сотовой** телефонии (`CALL_STATE_OFFHOOK`) опционально снимается транспорт к relay (WS/UDP) с сохранением намерения пользователя; после `CALL_STATE_IDLE` выполняется `startCore` и переподключение. Настройка: Settings → «Приостанавливать прием при активном звонке» (`PhoneCallRelayPauseStore`, по умолчанию включено); статус в UI — «Пауза (телефонный звонок)». Не относится к VoIP/мессенджерам, только к `TelephonyManager` call state.
 - Backend relay: порядок DSP-цепочки сделан конфигурируемым через `modules.dsp.chain`; если поле отсутствует/пустое, в лог пишется `ERROR` и DSP-плагины полностью отключаются (без fallback).
 - Backend relay: добавлен новый generator-плагин `squelch_shots` (`gen_squelch_shots.go`) с конфигом диапазонов таймера, длительности silent-TX и уровня сигнала; модуль инициирует синтетический `TxStart`/silent `TxActive`/`TxEOF`, чтобы прогонять DSP-цепочку без реального входящего PCM.

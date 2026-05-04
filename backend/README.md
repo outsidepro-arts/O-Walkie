@@ -39,6 +39,8 @@ go run ./cmd/relay ./config.json
 - `modules.dsp.pops.pops.*` sinusoidal PTT start/end and in-TX glitch pops (`click_db`, `glitch_*`; legacy flat `click_db` / `glitch_*` still work if `pops` is omitted)
 - `modules.dsp.clicks.impulses` sparse RF-style impulses: `enabled`, `prob_at_weak_signal` / `prob_at_strong_signal`, `gain_db`; `multi_client_rapid_ms` accelerates clicks while multiple TX are active
 - `modules.dsp.filter.low_cut_hz` / `modules.dsp.filter.high_cut_hz` band-pass cutoff range for full channel stream
+- `modules.dsp.chain` ordered list of DSP plugin names (`pops`, `clicks`, `noise`, `squelch`, `filter`, `dispersion`, `compressor`, `distortion`); add `"dispersion"` where you want phase-dispersion in the chain
+- `modules.dsp.dispersion.*` cascaded allpass (flat magnitude, frequency-dependent phase): `stages` (1..512), `center_hz`, `resonance` (Q, >0), `spread_octaves`, `spread_style` `octaves`|`linear`; pure signal path, ignores TX/control events
 - `modules.dsp.compressor.*` compressor settings
 - `modules.dsp.distortion.*` distortion settings
 

@@ -9,7 +9,7 @@ var dspChainMissingLogOnce sync.Once
 
 func buildChannelModuleSets(mcfg modulesConfig) (generators []audioModule, dsp []audioModule) {
 	generators = make([]audioModule, 0, 1)
-	dsp = make([]audioModule, 0, 7)
+	dsp = make([]audioModule, 0, 8)
 	if mcfg.Generators.SquelchShots != nil && mcfg.Generators.SquelchShots.Enabled {
 		generators = append(generators, newSquelchShotsGenerator(*mcfg.Generators.SquelchShots))
 	}
@@ -34,6 +34,9 @@ func buildChannelModuleSets(mcfg modulesConfig) (generators []audioModule, dsp [
 	}
 	if mcfg.DSP.Filter != nil && mcfg.DSP.Filter.Enabled {
 		available["filter"] = newBandPassModule(configuredSampleRate, *mcfg.DSP.Filter)
+	}
+	if mcfg.DSP.Dispersion != nil && mcfg.DSP.Dispersion.Enabled {
+		available["dispersion"] = newDispersionDSPModule(configuredSampleRate, *mcfg.DSP.Dispersion)
 	}
 	if mcfg.DSP.Compressor != nil && mcfg.DSP.Compressor.Enabled {
 		available["compressor"] = newCompressorModule(configuredSampleRate, *mcfg.DSP.Compressor)
