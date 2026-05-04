@@ -30,6 +30,7 @@
       }
     },
     "dsp": {
+      "chain": ["compressor", "pops", "clicks", "noise", "squelch", "filter", "distortion"],
       "clicks": {
         "enabled": true,
         "multi_client_rapid_ms": 0,
@@ -73,7 +74,7 @@
       },
       "filter": {
         "enabled": true,
-        "low_cut_hz": 300.0,
+        "low_cut_hz": 210.0,
         "high_cut_hz": 0
       },
       "compressor": {

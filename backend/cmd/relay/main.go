@@ -108,6 +108,7 @@ type generatorsModulesConfig struct {
 }
 
 type dspModulesConfig struct {
+	Chain      []string          `json:"chain,omitempty"`
 	Clicks     *clicksConfig     `json:"clicks,omitempty"`
 	Pops       *popsConfig       `json:"pops,omitempty"`
 	Noise      *noiseDSPConfig   `json:"noise,omitempty"`
@@ -1914,6 +1915,7 @@ func defaultConfig() appConfig {
 				},
 			},
 			DSP: dspModulesConfig{
+				Chain: []string{"pops", "clicks", "noise", "squelch", "filter", "compressor", "distortion"},
 				Clicks: &clicksConfig{
 					Enabled: true,
 					Impulses: &clickImpulsesConfig{
@@ -2181,6 +2183,21 @@ func validateConfig(cfg appConfig) error {
 		}
 		if shots.SignalMinPercent < 0 || shots.SignalMaxPercent > 100 || shots.SignalMaxPercent < shots.SignalMinPercent {
 			return errors.New("modules.generators.squelch_shots signal percent range is invalid")
+		}
+	}
+	if len(cfg.Modules.DSP.Chain) > 0 {
+		allowed := map[string]struct{}{
+			"pops": {}, "clicks": {}, "noise": {}, "squelch": {}, "filter": {}, "compressor": {}, "distortion": {},
+		}
+		seen := make(map[string]struct{}, len(cfg.Modules.DSP.Chain))
+		for _, name := range cfg.Modules.DSP.Chain {
+			if _, ok := allowed[name]; !ok {
+				return fmt.Errorf("modules.dsp.chain contains unknown module %q", name)
+			}
+			if _, dup := seen[name]; dup {
+				return fmt.Errorf("modules.dsp.chain contains duplicate module %q", name)
+			}
+			seen[name] = struct{}{}
 		}
 	}
 	if cfg.Modules.DSP.Squelch != nil && cfg.Modules.DSP.Squelch.Enabled {

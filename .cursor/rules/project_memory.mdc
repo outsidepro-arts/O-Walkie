@@ -26,6 +26,7 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Backend relay: порядок DSP-цепочки сделан конфигурируемым через `modules.dsp.chain`; если поле отсутствует/пустое, в лог пишется `ERROR` и DSP-плагины полностью отключаются (без fallback).
 - Backend relay: добавлен новый generator-плагин `squelch_shots` (`gen_squelch_shots.go`) с конфигом диапазонов таймера, длительности silent-TX и уровня сигнала; модуль инициирует синтетический `TxStart`/silent `TxActive`/`TxEOF`, чтобы прогонять DSP-цепочку без реального входящего PCM.
 - Backend relay: финализирована модульная схема под восстановление «старого» звучания — конфиг `modules` разделён на `generators` и `dsp` (с auto-migration старых flat-полей), `click` разделён на `clicks` (шумовые импульсы, ускорение при multi-TX) и `pops` (синусоидальные start/in-TX/end щелчки).
 - Backend relay: `noise` вынесен в отдельный DSP-модуль (подмешивание по уровню сигнала), а `squelch` вынесен в отдельный DSP-модуль с обработкой `TxEOF`, tail, порогом по проценту сигнала (`threshold_percent`, default 5%), и постановкой post-burst synthetic silence через существующий механизм.
