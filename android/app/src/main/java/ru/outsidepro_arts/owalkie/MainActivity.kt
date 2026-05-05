@@ -1,7 +1,10 @@
 package ru.outsidepro_arts.owalkie
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -19,6 +22,7 @@ import android.widget.SeekBar
 import android.widget.PopupMenu
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
@@ -160,6 +164,7 @@ class MainActivity : ComponentActivity() {
         if (intent?.action == ACTION_OPEN_BATTERY_SETTINGS) {
             openBatteryOptimizationSettings()
         }
+        handleDeepLinkIntent(intent)
 
         binding.pttButton.setOnTouchListener { _, event ->
             if (pttToggleModeEnabled) {
@@ -218,6 +223,12 @@ class MainActivity : ComponentActivity() {
         }
         binding.moveServerDownButton.setOnClickListener {
             moveServerInList(1)
+        }
+        binding.shareConnectionButton.setOnClickListener {
+            shareCurrentConnectionAsLink()
+        }
+        binding.importConnectionButton.setOnClickListener {
+            importConnectionFromClipboard()
         }
 
         binding.compactConnectButton.setOnClickListener {
@@ -302,6 +313,7 @@ class MainActivity : ComponentActivity() {
         if (intent.action == ACTION_OPEN_BATTERY_SETTINGS) {
             openBatteryOptimizationSettings()
         }
+        handleDeepLinkIntent(intent)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -485,6 +497,121 @@ class MainActivity : ComponentActivity() {
             putExtra(WalkieService.EXTRA_RX_VOLUME_PERCENT, percent)
         }
         startService(intent)
+    }
+
+    private fun handleDeepLinkIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        if (!uri.scheme.equals("owalkie", ignoreCase = true)) return
+        if (!uri.host.equals("connect", ignoreCase = true)) return
+        val profile = parseConnectionProfileFromUri(uri) ?: return
+        applyDeepLinkProfile(profile, announce = true)
+    }
+
+    private fun applyDeepLinkProfile(profile: ServerProfile, announce: Boolean) {
+        binding.serverNameInput.setText(profile.name)
+        binding.serverHostInput.setText(profile.host)
+        binding.serverPortInput.setText(profile.port.toString())
+        binding.channelInput.setText(profile.channel)
+        if (announce) {
+            binding.root.announceForAccessibility(getString(R.string.connection_link_imported))
+        }
+    }
+
+    private fun buildConnectionDeepLink(profile: ServerProfile, includeName: Boolean): String {
+        val payloadJson = JSONObject().apply {
+            put("v", 1)
+            put("host", profile.host)
+            put("port", profile.port)
+            put("channel", profile.channel)
+            if (includeName) {
+                put("name", profile.name)
+            }
+        }.toString()
+        val payload = Base64.encodeToString(
+            payloadJson.toByteArray(Charsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+        )
+        return "owalkie://connect/$payload"
+    }
+
+    private fun shareCurrentConnectionAsLink() {
+        val profile = collectServerFromInputs() ?: return
+        AlertDialog.Builder(this)
+            .setMessage(getString(R.string.connection_link_include_name_prompt))
+            .setPositiveButton(android.R.string.yes) { _, _ ->
+                copyConnectionLinkToClipboard(profile, includeName = true)
+            }
+            .setNegativeButton(android.R.string.no) { _, _ ->
+                copyConnectionLinkToClipboard(profile, includeName = false)
+            }
+            .show()
+    }
+
+    private fun copyConnectionLinkToClipboard(profile: ServerProfile, includeName: Boolean) {
+        val link = buildConnectionDeepLink(profile, includeName)
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val clip = ClipData.newPlainText("O-Walkie connection link", link)
+        clipboard.setPrimaryClip(clip)
+        binding.root.announceForAccessibility(getString(R.string.connection_link_copied))
+    }
+
+    private fun importConnectionFromClipboard() {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val text = clipboard.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(this)
+            ?.toString()
+            ?.trim()
+            .orEmpty()
+        if (text.isBlank()) {
+            binding.root.announceForAccessibility(getString(R.string.connection_link_invalid))
+            return
+        }
+        val linkText = extractConnectionLink(text) ?: run {
+            binding.root.announceForAccessibility(getString(R.string.connection_link_invalid))
+            return
+        }
+        val uri = runCatching { Uri.parse(linkText) }.getOrNull()
+        val profile = uri?.let { parseConnectionProfileFromUri(it) }
+        if (profile == null) {
+            binding.root.announceForAccessibility(getString(R.string.connection_link_invalid))
+            return
+        }
+        applyDeepLinkProfile(profile, announce = true)
+    }
+
+    private fun extractConnectionLink(text: String): String? {
+        val marker = "owalkie://connect/"
+        val start = text.indexOf(marker, ignoreCase = true)
+        if (start < 0) return null
+        var end = text.length
+        for (i in start until text.length) {
+            if (text[i].isWhitespace()) {
+                end = i
+                break
+            }
+        }
+        return text.substring(start, end).trim().takeIf { it.isNotBlank() }
+    }
+
+    private fun parseConnectionProfileFromUri(uri: Uri): ServerProfile? {
+        if (!uri.scheme.equals("owalkie", ignoreCase = true)) return null
+        if (!uri.host.equals("connect", ignoreCase = true)) return null
+        val payload = uri.pathSegments.firstOrNull()?.trim().orEmpty()
+        if (payload.isBlank()) return null
+        val decoded = runCatching {
+            val bytes = Base64.decode(payload, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            String(bytes, Charsets.UTF_8)
+        }.getOrNull() ?: return null
+        val json = runCatching { JSONObject(decoded) }.getOrNull() ?: return null
+        val host = json.optString("host").trim()
+        val channel = json.optString("channel").trim()
+        val port = json.optInt("port", -1)
+        if (host.isBlank() || channel.isBlank() || port !in 1..65535) return null
+        val name = json.optString("name").trim().takeUnless { it.isNullOrBlank() } ?: "$host:$port/$channel"
+        return ServerProfile(name = name, host = host, port = port, channel = channel)
     }
 
     private fun initRxVolumeUi() {

@@ -116,6 +116,12 @@
     <string name="scan_started_announcement">Scanning started</string>
     <string name="scan_stopped_announcement">Scanning stopped</string>
     <string name="scan_found_server_announcement">Activity found on %1$s, connecting</string>
+    <string name="share_connection">Share connection</string>
+    <string name="import_connection_from_clipboard">Import from clipboard</string>
+    <string name="connection_link_copied">Connection link copied</string>
+    <string name="connection_link_include_name_prompt">Add your connection name to the link?</string>
+    <string name="connection_link_invalid">No valid O-Walkie connection link in clipboard</string>
+    <string name="connection_link_imported">Connection imported from link</string>
     <string name="validation_server_name">Enter server name</string>
     <string name="validation_server_host">Enter server host</string>
     <string name="validation_channel">Enter channel</string>

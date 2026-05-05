@@ -116,6 +116,12 @@
     <string name="scan_started_announcement">Сканирование запущено</string>
     <string name="scan_stopped_announcement">Сканирование остановлено</string>
     <string name="scan_found_server_announcement">Обнаружена активность на %1$s, выполняется подключение</string>
+    <string name="share_connection">Поделиться подключением</string>
+    <string name="import_connection_from_clipboard">Импорт подключения из буфера</string>
+    <string name="connection_link_copied">Ссылка подключения скопирована</string>
+    <string name="connection_link_include_name_prompt">Добавить имя вашего подключения в ссылку?</string>
+    <string name="connection_link_invalid">В буфере нет корректной ссылки подключения O-Walkie</string>
+    <string name="connection_link_imported">Подключение импортировано из ссылки</string>
     <string name="validation_server_name">Введите название сервера</string>
     <string name="validation_server_host">Введите хост сервера</string>
     <string name="validation_channel">Введите канал</string>

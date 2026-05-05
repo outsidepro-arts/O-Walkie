@@ -400,3 +400,15 @@ msgstr "Буфер обмена пуст."
 
 msgid "No valid O-Walkie signal data in the clipboard."
 msgstr "В буфере нет корректных данных сигнала O-Walkie."
+
+msgid "Share connection"
+msgstr "Поделиться подключением"
+
+msgid "Import connection"
+msgstr "Импорт подключения"
+
+msgid "Connection link copied"
+msgstr "Ссылка подключения скопирована"
+
+msgid "Add your connection name to the link?"
+msgstr "Добавить имя вашего подключения в ссылку?"

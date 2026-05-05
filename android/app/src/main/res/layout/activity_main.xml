@@ -145,37 +145,58 @@
             android:maxLines="1"
             android:selectAllOnFocus="true" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:labelFor="@id/serverHostInput"
-            android:text="@string/server_host_label" />
-
-        <EditText
-            android:id="@+id/serverHostInput"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="@string/server_host_hint"
-            android:importantForAccessibility="yes"
-            android:inputType="textUri"
-            android:maxLines="1"
-            android:selectAllOnFocus="true" />
+            android:orientation="horizontal">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:labelFor="@id/serverPortInput"
-            android:text="@string/port_label" />
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="3"
+                android:orientation="vertical">
 
-        <EditText
-            android:id="@+id/serverPortInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/port_hint"
-            android:importantForAccessibility="yes"
-            android:inputType="number"
-            android:maxLines="1"
-            android:selectAllOnFocus="true" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:labelFor="@id/serverHostInput"
+                    android:text="@string/server_host_label" />
+
+                <EditText
+                    android:id="@+id/serverHostInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/server_host_hint"
+                    android:importantForAccessibility="yes"
+                    android:inputType="textUri"
+                    android:maxLines="1"
+                    android:selectAllOnFocus="true" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="2"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:labelFor="@id/serverPortInput"
+                    android:text="@string/port_label" />
+
+                <EditText
+                    android:id="@+id/serverPortInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/port_hint"
+                    android:importantForAccessibility="yes"
+                    android:inputType="number"
+                    android:maxLines="1"
+                    android:selectAllOnFocus="true" />
+            </LinearLayout>
+        </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"
@@ -236,6 +257,28 @@
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:text="@string/move_server_down" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/shareConnectionButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/share_connection" />
+
+            <Button
+                android:id="@+id/importConnectionButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="@string/import_connection_from_clipboard" />
         </LinearLayout>
 
         <Button

@@ -7,6 +7,7 @@
 #include <fstream>
 #include <thread>
 #include <string>
+#include <unordered_map>
 
 #include <nlohmann/json.hpp>
 
@@ -52,6 +53,151 @@ static bool PatternNameAsciiIEq(const std::string& a, const std::string& b) {
 
 static std::string OwTranslatePatternDisplayName(const std::string& name) {
     return wxGetTranslation(wxString::FromUTF8(name)).utf8_string();
+}
+
+static int HexValue(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+}
+
+static std::string UrlDecode(const std::string& src) {
+    std::string out;
+    out.reserve(src.size());
+    for (size_t i = 0; i < src.size(); ++i) {
+        const char ch = src[i];
+        if (ch == '+') {
+            out.push_back(' ');
+            continue;
+        }
+        if (ch == '%' && (i + 2) < src.size()) {
+            const int hi = HexValue(src[i + 1]);
+            const int lo = HexValue(src[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(ch);
+    }
+    return out;
+}
+
+static std::string UrlEncode(const std::string& src) {
+    static const char* kHex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(src.size() * 3);
+    for (unsigned char c : src) {
+        const bool unreserved =
+            (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+            c == '.' || c == '~';
+        if (unreserved) {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(kHex[(c >> 4) & 0x0F]);
+            out.push_back(kHex[c & 0x0F]);
+        }
+    }
+    return out;
+}
+
+static std::string Base64UrlEncode(const std::string& data) {
+    static const char kTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((data.size() + 2) / 3) * 4);
+    size_t i = 0;
+    while (i + 3 <= data.size()) {
+        const uint32_t n = (static_cast<uint8_t>(data[i]) << 16) | (static_cast<uint8_t>(data[i + 1]) << 8) |
+                           static_cast<uint8_t>(data[i + 2]);
+        out.push_back(kTable[(n >> 18) & 0x3F]);
+        out.push_back(kTable[(n >> 12) & 0x3F]);
+        out.push_back(kTable[(n >> 6) & 0x3F]);
+        out.push_back(kTable[n & 0x3F]);
+        i += 3;
+    }
+    const size_t remain = data.size() - i;
+    if (remain == 1) {
+        const uint32_t n = static_cast<uint8_t>(data[i]) << 16;
+        out.push_back(kTable[(n >> 18) & 0x3F]);
+        out.push_back(kTable[(n >> 12) & 0x3F]);
+        out.push_back('=');
+        out.push_back('=');
+    } else if (remain == 2) {
+        const uint32_t n = (static_cast<uint8_t>(data[i]) << 16) | (static_cast<uint8_t>(data[i + 1]) << 8);
+        out.push_back(kTable[(n >> 18) & 0x3F]);
+        out.push_back(kTable[(n >> 12) & 0x3F]);
+        out.push_back(kTable[(n >> 6) & 0x3F]);
+        out.push_back('=');
+    }
+    for (char& c : out) {
+        if (c == '+') c = '-';
+        else if (c == '/') c = '_';
+    }
+    while (!out.empty() && out.back() == '=') {
+        out.pop_back();
+    }
+    return out;
+}
+
+static bool Base64UrlDecode(const std::string& input, std::string& out) {
+    std::string s = input;
+    for (char& c : s) {
+        if (c == '-') c = '+';
+        else if (c == '_') c = '/';
+    }
+    while (s.size() % 4 != 0) {
+        s.push_back('=');
+    }
+    static int8_t map[256];
+    static bool init = false;
+    if (!init) {
+        std::fill(std::begin(map), std::end(map), static_cast<int8_t>(-1));
+        const std::string alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < static_cast<int>(alpha.size()); ++i) {
+            map[static_cast<unsigned char>(alpha[static_cast<size_t>(i)])] = static_cast<int8_t>(i);
+        }
+        init = true;
+    }
+    out.clear();
+    out.reserve((s.size() / 4) * 3);
+    for (size_t i = 0; i < s.size(); i += 4) {
+        const char c0 = s[i], c1 = s[i + 1], c2 = s[i + 2], c3 = s[i + 3];
+        if (map[static_cast<unsigned char>(c0)] < 0 || map[static_cast<unsigned char>(c1)] < 0) return false;
+        const int v0 = map[static_cast<unsigned char>(c0)];
+        const int v1 = map[static_cast<unsigned char>(c1)];
+        const int v2 = (c2 == '=') ? 0 : map[static_cast<unsigned char>(c2)];
+        const int v3 = (c3 == '=') ? 0 : map[static_cast<unsigned char>(c3)];
+        if ((c2 != '=' && v2 < 0) || (c3 != '=' && v3 < 0)) return false;
+        const uint32_t n = (static_cast<uint32_t>(v0) << 18) | (static_cast<uint32_t>(v1) << 12) |
+                           (static_cast<uint32_t>(v2) << 6) | static_cast<uint32_t>(v3);
+        out.push_back(static_cast<char>((n >> 16) & 0xFF));
+        if (c2 != '=') out.push_back(static_cast<char>((n >> 8) & 0xFF));
+        if (c3 != '=') out.push_back(static_cast<char>(n & 0xFF));
+    }
+    return true;
+}
+
+static std::unordered_map<std::string, std::string> ParseUrlQuery(const std::string& query) {
+    std::unordered_map<std::string, std::string> out;
+    size_t start = 0;
+    while (start <= query.size()) {
+        const size_t amp = query.find('&', start);
+        const std::string pair = query.substr(start, (amp == std::string::npos) ? std::string::npos : (amp - start));
+        if (!pair.empty()) {
+            const size_t eq = pair.find('=');
+            const std::string k = UrlDecode(pair.substr(0, eq));
+            const std::string v = (eq == std::string::npos) ? std::string() : UrlDecode(pair.substr(eq + 1));
+            if (!k.empty()) {
+                out[k] = v;
+            }
+        }
+        if (amp == std::string::npos) break;
+        start = amp + 1;
+    }
+    return out;
 }
 
 namespace {
@@ -1432,7 +1578,7 @@ wxString ToWxStatusText(const std::string& msg) {
 
 } // namespace
 
-MainFrame::MainFrame()
+MainFrame::MainFrame(const std::string& connectUri)
     : wxFrame(
           nullptr,
           wxID_ANY,
@@ -1527,6 +1673,9 @@ MainFrame::MainFrame()
             hostCtrl_->SetFocus();
         }
     });
+    if (!connectUri.empty()) {
+        CallAfter([this, connectUri] { ApplyConnectUri(connectUri); });
+    }
 }
 
 MainFrame::~MainFrame() {
@@ -2296,7 +2445,11 @@ void MainFrame::BuildUi() {
     auto* audioBar = new wxBoxSizer(wxHORIZONTAL);
     settingsBtn_ = new wxButton(panel, wxID_ANY, _("Settings"));
     settingsBtn_->SetName(_("Open settings"));
+    shareConnectionBtn_ = new wxButton(panel, wxID_ANY, _("Share connection"));
+    importConnectionBtn_ = new wxButton(panel, wxID_ANY, _("Import connection"));
     audioBar->Add(settingsBtn_, 0, wxRIGHT, 10);
+    audioBar->Add(shareConnectionBtn_, 0, wxRIGHT, 10);
+    audioBar->Add(importConnectionBtn_, 0);
     root->Add(audioBar, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     repeaterCheck_ = new wxCheckBox(panel, wxID_ANY, _("Repeater mode"));
@@ -2337,7 +2490,9 @@ void MainFrame::BuildUi() {
     channelCtrl_->MoveAfterInTabOrder(portCtrl_);
     rxVolumeSlider_->MoveAfterInTabOrder(channelCtrl_);
     settingsBtn_->MoveAfterInTabOrder(rxVolumeSlider_);
-    repeaterCheck_->MoveAfterInTabOrder(settingsBtn_);
+    shareConnectionBtn_->MoveAfterInTabOrder(settingsBtn_);
+    importConnectionBtn_->MoveAfterInTabOrder(shareConnectionBtn_);
+    repeaterCheck_->MoveAfterInTabOrder(importConnectionBtn_);
     connectBtn_->MoveAfterInTabOrder(repeaterCheck_);
     pttBtn_->MoveAfterInTabOrder(connectBtn_);
     callBtn_->MoveAfterInTabOrder(pttBtn_);
@@ -2350,6 +2505,8 @@ void MainFrame::BindUi() {
     deleteProfileBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnDeleteProfile, this);
     connectBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnConnectClicked, this);
     settingsBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnSettingsClicked, this);
+    shareConnectionBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnShareConnectionLink, this);
+    importConnectionBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnImportConnectionLink, this);
     pttBtn_->Bind(wxEVT_LEFT_DOWN, &MainFrame::OnPttDown, this);
     pttBtn_->Bind(wxEVT_LEFT_UP, &MainFrame::OnPttUp, this);
     pttBtn_->Bind(wxEVT_LEAVE_WINDOW, &MainFrame::OnPttUp, this);
@@ -2470,6 +2627,81 @@ void MainFrame::OnRepeaterToggled(wxCommandEvent&) {
     }
 }
 
+void MainFrame::OnShareConnectionLink(wxCommandEvent&) {
+    long port = 0;
+    if (!portCtrl_ || !portCtrl_->GetValue().ToLong(&port) || port < 1 || port > 65535 || !hostCtrl_ || !channelCtrl_) {
+        SetStatus("Invalid port");
+        return;
+    }
+    const std::string host = hostCtrl_->GetValue().utf8_string();
+    const std::string channel = channelCtrl_->GetValue().utf8_string();
+    const std::string name = connectionNameCtrl_ ? connectionNameCtrl_->GetValue().utf8_string() : std::string();
+    if (host.empty() || channel.empty()) {
+        SetStatus("Invalid deep link");
+        return;
+    }
+    wxMessageDialog ask(
+        this,
+        _("Add your connection name to the link?"),
+        _("Share connection"),
+        wxYES_NO | wxICON_QUESTION | wxCENTER);
+    const bool includeName = ask.ShowModal() == wxID_YES;
+
+    nlohmann::json payload;
+    payload["v"] = 1;
+    payload["host"] = host;
+    payload["port"] = port;
+    payload["channel"] = channel;
+    if (includeName) {
+        payload["name"] = name.empty() ? "Connection" : name;
+    }
+    const std::string link = "owalkie://connect/" + Base64UrlEncode(payload.dump());
+    if (!wxTheClipboard->Open()) {
+        SetStatus("Clipboard unavailable");
+        return;
+    }
+    wxTheClipboard->SetData(new wxTextDataObject(wxString::FromUTF8(link)));
+    wxTheClipboard->Close();
+    SetStatus("Connection link copied");
+}
+
+void MainFrame::OnImportConnectionLink(wxCommandEvent&) {
+    if (!wxTheClipboard->Open()) {
+        SetStatus("Clipboard unavailable");
+        return;
+    }
+    if (!wxTheClipboard->IsSupported(wxDF_TEXT)) {
+        wxTheClipboard->Close();
+        SetStatus("Invalid deep link");
+        return;
+    }
+    wxTextDataObject data;
+    if (!wxTheClipboard->GetData(data)) {
+        wxTheClipboard->Close();
+        SetStatus("Invalid deep link");
+        return;
+    }
+    wxTheClipboard->Close();
+    const std::string text = data.GetText().utf8_string();
+    const std::string marker = "owalkie://connect/";
+    const size_t start = text.find(marker);
+    if (start == std::string::npos) {
+        SetStatus("Invalid deep link");
+        return;
+    }
+    size_t end = text.size();
+    for (size_t i = start; i < text.size(); ++i) {
+        if (std::isspace(static_cast<unsigned char>(text[i]))) {
+            end = i;
+            break;
+        }
+    }
+    const std::string link = text.substr(start, end - start);
+    if (!ApplyConnectUri(link)) {
+        SetStatus("Invalid deep link");
+    }
+}
+
 void MainFrame::UpdateMicLevelIndicatorVisibility() {
     if (!signalGauge_) {
         return;
@@ -2522,6 +2754,63 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
         audio_->PlayConnectionErrorSignal();
         SetStatus("Connect failed");
     }
+}
+
+bool MainFrame::ApplyConnectUri(const std::string& uri) {
+    if (uri.rfind("owalkie://", 0) != 0) {
+        SetStatus("Invalid deep link");
+        return false;
+    }
+    const std::string marker = "owalkie://connect/";
+    const size_t pPos = uri.find(marker);
+    if (pPos == std::string::npos) {
+        SetStatus("Invalid deep link");
+        return false;
+    }
+    std::string payloadB64 = uri.substr(pPos + marker.size());
+    while (!payloadB64.empty() && std::isspace(static_cast<unsigned char>(payloadB64.back()))) payloadB64.pop_back();
+    while (!payloadB64.empty() && (payloadB64.back() == '.' || payloadB64.back() == ',' || payloadB64.back() == ';' ||
+                                   payloadB64.back() == ':' || payloadB64.back() == '!' || payloadB64.back() == '?' ||
+                                   payloadB64.back() == ')' || payloadB64.back() == ']' || payloadB64.back() == '}')) {
+        payloadB64.pop_back();
+    }
+    if (payloadB64.empty()) {
+        SetStatus("Invalid deep link");
+        return false;
+    }
+    std::string decoded;
+    if (!Base64UrlDecode(payloadB64, decoded)) {
+        SetStatus("Invalid deep link");
+        return false;
+    }
+    nlohmann::json payload;
+    try {
+        payload = nlohmann::json::parse(decoded);
+    } catch (...) {
+        SetStatus("Invalid deep link");
+        return false;
+    }
+    const std::string host = payload.value("host", std::string());
+    const std::string channel = payload.value("channel", std::string());
+    const long port = payload.value("port", 0);
+    if (host.empty() || channel.empty() || port < 1 || port > 65535) {
+        SetStatus("Invalid deep link");
+        return false;
+    }
+    if (hostCtrl_) hostCtrl_->SetValue(wxString::FromUTF8(host));
+    if (portCtrl_) portCtrl_->SetValue(wxString::Format("%ld", port));
+    if (channelCtrl_) channelCtrl_->SetValue(wxString::FromUTF8(channel));
+    if (connectionNameCtrl_) {
+        const std::string name = payload.value("name", std::string());
+        if (!name.empty()) {
+            connectionNameCtrl_->SetValue(wxString::FromUTF8(name));
+        }
+    }
+    SyncActiveProfileFromUi();
+    UpdateProfileControlsEnabled();
+    SaveProfilesToDisk();
+    SetStatus("Deep link applied");
+    return true;
 }
 
 void MainFrame::OnPttDown(wxMouseEvent& event) {

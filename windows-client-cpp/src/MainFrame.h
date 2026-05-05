@@ -23,6 +23,7 @@ class wxTextCtrl;
 class wxCheckBox;
 class wxSlider;
 class wxDialog;
+class wxScrollEvent;
 
 struct ServerProfile {
     std::string name{"Default"};
@@ -34,7 +35,7 @@ struct ServerProfile {
 
 class MainFrame : public wxFrame {
 public:
-    MainFrame();
+    explicit MainFrame(const std::string& connectUri = "");
     ~MainFrame() override;
 
     AudioEngine* AudioEnginePtr() { return audio_.get(); }
@@ -93,6 +94,8 @@ private:
     void SyncRxVolumeUi();
     void OnRxVolumeSlider(wxCommandEvent& event);
     void OnRepeaterToggled(wxCommandEvent& event);
+    void OnShareConnectionLink(wxCommandEvent& event);
+    void OnImportConnectionLink(wxCommandEvent& event);
 
     void ScheduleReconnect();
     void StopReconnectTimer();
@@ -107,6 +110,7 @@ private:
     void ExtendPttReleaseBurstDecayTimer();
     void ResetPttReleaseBurstGuard();
     void SyncPttButtonForBurstGuard();
+    bool ApplyConnectUri(const std::string& uri);
 
 #ifdef _WIN32
     void InstallGlobalPttHook();
@@ -126,6 +130,8 @@ private:
     wxTextCtrl* portCtrl_ = nullptr;
     wxTextCtrl* channelCtrl_ = nullptr;
     wxButton* settingsBtn_ = nullptr;
+    wxButton* shareConnectionBtn_ = nullptr;
+    wxButton* importConnectionBtn_ = nullptr;
     wxCheckBox* repeaterCheck_ = nullptr;
     wxButton* connectBtn_ = nullptr;
     wxButton* pttBtn_ = nullptr;
