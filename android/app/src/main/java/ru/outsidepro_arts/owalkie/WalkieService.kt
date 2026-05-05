@@ -41,11 +41,14 @@ import ru.outsidepro_arts.owalkie.audio.OpusCodecFactory
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
 import ru.outsidepro_arts.owalkie.model.expandedCallingPoints
 import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
+import ru.outsidepro_arts.owalkie.model.ExternalControlStore
 import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
 import ru.outsidepro_arts.owalkie.model.PhoneCallRelayPauseStore
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
 import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 import ru.outsidepro_arts.owalkie.model.RxVolumeStore
+import ru.outsidepro_arts.owalkie.model.ServerProfile
+import ru.outsidepro_arts.owalkie.model.ServerStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -90,6 +93,14 @@ class WalkieService : Service() {
         const val ACTION_SET_ACTIVITY_FOCUS = "ru.outsidepro_arts.owalkie.action.SET_ACTIVITY_FOCUS"
         const val ACTION_SYNC_PTT_MEDIA_SESSION = "ru.outsidepro_arts.owalkie.action.SYNC_PTT_MEDIA_SESSION"
         const val ACTION_HARDWARE_PTT_KEY = "ru.outsidepro_arts.owalkie.action.HARDWARE_PTT_KEY"
+        const val ACTION_EXTERNAL_PTT_DOWN = ExternalControlReceiver.ACTION_PTT_DOWN
+        const val ACTION_EXTERNAL_PTT_UP = ExternalControlReceiver.ACTION_PTT_UP
+        const val ACTION_EXTERNAL_PTT_TOGGLE = ExternalControlReceiver.ACTION_PTT_TOGGLE
+        const val ACTION_EXTERNAL_CALL_SIGNAL = ExternalControlReceiver.ACTION_CALL_SIGNAL
+        const val ACTION_EXTERNAL_CONNECT = ExternalControlReceiver.ACTION_CONNECT
+        const val ACTION_EXTERNAL_DISCONNECT = ExternalControlReceiver.ACTION_DISCONNECT
+        const val ACTION_EXTERNAL_NEXT_CONNECTION = ExternalControlReceiver.ACTION_NEXT_CONNECTION
+        const val ACTION_EXTERNAL_PREVIOUS_CONNECTION = ExternalControlReceiver.ACTION_PREVIOUS_CONNECTION
         const val EXTRA_SIGNAL = "signal"
         const val EXTRA_WS_CONNECTED = "wsConnected"
         const val EXTRA_WS_CONNECTING = "wsConnecting"
@@ -302,6 +313,7 @@ class WalkieService : Service() {
     private lateinit var bluetoothHeadsetRouteStore: BluetoothHeadsetRouteStore
     private lateinit var rxVolumeStore: RxVolumeStore
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
+    private lateinit var externalControlStore: ExternalControlStore
     private lateinit var phoneCallRelayPauseStore: PhoneCallRelayPauseStore
     private var telephonyCallStateCallback: TelephonyCallback? = null
     @Suppress("DEPRECATION")
@@ -333,6 +345,7 @@ class WalkieService : Service() {
         bluetoothHeadsetRouteStore = BluetoothHeadsetRouteStore(this)
         rxVolumeStore = RxVolumeStore(this)
         pttHardwareKeyStore = PttHardwareKeyStore(this)
+        externalControlStore = ExternalControlStore(this)
         phoneCallRelayPauseStore = PhoneCallRelayPauseStore(this)
         mediaButtonPttToggleRunnable = Runnable { handleMediaButtonPttToggle() }
         useBluetoothHeadset = bluetoothHeadsetRouteStore.isEnabled()
@@ -392,6 +405,14 @@ class WalkieService : Service() {
                 intent.getBooleanExtra(EXTRA_ACTIVITY_FOCUSED, activityFocused),
             )
             ACTION_SYNC_PTT_MEDIA_SESSION -> syncPttMediaSession()
+            ACTION_EXTERNAL_PTT_DOWN -> if (externalControlStore.isEnabled()) onPttPress()
+            ACTION_EXTERNAL_PTT_UP -> if (externalControlStore.isEnabled()) onPttRelease()
+            ACTION_EXTERNAL_PTT_TOGGLE -> if (externalControlStore.isEnabled()) togglePttFromExternal()
+            ACTION_EXTERNAL_CALL_SIGNAL -> if (externalControlStore.isEnabled()) onCallSignal()
+            ACTION_EXTERNAL_CONNECT -> if (externalControlStore.isEnabled()) connectFromExternal()
+            ACTION_EXTERNAL_DISCONNECT -> if (externalControlStore.isEnabled()) cancelConnection()
+            ACTION_EXTERNAL_NEXT_CONNECTION -> if (externalControlStore.isEnabled()) switchConnectionProfileFromExternal(1)
+            ACTION_EXTERNAL_PREVIOUS_CONNECTION -> if (externalControlStore.isEnabled()) switchConnectionProfileFromExternal(-1)
             ACTION_EXIT_APP -> exitApp()
         }
         return START_STICKY
@@ -1131,6 +1152,64 @@ class WalkieService : Service() {
                 drainPendingUdpNetworkRecreate()
             }
         }
+    }
+
+    private fun togglePttFromExternal() {
+        if (transmitting.get()) {
+            onPttRelease()
+        } else {
+            onPttPress()
+        }
+    }
+
+    private fun connectFromExternal() {
+        val profile = loadSelectedServerProfile() ?: return
+        desiredConnection.set(true)
+        startCore(
+            Intent(this, WalkieService::class.java).apply {
+                putExtra(EXTRA_SERVER_HOST, profile.host)
+                putExtra(EXTRA_SERVER_PORT, profile.port)
+                putExtra(EXTRA_CHANNEL, profile.channel)
+                putExtra(EXTRA_REPEATER_ENABLED, repeaterEnabled)
+                putExtra(EXTRA_RX_VOLUME_PERCENT, rxVolumePercent)
+                putExtra(EXTRA_USE_BLUETOOTH_HEADSET, useBluetoothHeadset)
+            },
+        )
+    }
+
+    private fun switchConnectionProfileFromExternal(step: Int) {
+        if (step == 0) return
+        val store = ServerStore(this)
+        val servers = store.load()
+        if (servers.isEmpty()) return
+        val selectedName = store.getLastSelectedName()
+        val currentIndex = servers.indexOfFirst { it.name == selectedName }
+            .takeIf { it >= 0 } ?: 0
+        val targetIndex = (currentIndex + step).coerceIn(0, servers.lastIndex)
+        if (targetIndex == currentIndex) return
+        val selected = servers[targetIndex]
+        store.setLastSelectedName(selected.name)
+        if (desiredConnection.get() || wsConnected.get()) {
+            desiredConnection.set(true)
+            startCore(
+                Intent(this, WalkieService::class.java).apply {
+                    putExtra(EXTRA_SERVER_HOST, selected.host)
+                    putExtra(EXTRA_SERVER_PORT, selected.port)
+                    putExtra(EXTRA_CHANNEL, selected.channel)
+                    putExtra(EXTRA_REPEATER_ENABLED, repeaterEnabled)
+                    putExtra(EXTRA_RX_VOLUME_PERCENT, rxVolumePercent)
+                    putExtra(EXTRA_USE_BLUETOOTH_HEADSET, useBluetoothHeadset)
+                },
+            )
+        }
+    }
+
+    private fun loadSelectedServerProfile(): ServerProfile? {
+        val store = ServerStore(this)
+        val servers = store.load()
+        if (servers.isEmpty()) return null
+        val selectedName = store.getLastSelectedName()
+        return servers.firstOrNull { it.name == selectedName } ?: servers.first()
     }
 
     private suspend fun runCaptureLoop() = withContext(Dispatchers.IO) {

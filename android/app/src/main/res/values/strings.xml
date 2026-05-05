@@ -42,6 +42,7 @@
     <string name="hardware_ptt_scan_only_format">Scan %1$d</string>
     <string name="hardware_ptt_toggle_mode_label">PTT toggle mode</string>
     <string name="hardware_ptt_media_button_label">Use play/pause media events for PTT</string>
+    <string name="external_control_label">Use external control</string>
     <string name="common_ok">OK</string>
     <string name="common_reset">Reset</string>
     <string name="play_signal_button">Play</string>

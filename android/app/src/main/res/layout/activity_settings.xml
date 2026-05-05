@@ -75,6 +75,13 @@
         android:text="@string/hardware_ptt_media_button_label" />
 
     <CheckBox
+        android:id="@+id/externalControlCheckBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="@string/external_control_label" />
+
+    <CheckBox
         android:id="@+id/pauseRelayDuringCellularCallCheckBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

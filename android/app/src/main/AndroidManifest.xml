@@ -59,6 +59,21 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".ExternalControlReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="ru.outsidepro_arts.owalkie.api.PTT_DOWN" />
+                <action android:name="ru.outsidepro_arts.owalkie.api.PTT_UP" />
+                <action android:name="ru.outsidepro_arts.owalkie.api.PTT_TOGGLE" />
+                <action android:name="ru.outsidepro_arts.owalkie.api.CALL_SIGNAL" />
+                <action android:name="ru.outsidepro_arts.owalkie.api.CONNECT" />
+                <action android:name="ru.outsidepro_arts.owalkie.api.DISCONNECT" />
+                <action android:name="ru.outsidepro_arts.owalkie.api.NEXT_CONNECTION" />
+                <action android:name="ru.outsidepro_arts.owalkie.api.PREVIOUS_CONNECTION" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

@@ -42,6 +42,7 @@
     <string name="hardware_ptt_scan_only_format">Скан %1$d</string>
     <string name="hardware_ptt_toggle_mode_label">Режим Переключатель для кнопки PTT</string>
     <string name="hardware_ptt_media_button_label">Использовать события воспроизведения/паузы для кнопки PTT</string>
+    <string name="external_control_label">Использовать внешнее управление</string>
     <string name="common_ok">Ок</string>
     <string name="common_reset">Сбросить</string>
     <string name="play_signal_button">Проиграть</string>

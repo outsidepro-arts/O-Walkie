@@ -15,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
 import ru.outsidepro_arts.owalkie.model.expandedCallingPoints
 import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
+import ru.outsidepro_arts.owalkie.model.ExternalControlStore
 import ru.outsidepro_arts.owalkie.model.MicrophoneConfigStore
 import ru.outsidepro_arts.owalkie.model.PhoneCallRelayPauseStore
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
@@ -27,6 +28,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var microphoneConfigStore: MicrophoneConfigStore
     private lateinit var bluetoothHeadsetRouteStore: BluetoothHeadsetRouteStore
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
+    private lateinit var externalControlStore: ExternalControlStore
     private lateinit var phoneCallRelayPauseStore: PhoneCallRelayPauseStore
     private lateinit var hardwarePttRow: View
     private lateinit var hardwarePttStatusText: TextView
@@ -34,6 +36,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var useBluetoothHeadsetCheckBox: CheckBox
     private lateinit var pttToggleModeCheckBox: CheckBox
     private lateinit var mediaButtonPttCheckBox: CheckBox
+    private lateinit var externalControlCheckBox: CheckBox
     private lateinit var pauseRelayDuringCellularCallCheckBox: CheckBox
     private lateinit var rogerSpinner: Spinner
     private lateinit var callingSpinner: Spinner
@@ -61,6 +64,7 @@ class SettingsActivity : ComponentActivity() {
         microphoneConfigStore = MicrophoneConfigStore(this)
         bluetoothHeadsetRouteStore = BluetoothHeadsetRouteStore(this)
         pttHardwareKeyStore = PttHardwareKeyStore(this)
+        externalControlStore = ExternalControlStore(this)
         phoneCallRelayPauseStore = PhoneCallRelayPauseStore(this)
 
         hardwarePttRow = findViewById(R.id.hardwarePttRow)
@@ -69,6 +73,7 @@ class SettingsActivity : ComponentActivity() {
         useBluetoothHeadsetCheckBox = findViewById(R.id.useBluetoothHeadsetCheckBox)
         pttToggleModeCheckBox = findViewById(R.id.pttToggleModeCheckBox)
         mediaButtonPttCheckBox = findViewById(R.id.mediaButtonPttCheckBox)
+        externalControlCheckBox = findViewById(R.id.externalControlCheckBox)
         pauseRelayDuringCellularCallCheckBox = findViewById(R.id.pauseRelayDuringCellularCallCheckBox)
         rogerSpinner = findViewById(R.id.rogerPatternSpinner)
         callingSpinner = findViewById(R.id.callingPatternSpinner)
@@ -136,6 +141,7 @@ class SettingsActivity : ComponentActivity() {
         refreshHardwarePttStatus()
         refreshPttToggleMode()
         refreshMediaButtonPttCheckbox()
+        refreshExternalControlCheckbox()
         refreshPhoneCallRelayPauseToggle()
         refreshMicrophoneOptions()
         refreshBluetoothHeadsetToggle()
@@ -190,6 +196,15 @@ class SettingsActivity : ComponentActivity() {
             action = WalkieService.ACTION_SYNC_PTT_MEDIA_SESSION
         }
         startService(intent)
+    }
+
+    private fun refreshExternalControlCheckbox() {
+        val enabled = externalControlStore.isEnabled()
+        externalControlCheckBox.setOnCheckedChangeListener(null)
+        externalControlCheckBox.isChecked = enabled
+        externalControlCheckBox.setOnCheckedChangeListener { _, isChecked ->
+            externalControlStore.setEnabled(isChecked)
+        }
     }
 
     private fun refreshPhoneCallRelayPauseToggle() {
