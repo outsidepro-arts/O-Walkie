@@ -412,3 +412,9 @@ msgstr "Ссылка подключения скопирована"
 
 msgid "Add your connection name to the link?"
 msgstr "Добавить имя вашего подключения в ссылку?"
+
+msgid "Register O-Walkie in system for quick connect links support?"
+msgstr "Зарегистрировать O-Walkie в системе для поддержки ссылок быстрых подключений?"
+
+msgid "Could not register protocol handler in user profile."
+msgstr "Не удалось зарегистрировать обработчик протокола в профиле пользователя."

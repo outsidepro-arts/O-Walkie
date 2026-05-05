@@ -26,6 +26,8 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Windows: состояние user-level регистрации deep-link протокола теперь фиксируется в `audio.json` флагом `protocol_registration_handled`; после успешной регистрации или явного отказа пользователя флаг выставляется в `true`, и на последующих стартах клиент больше не показывает вопрос и не выполняет регистрационные действия.
+- Windows: добавлена user-level регистрация deep-link протокола `owalkie://` без UAC — при старте клиент проверяет HKCU `Software\Classes\owalkie`; если хендлер отсутствует, спрашивает пользователя о регистрации и при согласии пишет protocol association в реестр текущего пользователя.
 - Android + Windows: добавлены кнопки импорта/экспорта connection deep-link (`owalkie://connect?...`) через буфер обмена (share = копирование текущего подключения, import = поиск ссылки в тексте буфера и применение параметров в поля). Протокольный вызов ссылки в обоих клиентах теперь только заполняет подключение (без автоподключения), оставляя deep-link как механизм, а не авто-действие.
 - Android: добавлен MVP deep-link вход `owalkie://connect?host=...&port=...&channel=...` через `ACTION_VIEW` intent-filter в `MainActivity`; ссылка парсится в Activity и подставляет параметры в поля подключения (без автоподключения), включая warm-start обработку.
 - Windows: добавлен MVP deep-link вход без реестра — desktop клиент принимает `--connect-uri "<owalkie://...>"` (или прямой аргумент `owalkie://...`), парсит `host/port/channel` (+ optional `name/repeater`), применяет к текущему профилю и выполняет auto-connect через существующий flow.

@@ -113,6 +113,7 @@ private:
     bool ApplyConnectUri(const std::string& uri);
 
 #ifdef _WIN32
+    void EnsureUserProtocolRegistration();
     void InstallGlobalPttHook();
     void UninstallGlobalPttHook();
     static LRESULT CALLBACK GlobalPttKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
@@ -160,6 +161,7 @@ private:
     double txCollisionVibrationHz_ = 100.0;
     int txCollisionVibrationVolumePercent_ = 40;
     std::string uiLanguageCode_{"en"};
+    bool protocolRegistrationHandled_ = false;
     bool globalPttPressed_ = false;
     bool globalPttToggleHookDown_ = false;
 #ifdef _WIN32

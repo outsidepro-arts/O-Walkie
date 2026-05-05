@@ -200,6 +200,80 @@ static std::unordered_map<std::string, std::string> ParseUrlQuery(const std::str
     return out;
 }
 
+#ifdef _WIN32
+static bool ReadRegStringValue(HKEY root, const char* subKey, const char* valueName, std::string& out) {
+    HKEY key = nullptr;
+    if (RegOpenKeyExA(root, subKey, 0, KEY_READ, &key) != ERROR_SUCCESS) {
+        return false;
+    }
+    DWORD type = 0;
+    DWORD size = 0;
+    const LONG q1 = RegQueryValueExA(key, valueName, nullptr, &type, nullptr, &size);
+    if (q1 != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ) || size == 0) {
+        RegCloseKey(key);
+        return false;
+    }
+    std::vector<char> buf(size + 1, '\0');
+    const LONG q2 = RegQueryValueExA(key, valueName, nullptr, &type, reinterpret_cast<LPBYTE>(buf.data()), &size);
+    RegCloseKey(key);
+    if (q2 != ERROR_SUCCESS) {
+        return false;
+    }
+    out.assign(buf.data());
+    return !out.empty();
+}
+
+static bool IsUserProtocolRegisteredOwalkie() {
+    std::string protocolMarker;
+    if (!ReadRegStringValue(HKEY_CURRENT_USER, "Software\\Classes\\owalkie", "URL Protocol", protocolMarker)) {
+        return false;
+    }
+    std::string openCmd;
+    if (!ReadRegStringValue(
+            HKEY_CURRENT_USER, "Software\\Classes\\owalkie\\shell\\open\\command", nullptr, openCmd)) {
+        return false;
+    }
+    return !openCmd.empty();
+}
+
+static bool SetRegStringValue(HKEY root, const char* subKey, const char* valueName, const std::string& value) {
+    HKEY key = nullptr;
+    DWORD disp = 0;
+    if (RegCreateKeyExA(root, subKey, 0, nullptr, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr, &key, &disp) !=
+        ERROR_SUCCESS) {
+        return false;
+    }
+    const LONG rc = RegSetValueExA(
+        key,
+        valueName,
+        0,
+        REG_SZ,
+        reinterpret_cast<const BYTE*>(value.c_str()),
+        static_cast<DWORD>(value.size() + 1));
+    RegCloseKey(key);
+    return rc == ERROR_SUCCESS;
+}
+
+static bool RegisterUserProtocolOwalkie() {
+    char exePath[MAX_PATH]{};
+    const DWORD n = GetModuleFileNameA(nullptr, exePath, static_cast<DWORD>(sizeof(exePath)));
+    if (n == 0 || n >= sizeof(exePath)) {
+        return false;
+    }
+    const std::string command = std::string("\"") + std::string(exePath, exePath + n) + "\" \"%1\"";
+    if (!SetRegStringValue(HKEY_CURRENT_USER, "Software\\Classes\\owalkie", nullptr, "URL:O-Walkie Protocol")) {
+        return false;
+    }
+    if (!SetRegStringValue(HKEY_CURRENT_USER, "Software\\Classes\\owalkie", "URL Protocol", "")) {
+        return false;
+    }
+    if (!SetRegStringValue(HKEY_CURRENT_USER, "Software\\Classes\\owalkie\\shell\\open\\command", nullptr, command)) {
+        return false;
+    }
+    return true;
+}
+#endif
+
 namespace {
 
 // Release-burst anti-spam (aligned with Android WalkieService): quiet window before reset; refreshed on release and on blocked press.
@@ -1667,6 +1741,9 @@ MainFrame::MainFrame(const std::string& connectUri)
     SyncRxVolumeUi();
     UpdateProfileControlsEnabled();
     RefreshPttUi();
+#ifdef _WIN32
+    EnsureUserProtocolRegistration();
+#endif
 
     CallAfter([this] {
         if (hostCtrl_) {
@@ -1688,6 +1765,39 @@ MainFrame::~MainFrame() {
     audio_->Shutdown();
     relay_->Disconnect();
 }
+
+#ifdef _WIN32
+void MainFrame::EnsureUserProtocolRegistration() {
+    if (protocolRegistrationHandled_) {
+        return;
+    }
+    if (IsUserProtocolRegisteredOwalkie()) {
+        protocolRegistrationHandled_ = true;
+        SaveAudioSettings();
+        return;
+    }
+    wxMessageDialog ask(
+        this,
+        _("Register O-Walkie in system for quick connect links support?"),
+        _("O-Walkie"),
+        wxYES_NO | wxICON_QUESTION | wxCENTER);
+    if (ask.ShowModal() != wxID_YES) {
+        protocolRegistrationHandled_ = true;
+        SaveAudioSettings();
+        return;
+    }
+    if (!RegisterUserProtocolOwalkie()) {
+        wxMessageBox(
+            _("Could not register protocol handler in user profile."),
+            _("O-Walkie"),
+            wxOK | wxICON_WARNING,
+            this);
+        return;
+    }
+    protocolRegistrationHandled_ = true;
+    SaveAudioSettings();
+}
+#endif
 
 wxString MainFrame::UserDataDir() {
     wxString dir = wxStandardPaths::Get().GetUserDataDir();
@@ -2085,6 +2195,7 @@ void MainFrame::LoadAllSettings() {
                 txCollisionVibrationHz_ = std::clamp(txCollisionVibrationHz_, 30.0, 500.0);
                 txCollisionVibrationVolumePercent_ = std::clamp(txCollisionVibrationVolumePercent_, 0, 100);
                 uiLanguageCode_ = j.value("ui_language", std::string("en"));
+                protocolRegistrationHandled_ = j.value("protocol_registration_handled", false);
                 if (uiLanguageCode_ != "ru") {
                     uiLanguageCode_ = "en";
                 }
@@ -2139,6 +2250,7 @@ void MainFrame::SaveAudioSettings() {
     j["tx_collision_vibration_hz"] = txCollisionVibrationHz_;
     j["tx_collision_vibration_volume_percent"] = std::clamp(txCollisionVibrationVolumePercent_, 0, 100);
     j["ui_language"] = uiLanguageCode_;
+    j["protocol_registration_handled"] = protocolRegistrationHandled_;
     try {
         std::ofstream out(AudioSettingsPath().utf8_string());
         if (out) {
