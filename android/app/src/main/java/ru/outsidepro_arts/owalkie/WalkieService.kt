@@ -275,6 +275,8 @@ class WalkieService : Service() {
     private val cachedSignalByte = AtomicInteger(0)
     private val lastSignalRefreshAtNs = AtomicLong(0L)
     private val lastRxPlaybackWriteNs = AtomicLong(0L)
+    /** Last time decoded RX PCM was written to the stream [AudioTrack] (UI "receiving" indicator). */
+    private val lastRxAudiblePlaybackWriteNs = AtomicLong(0L)
     private val lastRxMediaSessionAnchorNs = AtomicLong(0L)
 
     @Volatile
@@ -1003,6 +1005,7 @@ class WalkieService : Service() {
                         maybeAnchorMediaSessionOnRxPlaybackWrite(nowNs)
                     }
                     track.write(pcm, 0, pcm.size)
+                    lastRxAudiblePlaybackWriteNs.set(nowNs)
                 }
             } finally {
                 track.stop()
@@ -1640,7 +1643,8 @@ class WalkieService : Service() {
 
     private fun updateRxActiveState() {
         val holdNs = (currentPacketMs().coerceAtLeast(DEFAULT_PACKET_MS) * 2L) * 1_000_000L
-        val active = (System.nanoTime() - lastInboundUdpAtNs.get()) <= holdNs
+        val lastWrite = lastRxAudiblePlaybackWriteNs.get()
+        val active = lastWrite != 0L && (System.nanoTime() - lastWrite) <= holdNs
         rxActive.set(active)
     }
 
@@ -2153,6 +2157,7 @@ class WalkieService : Service() {
         rxActive.set(false)
         busyLastRxAtNs.set(0L)
         lastInboundUdpAtNs.set(0L)
+        lastRxAudiblePlaybackWriteNs.set(0L)
         lastOutboundUdpAtNs.set(0L)
         lastUdpKeepaliveSentAtNs.set(0L)
         udpKeepalivePendingSinceNs.set(0L)

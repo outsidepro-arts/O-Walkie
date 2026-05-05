@@ -274,16 +274,20 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         cancelRxVolumePreview()
-        // If touch sequence is interrupted (app backgrounded/system overlay), ACTION_UP may never arrive.
-        // Force TX release to prevent stuck PTT state.
-        if (holdPttFingerDown) {
-            holdPttFingerDown = false
-            sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
-            binding.callButton.isEnabled = wsConnected
-            updatePttLabel()
-            updateStatusChips()
-        } else {
-            stopTransmitUi()
+        // Configuration change runs onStop/onStart on a new Activity instance; do not send PTT_RELEASE
+        // or the service drops toggle-mode TX while the user only rotated the device.
+        if (!isChangingConfigurations) {
+            // If touch sequence is interrupted (app backgrounded/system overlay), ACTION_UP may never arrive.
+            // Force TX release to prevent stuck PTT state.
+            if (holdPttFingerDown) {
+                holdPttFingerDown = false
+                sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
+                binding.callButton.isEnabled = wsConnected
+                updatePttLabel()
+                updateStatusChips()
+            } else {
+                stopTransmitUi()
+            }
         }
         // Orientation recreation is not a real background transition; avoid toggling
         // service focus state which can disturb active network/session timing.
