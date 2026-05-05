@@ -48,6 +48,7 @@ import ru.outsidepro_arts.owalkie.databinding.ActivityMainBinding
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
 import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
 import ru.outsidepro_arts.owalkie.model.RxVolumeStore
+import ru.outsidepro_arts.owalkie.model.ScreenOrientationStore
 import ru.outsidepro_arts.owalkie.model.ServerProfile
 import ru.outsidepro_arts.owalkie.model.ServerStore
 
@@ -148,6 +149,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ScreenOrientationStore.applyTo(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         // Activity recreation on orientation change should not look like a fresh connect event.
@@ -267,6 +269,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        ScreenOrientationStore.applyTo(this)
         refreshPttToggleModeSetting()
         updateBatteryOptimizationUi()
     }

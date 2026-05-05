@@ -24,6 +24,10 @@
     <string name="menu_exit">Exit</string>
     <string name="settings_screen_title">Application settings</string>
     <string name="settings_screen_placeholder">This is a settings screen template. New options will be added here in the next stages.</string>
+    <string name="screen_orientation_label">Screen orientation</string>
+    <string name="screen_orientation_portrait">Portrait</string>
+    <string name="screen_orientation_landscape">Landscape</string>
+    <string name="screen_orientation_follow_system">Follow device (respect system auto-rotate)</string>
     <string name="microphone_label">Microphone</string>
     <string name="microphone_option_mic">Phone mic (MIC)</string>
     <string name="microphone_option_default">System default</string>

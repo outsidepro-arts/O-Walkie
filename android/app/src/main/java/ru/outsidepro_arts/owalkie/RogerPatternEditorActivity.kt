@@ -16,6 +16,7 @@ import androidx.activity.ComponentActivity
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
 import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 import ru.outsidepro_arts.owalkie.model.RogerPoint
+import ru.outsidepro_arts.owalkie.model.ScreenOrientationStore
 import ru.outsidepro_arts.owalkie.model.SignalSequenceClipboard
 
 class RogerPatternEditorActivity : ComponentActivity() {
@@ -55,6 +56,7 @@ class RogerPatternEditorActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ScreenOrientationStore.applyTo(this)
         setContentView(R.layout.activity_roger_pattern_editor)
         signalKind = intent.getStringExtra(EXTRA_SIGNAL_KIND) ?: SIGNAL_KIND_ROGER
         editPatternId = intent.getStringExtra(EXTRA_EDIT_PATTERN_ID)

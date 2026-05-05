@@ -21,6 +21,7 @@ import ru.outsidepro_arts.owalkie.model.PhoneCallRelayPauseStore
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
 import ru.outsidepro_arts.owalkie.model.RogerPattern
 import ru.outsidepro_arts.owalkie.model.RogerPatternStore
+import ru.outsidepro_arts.owalkie.model.ScreenOrientationStore
 
 class SettingsActivity : ComponentActivity() {
     private lateinit var rogerPatternStore: RogerPatternStore
@@ -30,6 +31,8 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
     private lateinit var externalControlStore: ExternalControlStore
     private lateinit var phoneCallRelayPauseStore: PhoneCallRelayPauseStore
+    private lateinit var screenOrientationStore: ScreenOrientationStore
+    private lateinit var screenOrientationSpinner: Spinner
     private lateinit var hardwarePttRow: View
     private lateinit var hardwarePttStatusText: TextView
     private lateinit var microphoneSpinner: Spinner
@@ -49,6 +52,8 @@ class SettingsActivity : ComponentActivity() {
     private val microphoneOptions = mutableListOf<MicrophoneConfigStore.MicrophoneOption>()
     private val rogerPatterns = mutableListOf<RogerPattern>()
     private val callingPatterns = mutableListOf<RogerPattern>()
+    private val orientationModes = ScreenOrientationStore.Mode.entries.toList()
+    private var suppressOrientationSpinnerCallback = false
 
     private val customPatternEditorLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -57,6 +62,8 @@ class SettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        screenOrientationStore = ScreenOrientationStore(this)
+        ScreenOrientationStore.applyTo(this)
         setContentView(R.layout.activity_settings)
         title = getString(R.string.menu_settings)
         rogerPatternStore = RogerPatternStore(this)
@@ -66,6 +73,9 @@ class SettingsActivity : ComponentActivity() {
         pttHardwareKeyStore = PttHardwareKeyStore(this)
         externalControlStore = ExternalControlStore(this)
         phoneCallRelayPauseStore = PhoneCallRelayPauseStore(this)
+
+        screenOrientationSpinner = findViewById(R.id.screenOrientationSpinner)
+        initScreenOrientationSpinner()
 
         hardwarePttRow = findViewById(R.id.hardwarePttRow)
         hardwarePttStatusText = findViewById(R.id.hardwarePttStatusText)
@@ -138,6 +148,7 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun refreshPatterns() {
+        refreshScreenOrientationSpinner()
         refreshHardwarePttStatus()
         refreshPttToggleMode()
         refreshMediaButtonPttCheckbox()
@@ -147,6 +158,41 @@ class SettingsActivity : ComponentActivity() {
         refreshBluetoothHeadsetToggle()
         refreshRogerPatterns()
         refreshCallingPatterns()
+    }
+
+    private fun initScreenOrientationSpinner() {
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            orientationModes.map { screenOrientationModeLabel(it) },
+        )
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        screenOrientationSpinner.adapter = adapter
+        screenOrientationSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (suppressOrientationSpinnerCallback) return
+                val mode = orientationModes[position]
+                screenOrientationStore.setMode(mode)
+                ScreenOrientationStore.applyTo(this@SettingsActivity, mode)
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+        refreshScreenOrientationSpinner()
+    }
+
+    private fun refreshScreenOrientationSpinner() {
+        if (!::screenOrientationSpinner.isInitialized) return
+        val idx = orientationModes.indexOf(screenOrientationStore.getMode()).coerceAtLeast(0)
+        suppressOrientationSpinnerCallback = true
+        screenOrientationSpinner.setSelection(idx)
+        suppressOrientationSpinnerCallback = false
+    }
+
+    private fun screenOrientationModeLabel(mode: ScreenOrientationStore.Mode): String = when (mode) {
+        ScreenOrientationStore.Mode.PORTRAIT -> getString(R.string.screen_orientation_portrait)
+        ScreenOrientationStore.Mode.LANDSCAPE -> getString(R.string.screen_orientation_landscape)
+        ScreenOrientationStore.Mode.FOLLOW_SYSTEM -> getString(R.string.screen_orientation_follow_system)
     }
 
     private fun refreshBluetoothHeadsetToggle() {

@@ -24,6 +24,10 @@
     <string name="menu_exit">Выход</string>
     <string name="settings_screen_title">Настройки приложения</string>
     <string name="settings_screen_placeholder">Это макет окна настроек. В следующих этапах добавим сюда параметры приложения.</string>
+    <string name="screen_orientation_label">Ориентация экрана</string>
+    <string name="screen_orientation_portrait">Вертикальная</string>
+    <string name="screen_orientation_landscape">Горизонтальная</string>
+    <string name="screen_orientation_follow_system">По устройству (учитывать автоповорот системы)</string>
     <string name="microphone_label">Микрофон</string>
     <string name="microphone_option_mic">Микрофон телефона (MIC)</string>
     <string name="microphone_option_default">Системный по умолчанию</string>
