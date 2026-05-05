@@ -71,10 +71,11 @@ public:
     void ScheduleRxResumeHoldoff(int multiplier = 2);
     bool StreamRogerSignal();
     bool StreamCallSignal();
-    void PlayConnectedSignal();
+    void PlayConnectedSignal(bool useQueue = true);
     void PlayConnectionErrorSignal();
-    void PlayManualConnectStartSignal();
+    void PlayManualConnectStartSignal(bool useQueue = true);
     void PlayManualDisconnectSignal();
+    void PlaySwitchNavSignal(bool useQueue = false);
     void PlayPttPressSignal();
     /// Local preview (e.g. custom pattern editor); does not touch relay state.
     void PlaySignalPatternPreview(const SignalPattern& pattern);

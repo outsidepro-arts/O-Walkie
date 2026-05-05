@@ -2475,6 +2475,7 @@ void MainFrame::UpdateMicLevelIndicatorVisibility() {
 }
 
 void MainFrame::OnConnectClicked(wxCommandEvent&) {
+    audio_->PlaySwitchNavSignal();
     StopReconnectTimer();
 
     if (connected_ || userWantsSession_) {
@@ -2566,6 +2567,7 @@ void MainFrame::OnPttButtonClicked(wxCommandEvent&) {
 }
 
 void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
+    audio_->PlaySwitchNavSignal();
     if (!connected_ || audio_->IsTransmitting() || audio_->IsSignalStreaming()) {
         return;
     }

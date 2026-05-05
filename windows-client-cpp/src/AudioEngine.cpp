@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -213,7 +215,73 @@ void OneShotPlaybackCallback(ma_device* pDevice, void* pOutput, const void* pInp
     }
 }
 
-void PlayOneShotHighQuality(const std::vector<int16_t>& pcm, int srcRate) {
+void PlayOneShotNow(const std::vector<int16_t>& pcm44) {
+    if (pcm44.empty()) {
+        return;
+    }
+    ma_context ctx{};
+    if (ma_context_init(nullptr, 0, nullptr, &ctx) != MA_SUCCESS) {
+        return;
+    }
+    auto state = std::make_unique<OneShotPlaybackState>();
+    state->pcm = pcm44;
+    ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
+    cfg.playback.format = ma_format_s16;
+    cfg.playback.channels = 1;
+    cfg.sampleRate = static_cast<ma_uint32>(kUiSignalPlaybackRate);
+    cfg.dataCallback = OneShotPlaybackCallback;
+    cfg.pUserData = state.get();
+    ma_device dev{};
+    if (ma_device_init(&ctx, &cfg, &dev) != MA_SUCCESS) {
+        ma_context_uninit(&ctx);
+        return;
+    }
+    if (ma_device_start(&dev) != MA_SUCCESS) {
+        ma_device_uninit(&dev);
+        ma_context_uninit(&ctx);
+        return;
+    }
+    const auto playMs = static_cast<int64_t>(state->pcm.size()) * 1000LL / kUiSignalPlaybackRate;
+    std::this_thread::sleep_for(std::chrono::milliseconds(std::max<int64_t>(playMs + 50, 80)));
+    ma_device_stop(&dev);
+    ma_device_uninit(&dev);
+    ma_context_uninit(&ctx);
+}
+
+std::mutex gUiSignalQueueMu;
+std::condition_variable gUiSignalQueueCv;
+std::deque<std::vector<int16_t>> gUiSignalQueue;
+std::atomic<bool> gUiSignalQueueWorkerRunning{false};
+
+void EnsureUiSignalQueueWorkerStarted() {
+    bool expected = false;
+    if (!gUiSignalQueueWorkerRunning.compare_exchange_strong(expected, true)) {
+        return;
+    }
+    std::thread([] {
+        while (true) {
+            std::vector<int16_t> nextPcm;
+            {
+                std::unique_lock<std::mutex> lk(gUiSignalQueueMu);
+                gUiSignalQueueCv.wait_for(lk, std::chrono::seconds(2), [] { return !gUiSignalQueue.empty(); });
+                if (gUiSignalQueue.empty()) {
+                    gUiSignalQueueWorkerRunning.store(false);
+                    if (gUiSignalQueue.empty()) {
+                        break;
+                    }
+                    gUiSignalQueueWorkerRunning.store(true);
+                }
+                if (!gUiSignalQueue.empty()) {
+                    nextPcm = std::move(gUiSignalQueue.front());
+                    gUiSignalQueue.pop_front();
+                }
+            }
+            PlayOneShotNow(nextPcm);
+        }
+    }).detach();
+}
+
+void PlayOneShotHighQuality(const std::vector<int16_t>& pcm, int srcRate, bool useQueue = false) {
     if (pcm.empty() || srcRate <= 0) {
         return;
     }
@@ -221,35 +289,16 @@ void PlayOneShotHighQuality(const std::vector<int16_t>& pcm, int srcRate) {
     if (pcm44.empty()) {
         return;
     }
-    std::thread([pcm44 = std::move(pcm44)]() mutable {
-        ma_context ctx{};
-        if (ma_context_init(nullptr, 0, nullptr, &ctx) != MA_SUCCESS) {
-            return;
+    if (useQueue) {
+        {
+            std::lock_guard<std::mutex> lg(gUiSignalQueueMu);
+            gUiSignalQueue.emplace_back(std::move(pcm44));
         }
-        auto state = std::make_unique<OneShotPlaybackState>();
-        state->pcm = std::move(pcm44);
-        ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
-        cfg.playback.format = ma_format_s16;
-        cfg.playback.channels = 1;
-        cfg.sampleRate = static_cast<ma_uint32>(kUiSignalPlaybackRate);
-        cfg.dataCallback = OneShotPlaybackCallback;
-        cfg.pUserData = state.get();
-        ma_device dev{};
-        if (ma_device_init(&ctx, &cfg, &dev) != MA_SUCCESS) {
-            ma_context_uninit(&ctx);
-            return;
-        }
-        if (ma_device_start(&dev) != MA_SUCCESS) {
-            ma_device_uninit(&dev);
-            ma_context_uninit(&ctx);
-            return;
-        }
-        const auto playMs = static_cast<int64_t>(state->pcm.size()) * 1000LL / kUiSignalPlaybackRate;
-        std::this_thread::sleep_for(std::chrono::milliseconds(std::max<int64_t>(playMs + 50, 80)));
-        ma_device_stop(&dev);
-        ma_device_uninit(&dev);
-        ma_context_uninit(&ctx);
-    }).detach();
+        EnsureUiSignalQueueWorkerStarted();
+        gUiSignalQueueCv.notify_one();
+        return;
+    }
+    std::thread([pcm44 = std::move(pcm44)]() { PlayOneShotNow(pcm44); }).detach();
 }
 
 void AppendSilence(std::vector<int16_t>& out, int sampleRate, int durationMs) {
@@ -788,7 +837,7 @@ bool AudioEngine::StreamCallSignal() {
     return ok;
 }
 
-void AudioEngine::PlayConnectedSignal() {
+void AudioEngine::PlayConnectedSignal(bool useQueue) {
     std::vector<int16_t> pcm;
     {
         std::lock_guard<std::mutex> lg(mu_);
@@ -796,7 +845,7 @@ void AudioEngine::PlayConnectedSignal() {
         AppendSilence(pcm, kLocalSignalSynthesisRate, 50);
         AppendTone(pcm, kLocalSignalSynthesisRate, 1700.0, 50, 0.22);
     }
-    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate, useQueue);
 }
 
 void AudioEngine::PlayConnectionErrorSignal() {
@@ -810,7 +859,7 @@ void AudioEngine::PlayConnectionErrorSignal() {
     PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
 }
 
-void AudioEngine::PlayManualConnectStartSignal() {
+void AudioEngine::PlayManualConnectStartSignal(bool useQueue) {
     std::vector<int16_t> pcm;
     {
         std::lock_guard<std::mutex> lg(mu_);
@@ -819,7 +868,7 @@ void AudioEngine::PlayManualConnectStartSignal() {
         AppendTone(pcm, kLocalSignalSynthesisRate, 1396.91, 50, 0.22);
         AppendTone(pcm, kLocalSignalSynthesisRate, 1864.66, 70, 0.22);
     }
-    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate, useQueue);
 }
 
 void AudioEngine::PlayManualDisconnectSignal() {
@@ -845,6 +894,18 @@ void AudioEngine::PlayPttPressSignal() {
         }
     }
     PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
+}
+
+void AudioEngine::PlaySwitchNavSignal(bool useQueue) {
+    std::vector<int16_t> pcm;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        pcm = LoadSoundFromExeDir("switch_nav", kLocalSignalSynthesisRate);
+        if (pcm.empty()) {
+            AppendTone(pcm, kLocalSignalSynthesisRate, 1320.0, 18, 0.14);
+        }
+    }
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate, useQueue);
 }
 
 void AudioEngine::PlayVibrationPattern(const std::vector<int>& patternMs) {

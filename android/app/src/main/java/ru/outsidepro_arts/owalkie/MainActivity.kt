@@ -191,6 +191,7 @@ class MainActivity : ComponentActivity() {
         }
 
         binding.callButton.setOnClickListener {
+            uiSignalPlayer.playSwitch()
             if (!wsConnected) return@setOnClickListener
             sendServiceAction(WalkieService.ACTION_CALL_SIGNAL)
         }
@@ -648,6 +649,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleConnectAction() {
+        uiSignalPlayer.playSwitch()
         if (wsConnecting || wsConnected || (userRequestedConnection && relayPausedForPhoneCall)) {
             userRequestedConnection = false
             uiSignalPlayer.playManualDisconnect()
@@ -736,6 +738,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun toggleScanning() {
+        uiSignalPlayer.playSwitch()
         if (scanJob?.isActive == true) {
             stopScanning(announce = true)
         } else {

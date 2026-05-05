@@ -6,6 +6,9 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -14,68 +17,79 @@ class UiSignalPlayer(context: Context) {
     private val pttPressTone: WavPcm = loadWavPcmFromRaw(R.raw.selfpttup_002)
     private val pttReleaseTone: WavPcm = loadWavPcmFromRaw(R.raw.selfttdown_002)
     private val switchTone: WavPcm = loadWavPcmFromRaw(R.raw.switch_nav)
+    private val uiSignalQueue: ExecutorService = Executors.newSingleThreadExecutor()
 
     fun playPttPress() {
-        playPcm(pttPressTone.samples, pttPressTone.sampleRate)
+        playPcm(pttPressTone.samples, pttPressTone.sampleRate, false)
     }
 
     fun playPttRelease() {
-        playPcm(pttReleaseTone.samples, pttReleaseTone.sampleRate)
+        playPcm(pttReleaseTone.samples, pttReleaseTone.sampleRate, false)
     }
 
-    fun playConnected() {
+    fun playConnected(useQueue: Boolean = true) {
         val pcm = generateConnectedPcm()
-        playPcm(pcm, SAMPLE_RATE)
+        playPcm(pcm, SAMPLE_RATE, useQueue)
     }
 
-    fun playManualConnectStart() {
+    fun playManualConnectStart(useQueue: Boolean = true) {
         val pcm = generateManualConnectStartPcm()
-        playPcm(pcm, SAMPLE_RATE)
+        playPcm(pcm, SAMPLE_RATE, useQueue)
     }
 
     fun playManualDisconnect() {
         val pcm = generateManualDisconnectPcm()
-        playPcm(pcm, SAMPLE_RATE)
+        playPcm(pcm, SAMPLE_RATE, false)
     }
 
     fun playConnectionError() {
         val pcm = generateConnectionErrorPcm()
-        playPcm(pcm, SAMPLE_RATE)
+        playPcm(pcm, SAMPLE_RATE, false)
     }
 
-    fun playSwitch() {
-        playPcm(switchTone.samples, switchTone.sampleRate)
+    fun playSwitch(useQueue: Boolean = false) {
+        playPcm(switchTone.samples, switchTone.sampleRate, useQueue)
     }
 
     fun release() {
-        // no-op for now, kept for lifecycle symmetry.
+        uiSignalQueue.shutdownNow()
+        runCatching { uiSignalQueue.awaitTermination(200, TimeUnit.MILLISECONDS) }
     }
 
-    private fun playPcm(pcm: ShortArray, sampleRate: Int) {
+    private fun playPcm(pcm: ShortArray, sampleRate: Int, useQueue: Boolean) {
         if (pcm.isEmpty()) return
+        if (useQueue) {
+            uiSignalQueue.execute { playPcmBlocking(pcm, sampleRate) }
+        } else {
+            Thread {
+                playPcmBlocking(pcm, sampleRate)
+            }.start()
+        }
+    }
+
+    private fun playPcmBlocking(pcm: ShortArray, sampleRate: Int) {
+        val safeRate = sampleRate.coerceIn(4000, 192000)
         val track = AudioTrack(
             AudioManager.STREAM_MUSIC,
-            sampleRate,
+            safeRate,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
             (pcm.size * 2).coerceAtLeast(2),
             AudioTrack.MODE_STATIC,
         )
-        val written = track.write(pcm, 0, pcm.size)
-        if (written > 0) {
-            track.play()
-        }
-        // Release on a lightweight worker after expected playback time.
-        Thread {
-            try {
-                Thread.sleep(((pcm.size * 1000L) / SAMPLE_RATE) + 40L)
-            } catch (_: InterruptedException) {
+        runCatching {
+            val written = track.write(pcm, 0, pcm.size)
+            if (written > 0) {
+                track.play()
             }
+            Thread.sleep(((pcm.size * 1000L) / safeRate) + 40L)
+        }
+        runCatching {
             runCatching {
                 track.stop()
             }
             track.release()
-        }.start()
+        }
     }
 
     private fun generateConnectedPcm(): ShortArray {
