@@ -8,7 +8,7 @@ alwaysApply: true
 ## Tech Stack
 - Backend: Go relay server (`backend/cmd/relay/main.go`), WebSocket control + UDP audio data.
 - Android client: Kotlin, foreground `WalkieService`, Opus via `kopus`, Gradle Kotlin DSL.
-- Windows client: C++ wxWidgets (`windows-client-cpp`), Boost.Beast, **miniaudio** (vendored), Opus (legacy C# WPF removed); UI i18n via **gettext** (`wxLocale` + `locale/<lang>/LC_MESSAGES/owalkie.mo`), source language English, `ui_language` (`en`|`ru`) in `audio.json`, language picker in Settings (restart required).
+- Windows client: C++ wxWidgets (`windows-client-cpp`), Boost.Beast, **miniaudio** (vendored), Opus (legacy C# WPF removed); UI i18n via **gettext** (`wxLocale` + `locale/<lang>/LC_MESSAGES/owalkie.mo`), source language English, `ui_language` (`en`|`ru`) in `config.json` (auto-migrate from legacy `audio.json`), language picker in Settings (restart required).
 - Audio protocol: Opus mono, server handshake with protocol/version/audio params.
 
 ## Релизы (перед каждым публичным релизом на GitHub)
@@ -27,6 +27,8 @@ alwaysApply: true
 
 ## Recent Key Changes
 - Windows: состояние user-level регистрации deep-link протокола теперь фиксируется в `audio.json` флагом `protocol_registration_handled`; после успешной регистрации или явного отказа пользователя флаг выставляется в `true`, и на последующих стартах клиент больше не показывает вопрос и не выполняет регистрационные действия.
+- Windows: конфиг клиента переименован в `config.json` (чтение/запись), при старте поддерживается fallback на legacy `audio.json` для обратной совместимости.
+- TODO (через несколько версий): удалить fallback чтения legacy `audio.json` и оставить только `config.json`.
 - Windows: добавлена user-level регистрация deep-link протокола `owalkie://` без UAC — при старте клиент проверяет HKCU `Software\Classes\owalkie`; если хендлер отсутствует, спрашивает пользователя о регистрации и при согласии пишет protocol association в реестр текущего пользователя.
 - Android + Windows: добавлены кнопки импорта/экспорта connection deep-link (`owalkie://connect?...`) через буфер обмена (share = копирование текущего подключения, import = поиск ссылки в тексте буфера и применение параметров в поля). Протокольный вызов ссылки в обоих клиентах теперь только заполняет подключение (без автоподключения), оставляя deep-link как механизм, а не авто-действие.
 - Android: добавлен MVP deep-link вход `owalkie://connect?host=...&port=...&channel=...` через `ACTION_VIEW` intent-filter в `MainActivity`; ссылка парсится в Activity и подставляет параметры в поля подключения (без автоподключения), включая warm-start обработку.

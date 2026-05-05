@@ -1812,7 +1812,7 @@ wxString MainFrame::ProfilesPath() {
 }
 
 wxString MainFrame::AudioSettingsPath() {
-    return wxFileName(UserDataDir(), wxString("audio.json")).GetFullPath();
+    return wxFileName(UserDataDir(), wxString("config.json")).GetFullPath();
 }
 
 wxString MainFrame::LegacyConnectionPath() {
@@ -2172,12 +2172,17 @@ void MainFrame::LoadAllSettings() {
     SyncUiFromActiveProfile();
 
     try {
-        wxString audioPath = AudioSettingsPath();
-        if (!wxFileName::FileExists(audioPath)) {
-            audioPath = LegacyConnectionPath();
+        wxString configPath = AudioSettingsPath();
+        if (!wxFileName::FileExists(configPath)) {
+            const wxString oldAudioPath = wxFileName(UserDataDir(), wxString("audio.json")).GetFullPath();
+            if (wxFileName::FileExists(oldAudioPath)) {
+                configPath = oldAudioPath;
+            } else {
+                configPath = LegacyConnectionPath();
+            }
         }
-        if (wxFileName::FileExists(audioPath)) {
-            std::ifstream in(audioPath.utf8_string());
+        if (wxFileName::FileExists(configPath)) {
+            std::ifstream in(configPath.utf8_string());
             if (in) {
                 nlohmann::json j;
                 in >> j;
