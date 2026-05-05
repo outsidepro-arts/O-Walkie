@@ -18,6 +18,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.WindowManager
 import android.widget.SeekBar
 import android.widget.PopupMenu
 import android.widget.AdapterView
@@ -139,6 +140,7 @@ class MainActivity : ComponentActivity() {
             updateStatusChips()
             updateConnectButtonLabel()
             updatePttAvailability()
+            syncKeepScreenOnWhileTransmitting()
         }
     }
 
@@ -270,6 +272,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         ScreenOrientationStore.applyTo(this)
+        syncKeepScreenOnWhileTransmitting()
         refreshPttToggleModeSetting()
         updateBatteryOptimizationUi()
     }
@@ -304,6 +307,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onDestroy()
         cancelRxVolumePreview()
         stopScanning(announce = false)
@@ -402,6 +406,7 @@ class MainActivity : ComponentActivity() {
         if (transmitting) return
         if (!wsConnected) return
         sendServiceAction(WalkieService.ACTION_PTT_PRESS)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         binding.callButton.isEnabled = false
         updatePttLabel()
         updateStatusChips()
@@ -430,6 +435,15 @@ class MainActivity : ComponentActivity() {
         binding.callButton.isEnabled = wsConnected
         updatePttLabel()
         updateStatusChips()
+    }
+
+    /** While any outgoing stream is active (PTT / Roger / Call), keep the main window from timing out. */
+    private fun syncKeepScreenOnWhileTransmitting() {
+        if (transmitting) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     private fun updatePttLabel() {
