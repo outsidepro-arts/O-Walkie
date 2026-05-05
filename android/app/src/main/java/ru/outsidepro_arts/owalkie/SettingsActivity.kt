@@ -33,6 +33,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var microphoneSpinner: Spinner
     private lateinit var useBluetoothHeadsetCheckBox: CheckBox
     private lateinit var pttToggleModeCheckBox: CheckBox
+    private lateinit var mediaButtonPttCheckBox: CheckBox
     private lateinit var pauseRelayDuringCellularCallCheckBox: CheckBox
     private lateinit var rogerSpinner: Spinner
     private lateinit var callingSpinner: Spinner
@@ -67,6 +68,7 @@ class SettingsActivity : ComponentActivity() {
         microphoneSpinner = findViewById(R.id.microphoneSpinner)
         useBluetoothHeadsetCheckBox = findViewById(R.id.useBluetoothHeadsetCheckBox)
         pttToggleModeCheckBox = findViewById(R.id.pttToggleModeCheckBox)
+        mediaButtonPttCheckBox = findViewById(R.id.mediaButtonPttCheckBox)
         pauseRelayDuringCellularCallCheckBox = findViewById(R.id.pauseRelayDuringCellularCallCheckBox)
         rogerSpinner = findViewById(R.id.rogerPatternSpinner)
         callingSpinner = findViewById(R.id.callingPatternSpinner)
@@ -118,6 +120,8 @@ class SettingsActivity : ComponentActivity() {
         }
         pttToggleModeCheckBox.setOnCheckedChangeListener { _, isChecked ->
             pttHardwareKeyStore.setToggleModeEnabled(isChecked)
+            refreshMediaButtonPttCheckbox()
+            notifyWalkieServicePttMediaSessionSync()
         }
 
         refreshPatterns()
@@ -131,6 +135,7 @@ class SettingsActivity : ComponentActivity() {
     private fun refreshPatterns() {
         refreshHardwarePttStatus()
         refreshPttToggleMode()
+        refreshMediaButtonPttCheckbox()
         refreshPhoneCallRelayPauseToggle()
         refreshMicrophoneOptions()
         refreshBluetoothHeadsetToggle()
@@ -163,7 +168,28 @@ class SettingsActivity : ComponentActivity() {
         pttToggleModeCheckBox.isChecked = enabled
         pttToggleModeCheckBox.setOnCheckedChangeListener { _, isChecked ->
             pttHardwareKeyStore.setToggleModeEnabled(isChecked)
+            refreshMediaButtonPttCheckbox()
+            notifyWalkieServicePttMediaSessionSync()
         }
+    }
+
+    private fun refreshMediaButtonPttCheckbox() {
+        val toggleOn = pttHardwareKeyStore.isToggleModeEnabled()
+        mediaButtonPttCheckBox.setOnCheckedChangeListener(null)
+        mediaButtonPttCheckBox.isEnabled = toggleOn
+        mediaButtonPttCheckBox.isChecked = pttHardwareKeyStore.isMediaButtonPttEnabled()
+        mediaButtonPttCheckBox.setOnCheckedChangeListener { _, isChecked ->
+            if (!pttHardwareKeyStore.isToggleModeEnabled()) return@setOnCheckedChangeListener
+            pttHardwareKeyStore.setMediaButtonPttEnabled(isChecked)
+            notifyWalkieServicePttMediaSessionSync()
+        }
+    }
+
+    private fun notifyWalkieServicePttMediaSessionSync() {
+        val intent = android.content.Intent(this, WalkieService::class.java).apply {
+            action = WalkieService.ACTION_SYNC_PTT_MEDIA_SESSION
+        }
+        startService(intent)
     }
 
     private fun refreshPhoneCallRelayPauseToggle() {

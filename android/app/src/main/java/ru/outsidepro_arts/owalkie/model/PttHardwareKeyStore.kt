@@ -61,6 +61,15 @@ class PttHardwareKeyStore(context: Context) {
             .apply()
     }
 
+    /** Headset/media play-pause as PTT toggle; only effective when [isToggleModeEnabled]. */
+    fun isMediaButtonPttEnabled(): Boolean = prefs.getBoolean(KEY_MEDIA_BUTTON_PTT, false)
+
+    fun setMediaButtonPttEnabled(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_MEDIA_BUTTON_PTT, enabled)
+            .apply()
+    }
+
     fun matches(event: KeyEvent): Boolean {
         val binding = getBinding()
         if (!binding.isAssigned()) return false
@@ -75,5 +84,6 @@ class PttHardwareKeyStore(context: Context) {
         private const val KEY_ASSIGNED_SCAN_CODE = "assigned_scan_code"
         private const val KEY_HANDLE_IN_BACKGROUND = "handle_in_background"
         private const val KEY_PTT_TOGGLE_MODE = "ptt_toggle_mode"
+        private const val KEY_MEDIA_BUTTON_PTT = "media_button_ptt"
     }
 }

@@ -68,6 +68,13 @@
         android:text="@string/hardware_ptt_toggle_mode_label" />
 
     <CheckBox
+        android:id="@+id/mediaButtonPttCheckBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="@string/hardware_ptt_media_button_label" />
+
+    <CheckBox
         android:id="@+id/pauseRelayDuringCellularCallCheckBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

@@ -23,7 +23,9 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -86,6 +88,7 @@ class WalkieService : Service() {
         const val ACTION_SET_RX_VOLUME = "ru.outsidepro_arts.owalkie.action.SET_RX_VOLUME"
         const val ACTION_SET_BLUETOOTH_HEADSET_MODE = "ru.outsidepro_arts.owalkie.action.SET_BLUETOOTH_HEADSET_MODE"
         const val ACTION_SET_ACTIVITY_FOCUS = "ru.outsidepro_arts.owalkie.action.SET_ACTIVITY_FOCUS"
+        const val ACTION_SYNC_PTT_MEDIA_SESSION = "ru.outsidepro_arts.owalkie.action.SYNC_PTT_MEDIA_SESSION"
         const val ACTION_HARDWARE_PTT_KEY = "ru.outsidepro_arts.owalkie.action.HARDWARE_PTT_KEY"
         const val EXTRA_SIGNAL = "signal"
         const val EXTRA_WS_CONNECTED = "wsConnected"
@@ -159,6 +162,9 @@ class WalkieService : Service() {
         private const val SIGNAL_POLL_INTERVAL_BACKGROUND_MS = 5000L
         private const val SIGNAL_REFRESH_INTERVAL_FOREGROUND_MS = 1000L
         private const val SIGNAL_REFRESH_INTERVAL_BACKGROUND_MS = 50000L
+        /** Gap between RX [AudioTrack] writes to treat as a new burst (media session anchor). */
+        private const val RX_PLAYBACK_BURST_GAP_MS = 600L
+        private const val MEDIA_SESSION_RX_ANCHOR_MIN_INTERVAL_NS = 2_000_000_000L
     }
 
     private val binder = Binder()
@@ -257,6 +263,8 @@ class WalkieService : Service() {
     private val lastNetworkFingerprint = AtomicLong(0L)
     private val cachedSignalByte = AtomicInteger(0)
     private val lastSignalRefreshAtNs = AtomicLong(0L)
+    private val lastRxPlaybackWriteNs = AtomicLong(0L)
+    private val lastRxMediaSessionAnchorNs = AtomicLong(0L)
 
     @Volatile
     private var serverHost: String = DEFAULT_WS_HOST
@@ -311,6 +319,10 @@ class WalkieService : Service() {
     @Volatile
     private var activityFocused: Boolean = true
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private lateinit var mediaButtonPttToggleRunnable: Runnable
+    private var pttMediaSessionController: PttMediaSessionController? = null
+
     override fun onCreate() {
         super.onCreate()
         codec = OpusCodecFactory().create(DEFAULT_SAMPLE_RATE, CHANNELS, opusConfig)
@@ -322,6 +334,7 @@ class WalkieService : Service() {
         rxVolumeStore = RxVolumeStore(this)
         pttHardwareKeyStore = PttHardwareKeyStore(this)
         phoneCallRelayPauseStore = PhoneCallRelayPauseStore(this)
+        mediaButtonPttToggleRunnable = Runnable { handleMediaButtonPttToggle() }
         useBluetoothHeadset = bluetoothHeadsetRouteStore.isEnabled()
         rxVolumePercent = rxVolumeStore.getPercent()
         val pttPressWav = loadWavPcmFromRaw(R.raw.selfpttup_002)
@@ -335,6 +348,13 @@ class WalkieService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == Intent.ACTION_MEDIA_BUTTON) {
+            if (shouldOfferMediaButtonCapture()) {
+                syncPttMediaSession()
+                pttMediaSessionController?.dispatchMediaButtonIntent(intent)
+            }
+            return START_STICKY
+        }
         when (intent?.action) {
             ACTION_START -> {
                 desiredConnection.set(true)
@@ -371,6 +391,7 @@ class WalkieService : Service() {
             ACTION_SET_ACTIVITY_FOCUS -> updateActivityFocus(
                 intent.getBooleanExtra(EXTRA_ACTIVITY_FOCUSED, activityFocused),
             )
+            ACTION_SYNC_PTT_MEDIA_SESSION -> syncPttMediaSession()
             ACTION_EXIT_APP -> exitApp()
         }
         return START_STICKY
@@ -416,6 +437,8 @@ class WalkieService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        pttMediaSessionController?.release()
+        pttMediaSessionController = null
         resetPttReleaseBurstGuard()
         transmitting.set(false)
         txJob?.cancel()
@@ -619,6 +642,7 @@ class WalkieService : Service() {
                 busyMode = false
                 busyRxActive.set(false)
                 broadcastStatus(currentSignalByte())
+                syncPttMediaSession()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -640,6 +664,7 @@ class WalkieService : Service() {
                 } else {
                     broadcastStatus(currentSignalByte())
                 }
+                syncPttMediaSession()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -656,6 +681,7 @@ class WalkieService : Service() {
                 } else {
                     broadcastStatus(currentSignalByte())
                 }
+                syncPttMediaSession()
             }
         })
     }
@@ -739,6 +765,7 @@ class WalkieService : Service() {
                             enterUdpKeepaliveRecoveryWindow()
                             // Immediate UDP punch so server can start sending right away after reconnect.
                             sendUdpKeepalivePacket()
+                            syncPttMediaSession()
                         }
                     }
                 }
@@ -947,6 +974,12 @@ class WalkieService : Service() {
                     }
                     val opus = packet.data.copyOfRange(9, packet.length)
                     val pcm = applyRxVolume(codec.decode(opus, currentFrameSamples()))
+                    val prevWrite = lastRxPlaybackWriteNs.get()
+                    val gapMsSinceLastWrite = if (prevWrite == 0L) Long.MAX_VALUE else (nowNs - prevWrite) / 1_000_000L
+                    lastRxPlaybackWriteNs.set(nowNs)
+                    if (gapMsSinceLastWrite > RX_PLAYBACK_BURST_GAP_MS) {
+                        maybeAnchorMediaSessionOnRxPlaybackWrite(nowNs)
+                    }
                     track.write(pcm, 0, pcm.size)
                 }
             } finally {
@@ -1885,6 +1918,53 @@ class WalkieService : Service() {
             stopUdpKeepaliveLoop()
             startUdpKeepaliveLoop()
         }
+        syncPttMediaSession()
+    }
+
+    private fun shouldOfferMediaButtonCapture(): Boolean {
+        return pttHardwareKeyStore.isToggleModeEnabled() &&
+            pttHardwareKeyStore.isMediaButtonPttEnabled() &&
+            desiredConnection.get() &&
+            !protocolError
+    }
+
+    private fun handleMediaButtonPttToggle() {
+        if (!shouldOfferMediaButtonCapture()) return
+        // Media key can arrive before join/welcome after reconnect; keep session active
+        // but ignore toggle until relay path is fully ready.
+        if (!wsConnected.get() || sessionId.get() == 0L) return
+        if (pttReleaseBurstPressBlocked.get()) {
+            schedulePttReleaseBurstDecay()
+            broadcastStatus(currentSignalByte())
+            return
+        }
+        if (transmitting.get()) {
+            onPttRelease()
+        } else {
+            onPttPress()
+        }
+    }
+
+    private fun syncPttMediaSession() {
+        if (!shouldOfferMediaButtonCapture()) {
+            pttMediaSessionController?.release()
+            pttMediaSessionController = null
+            lastRxPlaybackWriteNs.set(0L)
+            return
+        }
+        if (pttMediaSessionController == null) {
+            pttMediaSessionController = PttMediaSessionController(this, mainHandler, mediaButtonPttToggleRunnable)
+        }
+        pttMediaSessionController?.ensureActiveAndRefreshState()
+    }
+
+    private fun maybeAnchorMediaSessionOnRxPlaybackWrite(nowNs: Long) {
+        if (!shouldOfferMediaButtonCapture()) return
+        val ctrl = pttMediaSessionController ?: return
+        val lastAnchor = lastRxMediaSessionAnchorNs.get()
+        if (nowNs - lastAnchor < MEDIA_SESSION_RX_ANCHOR_MIN_INTERVAL_NS) return
+        if (!lastRxMediaSessionAnchorNs.compareAndSet(lastAnchor, nowNs)) return
+        mainHandler.post { ctrl.refreshPlaybackStateAnchor() }
     }
 
     private fun shouldHoldBluetoothCommunicationProfile(): Boolean {
