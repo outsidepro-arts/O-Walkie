@@ -996,8 +996,9 @@ public:
         auto* root = new wxBoxSizer(wxVERTICAL);
 
         {
-            auto* box = new wxStaticBox(panel, wxID_ANY, _("Display language"));
+            auto* box = new wxStaticBox(panel, wxID_ANY, _("General"));
             auto* sz = new wxStaticBoxSizer(wxVERTICAL, box);
+            sz->Add(new wxStaticText(box, wxID_ANY, _("Display language")), 0, wxBOTTOM, 4);
             langChoice_ = new wxChoice(box, wxID_ANY);
             langChoice_->Append(_("English"));
             langChoice_->Append(_("Russian"));
@@ -1007,8 +1008,9 @@ public:
         }
 
         {
-            auto* box = new wxStaticBox(panel, wxID_ANY, _("Microphone"));
+            auto* box = new wxStaticBox(panel, wxID_ANY, _("Audio"));
             auto* sz = new wxStaticBoxSizer(wxVERTICAL, box);
+            sz->Add(new wxStaticText(box, wxID_ANY, _("Microphone")), 0, wxBOTTOM, 4);
             inputChoice_ = new wxChoice(box, wxID_ANY);
             inputChoice_->Append(_("System default"));
             inputIds_.push_back(-1);
@@ -1016,13 +1018,8 @@ public:
                 inputChoice_->Append(wxString::FromUTF8(d.name));
                 inputIds_.push_back(d.index);
             }
-            sz->Add(inputChoice_, 0, wxEXPAND);
-            root->Add(sz, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
-        }
-
-        {
-            auto* box = new wxStaticBox(panel, wxID_ANY, _("Speaker"));
-            auto* sz = new wxStaticBoxSizer(wxVERTICAL, box);
+            sz->Add(inputChoice_, 0, wxEXPAND | wxBOTTOM, 10);
+            sz->Add(new wxStaticText(box, wxID_ANY, _("Speaker")), 0, wxBOTTOM, 4);
             outputChoice_ = new wxChoice(box, wxID_ANY);
             outputChoice_->Append(_("System default"));
             outputIds_.push_back(-1);
@@ -1030,7 +1027,10 @@ public:
                 outputChoice_->Append(wxString::FromUTF8(d.name));
                 outputIds_.push_back(d.index);
             }
-            sz->Add(outputChoice_, 0, wxEXPAND);
+            sz->Add(outputChoice_, 0, wxEXPAND | wxBOTTOM, 10);
+            micLevelCheck_ = new wxCheckBox(box, wxID_ANY, _("Show VU meter"));
+            micLevelCheck_->SetValue(showMicLevelIndicator);
+            sz->Add(micLevelCheck_, 0, wxEXPAND);
             root->Add(sz, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
         }
 
@@ -1093,20 +1093,11 @@ public:
         }
 
         {
-            auto* box = new wxStaticBox(panel, wxID_ANY, _("PTT toggle mode"));
+            auto* box = new wxStaticBox(panel, wxID_ANY, _("PTT key"));
             auto* sz = new wxStaticBoxSizer(wxVERTICAL, box);
             pttToggleCheck_ = new wxCheckBox(box, wxID_ANY, _("Tap or hotkey press toggles transmit on/off"));
             pttToggleCheck_->SetValue(pttToggleMode);
             sz->Add(pttToggleCheck_, 0, wxEXPAND);
-            root->Add(sz, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
-        }
-
-        {
-            auto* box = new wxStaticBox(panel, wxID_ANY, _("Microphone level indicator"));
-            auto* sz = new wxStaticBoxSizer(wxVERTICAL, box);
-            micLevelCheck_ = new wxCheckBox(box, wxID_ANY, _("Show VU meter"));
-            micLevelCheck_->SetValue(showMicLevelIndicator);
-            sz->Add(micLevelCheck_, 0, wxEXPAND);
             root->Add(sz, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
         }
 
@@ -2571,14 +2562,19 @@ void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
     if (!connected_ || audio_->IsTransmitting() || audio_->IsSignalStreaming()) {
         return;
     }
+    if (callBtn_) {
+        callBtn_->Enable(false);
+    }
     SetStatus("Sending call signal");
-    if (audio_->StreamCallSignal()) {
+    const bool ok = audio_->StreamCallSignal();
+    if (ok) {
         relay_->SendTxEofBurst();
         audio_->ScheduleRxResumeHoldoff();
         SetStatus("Connected");
     } else {
         SetStatus("Call signal failed");
     }
+    RefreshPttUi();
 }
 
 void MainFrame::BeginPttTx() {
