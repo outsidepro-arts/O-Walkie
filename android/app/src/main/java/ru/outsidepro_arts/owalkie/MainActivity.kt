@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
     private var busyRxActive = false
     private var pttBurstPressBlocked = false
     private var rxActive = false
+    private var parallelTxCollision = false
     private var relayPausedForPhoneCall = false
     private var userRequestedConnection = false
     private var suppressSpinnerReconnect = false
@@ -114,6 +115,7 @@ class MainActivity : ComponentActivity() {
             busyRxActive = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_RX_ACTIVE, false)
             pttBurstPressBlocked = intent.getBooleanExtra(WalkieService.EXTRA_PTT_BURST_PRESS_BLOCKED, false)
             rxActive = intent.getBooleanExtra(WalkieService.EXTRA_RX_ACTIVE, false)
+            parallelTxCollision = intent.getBooleanExtra(WalkieService.EXTRA_PARALLEL_TX_COLLISION, false)
             val signalPercent = ((signal / 255.0) * 100.0).toInt().coerceIn(0, 100)
             lastSignalPercent = signalPercent
 
@@ -1116,6 +1118,7 @@ class MainActivity : ComponentActivity() {
             protocolIncompatible -> getString(R.string.connection_state_protocol_incompatible)
             relayPausedForPhoneCall -> getString(R.string.connection_state_paused_phone_call)
             callActive -> getString(R.string.connection_state_calling)
+            parallelTxCollision -> getString(R.string.connection_state_parallel_tx)
             transmitting -> getString(R.string.connection_state_transmitting)
             wsConnected && rxActive -> getString(R.string.connection_state_receiving)
             scanJob?.isActive == true -> getString(R.string.connection_state_scanning)

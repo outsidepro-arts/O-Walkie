@@ -110,6 +110,8 @@ class WalkieService : Service() {
         const val EXTRA_BUSY_RX_ACTIVE = "busyRxActive"
         const val EXTRA_RX_ACTIVE = "rxActive"
         const val EXTRA_TX_ACTIVE = "txActive"
+        /** Inbound audio while local TX/Roger/Call is active (another station doubling). */
+        const val EXTRA_PARALLEL_TX_COLLISION = "parallelTxCollision"
         const val EXTRA_CALL_ACTIVE = "callActive"
         const val EXTRA_PTT_BURST_PRESS_BLOCKED = "pttBurstPressBlocked"
         const val EXTRA_DEBUG_WS_RECONNECT_COUNT = "debugWsReconnectCount"
@@ -176,6 +178,8 @@ class WalkieService : Service() {
         /** Gap between RX [AudioTrack] writes to treat as a new burst (media session anchor). */
         private const val RX_PLAYBACK_BURST_GAP_MS = 600L
         private const val MEDIA_SESSION_RX_ANCHOR_MIN_INTERVAL_NS = 2_000_000_000L
+        /** End parallel-TX collision feedback this long after the last inbound frame while local TX is on. */
+        private const val PARALLEL_TX_RX_STALE_NS = 250_000_000L
     }
 
     private val binder = Binder()
@@ -254,7 +258,10 @@ class WalkieService : Service() {
     private val rxActive = AtomicBoolean(false)
     private val busyLastRxAtNs = AtomicLong(0L)
     private val lastInboundUdpAtNs = AtomicLong(0L)
-    private val lastTxCollisionVibrateAtNs = AtomicLong(0L)
+    /** Last UDP audio (not keepalive) received while local TX/Roger/Call is active. */
+    private val lastRxDuringParallelTxNs = AtomicLong(0L)
+    private val parallelTxCollisionActive = AtomicBoolean(false)
+    private val parallelCollisionVibrationRunning = AtomicBoolean(false)
 
     /** After RX decode was suppressed (TX/holdoff), reinit RX Opus decoder before next play to avoid PLC tail on the first frame. */
     private val pendingRxCodecReinit = AtomicBoolean(false)
@@ -979,13 +986,7 @@ class WalkieService : Service() {
                     }
                     val txActive = transmitting.get() || rogerStreaming.get() || callStreaming.get()
                     if (txActive) {
-                        val isNewBurst = previousInboundNs == 0L || (nowNs - previousInboundNs) > 600_000_000L // 600 ms
-                        val lastBuzz = lastTxCollisionVibrateAtNs.get()
-                        val cooldownOk = lastBuzz == 0L || (nowNs - lastBuzz) > 1_500_000_000L // 1.5 s
-                        if (isNewBurst && cooldownOk) {
-                            lastTxCollisionVibrateAtNs.set(nowNs)
-                            vibrateTxCollision()
-                        }
+                        lastRxDuringParallelTxNs.set(nowNs)
                     }
                     if (transmitting.get() || rogerStreaming.get() || callStreaming.get() || isRxHoldoffActive()) {
                         // During local TX we intentionally drop inbound audio
@@ -1052,24 +1053,56 @@ class WalkieService : Service() {
         broadcastStatus(currentSignalByte())
     }
 
-    private fun vibrateTxCollision() {
-        runCatching {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                getSystemService(VibratorManager::class.java)?.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(VIBRATOR_SERVICE) as? Vibrator
-            }
-            if (vibrator == null || !vibrator.hasVibrator()) return
+    private fun systemVibrator(): Vibrator? {
+        val v = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSystemService(VibratorManager::class.java)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(VIBRATOR_SERVICE) as? Vibrator
+        }
+        return if (v != null && v.hasVibrator()) v else null
+    }
 
-            // Three short pulses: on/off/on/off/on
-            val pattern = longArrayOf(0, 35, 55, 35, 55, 35)
+    private fun startParallelCollisionVibration() {
+        runCatching {
+            val vibrator = systemVibrator() ?: return
+            vibrator.cancel()
+            // Short pulse + gap, repeat (index 1 = start of repeating segment).
+            val pattern = longArrayOf(0, 26, 74)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+                vibrator.vibrate(VibrationEffect.createWaveform(pattern, 1))
             } else {
                 @Suppress("DEPRECATION")
-                vibrator.vibrate(pattern, -1)
+                vibrator.vibrate(pattern, 1)
             }
+        }
+    }
+
+    private fun stopParallelCollisionVibration() {
+        runCatching { systemVibrator()?.cancel() }
+    }
+
+    private fun syncParallelCollisionVibration(active: Boolean) {
+        if (active) {
+            if (parallelCollisionVibrationRunning.compareAndSet(false, true)) {
+                startParallelCollisionVibration()
+            }
+        } else {
+            if (parallelCollisionVibrationRunning.compareAndSet(true, false)) {
+                stopParallelCollisionVibration()
+            }
+        }
+    }
+
+    private fun refreshParallelTxCollisionState() {
+        val nowNs = System.nanoTime()
+        val txOn = transmitting.get() || rogerStreaming.get() || callStreaming.get()
+        val last = lastRxDuringParallelTxNs.get()
+        val active = txOn && last != 0L && (nowNs - last) <= PARALLEL_TX_RX_STALE_NS
+        val prev = parallelTxCollisionActive.get()
+        if (prev != active) {
+            parallelTxCollisionActive.set(active)
+            syncParallelCollisionVibration(active)
         }
     }
 
@@ -1082,6 +1115,7 @@ class WalkieService : Service() {
         callStreaming.set(false)
         localCallPlaybackJob?.cancel()
         localCallPlaybackJob = null
+        lastRxDuringParallelTxNs.set(0L)
         if (transmitting.getAndSet(true)) return
         if (pttReleaseBurstPressBlocked.get()) {
             transmitting.set(false)
@@ -1138,6 +1172,7 @@ class WalkieService : Service() {
     private fun onCallSignal() {
         if (transmitting.get() || rogerStreaming.get()) return
         if (callStreaming.getAndSet(true)) return
+        lastRxDuringParallelTxNs.set(0L)
         ensureVoiceAudioProfile(useBluetoothHeadset)
         localCallPlaybackJob?.cancel()
         callSignalJob = serviceScope.launch(Dispatchers.Default) {
@@ -1649,6 +1684,7 @@ class WalkieService : Service() {
     }
 
     private fun broadcastStatus(signal: Int) {
+        refreshParallelTxCollisionState()
         updateForegroundNotification()
         val statusIntent = Intent(ACTION_STATUS).apply {
             setPackage(packageName)
@@ -1665,6 +1701,7 @@ class WalkieService : Service() {
             putExtra(EXTRA_BUSY_RX_ACTIVE, busyRxActive.get())
             putExtra(EXTRA_RX_ACTIVE, rxActive.get())
             putExtra(EXTRA_TX_ACTIVE, transmitting.get() || rogerStreaming.get() || callStreaming.get())
+            putExtra(EXTRA_PARALLEL_TX_COLLISION, parallelTxCollisionActive.get())
             putExtra(EXTRA_CALL_ACTIVE, callStreaming.get())
             putExtra(EXTRA_PTT_BURST_PRESS_BLOCKED, pttReleaseBurstPressBlocked.get())
             putExtra(EXTRA_DEBUG_WS_RECONNECT_COUNT, wsReconnectCount.get())
@@ -2157,6 +2194,9 @@ class WalkieService : Service() {
         rxActive.set(false)
         busyLastRxAtNs.set(0L)
         lastInboundUdpAtNs.set(0L)
+        lastRxDuringParallelTxNs.set(0L)
+        parallelTxCollisionActive.set(false)
+        syncParallelCollisionVibration(false)
         lastRxAudiblePlaybackWriteNs.set(0L)
         lastOutboundUdpAtNs.set(0L)
         lastUdpKeepaliveSentAtNs.set(0L)

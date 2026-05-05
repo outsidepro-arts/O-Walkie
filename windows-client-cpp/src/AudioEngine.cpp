@@ -416,6 +416,10 @@ bool AudioEngine::Initialize() {
 
 void AudioEngine::Shutdown() {
     StopTransmit();
+    if (parallelTxCollisionActive_.exchange(false) && onParallelTxCollision_) {
+        onParallelTxCollision_(false);
+    }
+    lastRxDuringLocalTxNs_.store(0);
 
     std::lock_guard<std::mutex> lg(mu_);
     CloseOutputStreamLocked();
@@ -736,6 +740,8 @@ bool AudioEngine::StartTransmit() {
 
     captureFifo_.clear();
     opusScratch_.resize(1275);
+    lastRxDuringLocalTxNs_.store(0);
+    lastParallelCollisionPulseNs_.store(0);
     transmitting_.store(true);
     if (ma_device_start(&captureDev_) != MA_SUCCESS) {
         transmitting_.store(false);
@@ -749,6 +755,7 @@ bool AudioEngine::StartTransmit() {
 void AudioEngine::StopTransmit() {
     transmitting_.store(false);
     refresh_rx_decoder_.store(true);
+    PollParallelTxCollisionState(CurrentSteadyNs());
     std::lock_guard<std::mutex> lg(mu_);
     CloseCaptureDeviceLocked();
 }
@@ -778,6 +785,8 @@ bool AudioEngine::StreamRogerSignal() {
     if (transmitting_.load() || signalStreaming_.exchange(true)) {
         return false;
     }
+    lastRxDuringLocalTxNs_.store(0);
+    lastParallelCollisionPulseNs_.store(0);
     std::vector<int16_t> remotePcm;
     std::vector<int16_t> localPcm;
     int streamRate = 8000;
@@ -808,6 +817,7 @@ bool AudioEngine::StreamRogerSignal() {
     }
     ScheduleRxResumeHoldoff();
     signalStreaming_.store(false);
+    PollParallelTxCollisionState(CurrentSteadyNs());
     return ok;
 }
 
@@ -815,6 +825,8 @@ bool AudioEngine::StreamCallSignal() {
     if (transmitting_.load() || signalStreaming_.exchange(true)) {
         return false;
     }
+    lastRxDuringLocalTxNs_.store(0);
+    lastParallelCollisionPulseNs_.store(0);
     std::vector<int16_t> remotePcm;
     std::vector<int16_t> localPcm;
     int streamRate = 8000;
@@ -824,6 +836,7 @@ bool AudioEngine::StreamCallSignal() {
         const SignalPattern* pattern = FindCallPatternLocked();
         if (!pattern || pattern->points.empty()) {
             signalStreaming_.store(false);
+            PollParallelTxCollisionState(CurrentSteadyNs());
             return false;
         }
         localPcm = GenerateSignalPcm(kLocalSignalSynthesisRate, *pattern);
@@ -834,6 +847,7 @@ bool AudioEngine::StreamCallSignal() {
     const bool ok = StreamGeneratedSignal(remotePcm);
     ScheduleRxResumeHoldoff();
     signalStreaming_.store(false);
+    PollParallelTxCollisionState(CurrentSteadyNs());
     return ok;
 }
 
@@ -929,6 +943,19 @@ void AudioEngine::PlayRxVolumePreviewSignal(int volumePercent) {
         }
     }
     PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
+}
+
+void AudioEngine::PollParallelTxCollisionState(int64_t steadyNowNs) {
+    const bool txOn = transmitting_.load(std::memory_order_relaxed) || signalStreaming_.load(std::memory_order_relaxed);
+    const int64_t last = lastRxDuringLocalTxNs_.load(std::memory_order_relaxed);
+    const bool active = txOn && last != 0 && (steadyNowNs - last) <= kParallelRxDuringTxStaleNs;
+    const bool prev = parallelTxCollisionActive_.load(std::memory_order_relaxed);
+    if (prev != active) {
+        parallelTxCollisionActive_.store(active, std::memory_order_relaxed);
+        if (onParallelTxCollision_) {
+            onParallelTxCollision_(active);
+        }
+    }
 }
 
 void AudioEngine::PlayVibrationPattern(const std::vector<int>& patternMs) {
@@ -1084,6 +1111,9 @@ void AudioEngine::DrainCaptureFifoOpus() {
         if (onLevel_) {
             onLevel_(level);
         }
+        if (transmitting_.load(std::memory_order_relaxed) || signalStreaming_.load(std::memory_order_relaxed)) {
+            PollParallelTxCollisionState(CurrentSteadyNs());
+        }
 
         const int bytes = opus_encode(enc, captureFifo_.data(), frame, opusScratch_.data(), static_cast<int>(opusScratch_.size()));
         captureFifo_.erase(captureFifo_.begin(), captureFifo_.begin() + frame);
@@ -1103,16 +1133,15 @@ void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
         return;
     }
     const int64_t now = CurrentSteadyNs();
-    const int64_t prevInbound = lastInboundNs_.exchange(now);
-    if (transmitting_.load() || signalStreaming_.load()) {
-        const bool isNewBurst = prevInbound == 0 || (now - prevInbound) > 600'000'000LL;
-        const int64_t lastBuzz = lastTxCollisionToneNs_.load();
-        const bool cooldownOk = lastBuzz == 0 || (now - lastBuzz) > 1'500'000'000LL;
-        if (isNewBurst && cooldownOk) {
-            lastTxCollisionToneNs_.store(now);
-            // Android-like "vibration" pattern emulation for desktop.
-            PlayVibrationPattern({35, 55, 35, 55, 35});
+    lastInboundNs_.store(now);
+    if (transmitting_.load(std::memory_order_relaxed) || signalStreaming_.load(std::memory_order_relaxed)) {
+        lastRxDuringLocalTxNs_.store(now);
+        const int64_t prevPulse = lastParallelCollisionPulseNs_.load(std::memory_order_relaxed);
+        if (now - prevPulse >= kParallelPulseMinGapNs) {
+            lastParallelCollisionPulseNs_.store(now);
+            PlayVibrationPattern({24});
         }
+        PollParallelTxCollisionState(now);
         refresh_rx_decoder_.store(true);
         return;
     }

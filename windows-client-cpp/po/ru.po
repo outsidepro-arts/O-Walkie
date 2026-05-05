@@ -290,6 +290,9 @@ msgstr "Переподключение..."
 msgid "Transmitting"
 msgstr "Передача"
 
+msgid "Parallel transmission!"
+msgstr "Параллельная передача!"
+
 msgid "Sending call signal..."
 msgstr "Отправка сигнала вызова..."
 

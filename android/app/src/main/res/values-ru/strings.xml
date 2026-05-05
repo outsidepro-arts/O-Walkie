@@ -109,6 +109,7 @@
     <string name="connection_state_scanning">Сканирование...</string>
     <string name="connection_state_transmitting">Передача</string>
     <string name="connection_state_calling">Вызов</string>
+    <string name="connection_state_parallel_tx">Параллельная передача!</string>
     <string name="connection_state_receiving">Прием</string>
     <string name="connection_state_paused_phone_call">Пауза (телефонный звонок)</string>
     <string name="pause_relay_during_cellular_call_label">Приостанавливать прием при активном звонке</string>

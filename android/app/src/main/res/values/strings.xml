@@ -109,6 +109,7 @@
     <string name="connection_state_scanning">Scanning...</string>
     <string name="connection_state_transmitting">Transmitting</string>
     <string name="connection_state_calling">Calling</string>
+    <string name="connection_state_parallel_tx">Parallel transmission!</string>
     <string name="connection_state_receiving">Receiving</string>
     <string name="connection_state_paused_phone_call">Paused (phone call)</string>
     <string name="pause_relay_during_cellular_call_label">Pause reception during an active call</string>

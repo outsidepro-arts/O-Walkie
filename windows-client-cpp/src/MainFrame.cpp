@@ -1732,6 +1732,19 @@ MainFrame::MainFrame(const std::string& connectUri)
             signalGauge_->SetValue(percent);
         });
     });
+    audio_->SetParallelTxCollisionCallback([this](bool active) {
+        this->CallAfter([this, active] {
+            if (active) {
+                SetStatus("parallel_tx_collision");
+            } else if (connected_) {
+                if (audio_->IsTransmitting() || audio_->IsSignalStreaming()) {
+                    SetStatus("Transmitting");
+                } else {
+                    SetStatus("Connected");
+                }
+            }
+        });
+    });
     audio_->Initialize();
     PopulateAudioDeviceChoices();
     MigrateLegacyConnectionJsonIfNeeded();
@@ -2657,6 +2670,9 @@ wxString MainFrame::HumanizeStatus(const wxString& status) const {
     if (s.StartsWith("reconnecting in") || s.StartsWith("reconnect attempt") || s.Contains("retry")) {
         return _("Reconnecting...");
     }
+    if (s == "parallel_tx_collision") {
+        return _("Parallel transmission!");
+    }
     if (s.Contains("transmitting")) {
         return _("Transmitting");
     }
@@ -3012,7 +3028,11 @@ void MainFrame::BeginPttTx() {
     }
     audio_->PlayPttPressSignal();
     if (audio_->StartTransmit()) {
-        SetStatus("Transmitting");
+        if (audio_->IsParallelTxCollisionActive()) {
+            SetStatus("parallel_tx_collision");
+        } else {
+            SetStatus("Transmitting");
+        }
     }
     RefreshPttUi();
 }

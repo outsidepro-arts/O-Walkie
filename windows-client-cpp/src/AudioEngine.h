@@ -38,6 +38,7 @@ public:
     using EncodedFrameCallback = std::function<void(const uint8_t* data, size_t size, uint8_t signal)>;
     using StatusCallback = std::function<void(const std::string&)>;
     using LevelCallback = std::function<void(int)>;
+    using ParallelTxCollisionCallback = std::function<void(bool)>;
 
     AudioEngine();
     ~AudioEngine();
@@ -68,6 +69,8 @@ public:
     void StopTransmit();
     bool IsTransmitting() const { return transmitting_.load(); }
     bool IsSignalStreaming() const { return signalStreaming_.load(); }
+    bool IsParallelTxCollisionActive() const { return parallelTxCollisionActive_.load(std::memory_order_relaxed); }
+    void PollParallelTxCollisionState(int64_t steadyNowNs);
     void ScheduleRxResumeHoldoff(int multiplier = 2);
     bool StreamRogerSignal();
     bool StreamCallSignal();
@@ -87,6 +90,7 @@ public:
     void SetEncodedFrameCallback(EncodedFrameCallback cb) { onEncodedFrame_ = std::move(cb); }
     void SetStatusCallback(StatusCallback cb) { onStatus_ = std::move(cb); }
     void SetLevelCallback(LevelCallback cb) { onLevel_ = std::move(cb); }
+    void SetParallelTxCollisionCallback(ParallelTxCollisionCallback cb) { onParallelTxCollision_ = std::move(cb); }
 
 private:
     static std::vector<int16_t> GenerateSignalPcm(int sampleRate, const SignalPattern& pattern);
@@ -150,7 +154,12 @@ private:
     std::atomic<bool> refresh_rx_decoder_{false};
     std::atomic<int64_t> rxResumeAtNs_{0};
     std::atomic<int64_t> lastInboundNs_{0};
-    std::atomic<int64_t> lastTxCollisionToneNs_{0};
+    /// Inbound audio while local TX / signal stream is active (another station doubling).
+    std::atomic<int64_t> lastRxDuringLocalTxNs_{0};
+    std::atomic<int64_t> lastParallelCollisionPulseNs_{0};
+    std::atomic<bool> parallelTxCollisionActive_{false};
+    static constexpr int64_t kParallelRxDuringTxStaleNs = 250'000'000LL;
+    static constexpr int64_t kParallelPulseMinGapNs = 55'000'000LL;
     std::atomic<int> rxVolumePercent_{100};
 
     double txCollisionVibrationHz_{100.0};
@@ -159,4 +168,5 @@ private:
     EncodedFrameCallback onEncodedFrame_;
     StatusCallback onStatus_;
     LevelCallback onLevel_;
+    ParallelTxCollisionCallback onParallelTxCollision_;
 };
