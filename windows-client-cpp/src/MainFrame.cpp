@@ -2358,6 +2358,13 @@ void MainFrame::BindUi() {
     pttBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnPttButtonClicked, this);
     callBtn_->Bind(wxEVT_BUTTON, &MainFrame::OnCallSignalClicked, this);
     rxVolumeSlider_->Bind(wxEVT_SLIDER, &MainFrame::OnRxVolumeSlider, this);
+    rxVolumeSlider_->Bind(wxEVT_SCROLL_CHANGED, [this](wxScrollEvent&) {
+        if (!audio_ || !rxVolumeSlider_) {
+            return;
+        }
+        const int safe = std::clamp(rxVolumeSlider_->GetValue(), 0, 200);
+        audio_->PlayRxVolumePreviewSignal(safe);
+    });
     repeaterCheck_->Bind(wxEVT_CHECKBOX, &MainFrame::OnRepeaterToggled, this);
 }
 

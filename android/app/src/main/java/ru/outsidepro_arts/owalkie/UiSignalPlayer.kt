@@ -17,6 +17,7 @@ class UiSignalPlayer(context: Context) {
     private val pttPressTone: WavPcm = loadWavPcmFromRaw(R.raw.selfpttup_002)
     private val pttReleaseTone: WavPcm = loadWavPcmFromRaw(R.raw.selfttdown_002)
     private val switchTone: WavPcm = loadWavPcmFromRaw(R.raw.switch_nav)
+    private val volumePreviewTone: WavPcm = loadWavPcmFromRaw(R.raw.spin_wt)
     private val uiSignalQueue: ExecutorService = Executors.newSingleThreadExecutor()
 
     fun playPttPress() {
@@ -49,6 +50,12 @@ class UiSignalPlayer(context: Context) {
 
     fun playSwitch(useQueue: Boolean = false) {
         playPcm(switchTone.samples, switchTone.sampleRate, useQueue)
+    }
+
+    fun playVolumePreview(volumePercent: Int) {
+        val safePercent = volumePercent.coerceIn(0, 200)
+        val scaled = applyGainPercent(volumePreviewTone.samples, safePercent)
+        playPcm(scaled, volumePreviewTone.sampleRate, false)
     }
 
     fun release() {
@@ -90,6 +97,18 @@ class UiSignalPlayer(context: Context) {
             }
             track.release()
         }
+    }
+
+    private fun applyGainPercent(pcm: ShortArray, percent: Int): ShortArray {
+        if (pcm.isEmpty()) return shortArrayOf()
+        if (percent == 100) return pcm
+        val gain = percent.toDouble() / 100.0
+        val out = ShortArray(pcm.size)
+        for (i in pcm.indices) {
+            val v = (pcm[i].toDouble() * gain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            out[i] = v.toShort()
+        }
+        return out
     }
 
     private fun generateConnectedPcm(): ShortArray {

@@ -26,6 +26,7 @@ alwaysApply: true
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
 ## Recent Key Changes
+- Android + Windows: для предпрослушки изменения RX-громкости добавлен локальный звук `spin_wt.wav`; триггер — по завершению изменения слайдера громкости (commit), проигрывание идёт через обычный one-shot UI sound path (без RX stream-buffer), а усиление применяется только к этому предпрослушиванию по значению слайдера.
 - Android + Windows: локальные UI-сигналы подключения (`manual connect start` + `connected`) переведены на очередь с последовательным воспроизведением, при этом API каждого клиента поддерживает режим `без очереди` для точечных сценариев; на кнопки `connect/disconnect` и `call` (а на Android также `scan`) добавлен локальный `switch_nav.wav` по факту нажатия.
 - Backend relay: `squelch` DSP использует тот же **генератор** шума, что и `noise` (`noise_distribution`, `thermal_lowpass_hz`); уровень шипения — `tail_noise_db` + `noise_gain` (и для слабого сигнала, и для хвоста `tx_eof`), без `min_noise_db`/`max_noise_db` в squelch.
 - Backend relay: DSP-модуль `dispersion` (`dsp_dispersion.go`) — каскад allpass-биквадов с разводкой частот (октавы/линейно), как у open-source Diopser; только обработка `ctx.Mixed`, без `Control`; конфиг `modules.dsp.dispersion`, имя в `modules.dsp.chain` — `dispersion`.

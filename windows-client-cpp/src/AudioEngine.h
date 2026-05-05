@@ -76,6 +76,7 @@ public:
     void PlayManualConnectStartSignal(bool useQueue = true);
     void PlayManualDisconnectSignal();
     void PlaySwitchNavSignal(bool useQueue = false);
+    void PlayRxVolumePreviewSignal(int volumePercent);
     void PlayPttPressSignal();
     /// Local preview (e.g. custom pattern editor); does not touch relay state.
     void PlaySignalPatternPreview(const SignalPattern& pattern);

@@ -9,6 +9,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.KeyEvent
@@ -81,6 +83,9 @@ class MainActivity : ComponentActivity() {
     private var skipNextConnectedTone = false
     /** Hold-to-talk: finger is down; release must send PTT_RELEASE even if STATUS has not arrived yet. */
     private var holdPttFingerDown = false
+    private var rxVolumeTouchTracking = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var rxVolumePreviewRunnable: Runnable? = null
     private var scanJob: Job? = null
     private val scanScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val scanClient = OkHttpClient.Builder().retryOnConnectionFailure(true).build()
@@ -257,6 +262,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        cancelRxVolumePreview()
         // If touch sequence is interrupted (app backgrounded/system overlay), ACTION_UP may never arrive.
         // Force TX release to prevent stuck PTT state.
         if (holdPttFingerDown) {
@@ -281,6 +287,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        cancelRxVolumePreview()
         stopScanning(announce = false)
         scanScope.cancel()
         scanClient.dispatcher.executorService.shutdown()
@@ -491,17 +498,37 @@ class MainActivity : ComponentActivity() {
                 if (fromUser) {
                     rxVolumeStore.setPercent(safe)
                     sendRxVolumeAction(safe)
+                    // Accessibility scroll actions can change SeekBar value without touch tracking callbacks.
+                    if (!rxVolumeTouchTracking) {
+                        scheduleRxVolumePreview(safe)
+                    }
                 }
             }
 
-            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                rxVolumeTouchTracking = true
+                cancelRxVolumePreview()
+            }
 
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                rxVolumeTouchTracking = false
                 val safe = (seekBar?.progress ?: RxVolumeStore.DEFAULT_RX_VOLUME_PERCENT)
                     .coerceIn(RxVolumeStore.MIN_RX_VOLUME_PERCENT, RxVolumeStore.MAX_RX_VOLUME_PERCENT)
                 binding.rxVolumeSeekBar.announceForAccessibility(getString(R.string.rx_volume_accessibility, safe))
+                uiSignalPlayer.playVolumePreview(safe)
             }
         })
+    }
+
+    private fun scheduleRxVolumePreview(percent: Int) {
+        cancelRxVolumePreview()
+        rxVolumePreviewRunnable = Runnable { uiSignalPlayer.playVolumePreview(percent) }
+        mainHandler.postDelayed(rxVolumePreviewRunnable!!, 120L)
+    }
+
+    private fun cancelRxVolumePreview() {
+        rxVolumePreviewRunnable?.let { mainHandler.removeCallbacks(it) }
+        rxVolumePreviewRunnable = null
     }
 
     private fun applyRxVolumeUi(percent: Int) {

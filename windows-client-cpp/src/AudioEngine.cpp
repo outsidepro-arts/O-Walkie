@@ -908,6 +908,29 @@ void AudioEngine::PlaySwitchNavSignal(bool useQueue) {
     PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate, useQueue);
 }
 
+void AudioEngine::PlayRxVolumePreviewSignal(int volumePercent) {
+    const int safePercent = std::clamp(volumePercent, 0, 200);
+    std::vector<int16_t> pcm;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        pcm = LoadSoundFromExeDir("spin_wt", kLocalSignalSynthesisRate);
+        if (pcm.empty()) {
+            AppendTone(pcm, kLocalSignalSynthesisRate, 980.0, 80, 0.2);
+        }
+    }
+    if (pcm.empty()) {
+        return;
+    }
+    if (safePercent != 100) {
+        const double gain = static_cast<double>(safePercent) / 100.0;
+        for (auto& s : pcm) {
+            const int v = static_cast<int>(std::lround(static_cast<double>(s) * gain));
+            s = static_cast<int16_t>(std::clamp(v, -32768, 32767));
+        }
+    }
+    PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
+}
+
 void AudioEngine::PlayVibrationPattern(const std::vector<int>& patternMs) {
     if (patternMs.empty()) {
         return;
