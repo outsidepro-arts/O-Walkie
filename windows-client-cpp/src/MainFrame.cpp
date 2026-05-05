@@ -1449,9 +1449,6 @@ MainFrame::MainFrame()
     BindUi();
 
     reconnectTimer_.Bind(wxEVT_TIMER, &MainFrame::OnReconnectTimer, this);
-#ifdef _WIN32
-    InstallGlobalPttHook();
-#endif
 
     relay_->SetStatusCallback([this](const std::string& msg) {
         this->CallAfter([this, msg] {
@@ -1468,6 +1465,13 @@ MainFrame::MainFrame()
                 reconnectBackoffMs_ = 1500;
                 StopReconnectTimer();
             }
+#ifdef _WIN32
+            if (connected_) {
+                InstallGlobalPttHook();
+            } else {
+                UninstallGlobalPttHook();
+            }
+#endif
             connectBtn_->SetLabel((connected || userWantsSession_) ? _("Disconnect") : _("Connect"));
             ResetPttReleaseBurstGuard();
             RefreshPttUi();
@@ -2483,6 +2487,9 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
         connectBtn_->SetLabel(_("Connect"));
         globalPttPressed_ = false;
         globalPttToggleHookDown_ = false;
+#ifdef _WIN32
+        UninstallGlobalPttHook();
+#endif
         UpdateProfileControlsEnabled();
         RefreshPttUi();
         SetStatus("Disconnected");

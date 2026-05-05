@@ -419,6 +419,7 @@ class WalkieService : Service() {
     }
 
     private fun handleHardwarePttKeyEvent(event: KeyEvent): Boolean {
+        if (!isRelaySessionReady()) return false
         val binding = pttHardwareKeyStore.getBinding()
         if (!binding.isAssigned()) return false
         if (!pttHardwareKeyStore.matches(event)) return false
@@ -2003,15 +2004,12 @@ class WalkieService : Service() {
     private fun shouldOfferMediaButtonCapture(): Boolean {
         return pttHardwareKeyStore.isToggleModeEnabled() &&
             pttHardwareKeyStore.isMediaButtonPttEnabled() &&
-            desiredConnection.get() &&
+            isRelaySessionReady() &&
             !protocolError
     }
 
     private fun handleMediaButtonPttToggle() {
         if (!shouldOfferMediaButtonCapture()) return
-        // Media key can arrive before join/welcome after reconnect; keep session active
-        // but ignore toggle until relay path is fully ready.
-        if (!wsConnected.get() || sessionId.get() == 0L) return
         if (pttReleaseBurstPressBlocked.get()) {
             schedulePttReleaseBurstDecay()
             broadcastStatus(currentSignalByte())
@@ -2044,6 +2042,10 @@ class WalkieService : Service() {
         if (nowNs - lastAnchor < MEDIA_SESSION_RX_ANCHOR_MIN_INTERVAL_NS) return
         if (!lastRxMediaSessionAnchorNs.compareAndSet(lastAnchor, nowNs)) return
         mainHandler.post { ctrl.refreshPlaybackStateAnchor() }
+    }
+
+    private fun isRelaySessionReady(): Boolean {
+        return wsConnected.get() && sessionId.get() != 0L
     }
 
     private fun shouldHoldBluetoothCommunicationProfile(): Boolean {
