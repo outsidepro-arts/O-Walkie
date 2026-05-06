@@ -31,6 +31,7 @@ alwaysApply: true
 - Android: пока активна исходящая передача (`EXTRA_TX_ACTIVE`: PTT / Roger / Call), `MainActivity` держит `FLAG_KEEP_SCREEN_ON`; по завершении флаг снимается, без отдельной настройки.
 - Android + Windows: при приёме аудио во время своей передачи (другой абонент «на хвосте») — статус «Параллельная передача!» (`EXTRA_PARALLEL_TX_COLLISION` / строка `parallel_tx_collision`); вибрация/тон — короткие импульсы с повтором, пока условие держится, без тройного паттерна и без длинного cooldown.
 - Android: на главном экране подтверждения дублируются в двух каналах сразу — `Toast` + `announceForAccessibility` (единый helper `showConfirmation` для save/delete/connect/scan/deep-link/rx-volume announce).
+- Android + Windows: импорт deep-link из буфера при активном пользовательском намерении сессии (`userRequestedConnection` / `userWantsSession_`) теперь сразу инициирует reconnect на импортированные поля (без ожидания ручного повторного Connect).
 - Windows: состояние user-level регистрации deep-link протокола теперь фиксируется в `audio.json` флагом `protocol_registration_handled`; после успешной регистрации или явного отказа пользователя флаг выставляется в `true`, и на последующих стартах клиент больше не показывает вопрос и не выполняет регистрационные действия.
 - Windows: конфиг клиента переименован в `config.json` (чтение/запись), при старте поддерживается fallback на legacy `audio.json` для обратной совместимости.
 - TODO (через несколько версий): удалить fallback чтения legacy `audio.json` и оставить только `config.json`.

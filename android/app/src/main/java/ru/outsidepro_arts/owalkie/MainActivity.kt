@@ -566,6 +566,7 @@ class MainActivity : ComponentActivity() {
     private fun shareCurrentConnectionAsLink() {
         val profile = collectServerFromInputs() ?: return
         AlertDialog.Builder(this)
+            .setTitle(getString(R.string.share_connection))
             .setMessage(getString(R.string.connection_link_include_name_prompt))
             .setPositiveButton(android.R.string.yes) { _, _ ->
                 copyConnectionLinkToClipboard(profile, includeName = true)
@@ -577,7 +578,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun copyConnectionLinkToClipboard(profile: ServerProfile, includeName: Boolean) {
-        val link = buildConnectionDeepLink(profile, includeName)
+        val shareProfile = if (includeName && profile.name.isBlank()) {
+            profile.copy(name = "Connection")
+        } else {
+            profile
+        }
+        val link = buildConnectionDeepLink(shareProfile, includeName)
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
         val clip = ClipData.newPlainText("O-Walkie connection link", link)
         clipboard.setPrimaryClip(clip)
@@ -608,6 +614,27 @@ class MainActivity : ComponentActivity() {
             return
         }
         applyDeepLinkProfile(profile, announce = true)
+        reconnectToImportedProfileIfRequested(profile)
+    }
+
+    private fun reconnectToImportedProfileIfRequested(profile: ServerProfile) {
+        if (!userRequestedConnection) return
+        sendServiceAction(WalkieService.ACTION_CANCEL_CONNECT)
+        wsConnecting = false
+        wsConnected = false
+        protocolIncompatible = false
+        updateConnectButtonLabel()
+        updatePttAvailability()
+        updateStatusChips()
+        binding.root.postDelayed({
+            startWalkieService(profile)
+            wsConnecting = true
+            wsConnected = false
+            protocolIncompatible = false
+            updateConnectButtonLabel()
+            updatePttAvailability()
+            updateStatusChips()
+        }, 150L)
     }
 
     private fun extractConnectionLink(text: String): String? {

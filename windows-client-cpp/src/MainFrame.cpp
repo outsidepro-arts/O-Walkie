@@ -2832,6 +2832,34 @@ void MainFrame::OnImportConnectionLink(wxCommandEvent&) {
     const std::string link = text.substr(start, end - start);
     if (!ApplyConnectUri(link)) {
         SetStatus("Invalid deep link");
+        return;
+    }
+    if (!userWantsSession_) {
+        return;
+    }
+
+    // User has an active/desired session: immediately reconnect using imported fields.
+    StopReconnectTimer();
+    audio_->StopTransmit();
+    relay_->Disconnect();
+    ResetPttReleaseBurstGuard();
+    connected_ = false;
+    globalPttPressed_ = false;
+    globalPttToggleHookDown_ = false;
+    connectBtn_->SetLabel(_("Disconnect"));
+    UpdateProfileControlsEnabled();
+    RefreshPttUi();
+
+    if (TryConnectWithCurrentFields()) {
+        SaveProfilesToDisk();
+        SaveAudioSettings();
+        SetStatus("Connected");
+    } else {
+        userWantsSession_ = false;
+        connectBtn_->SetLabel(_("Connect"));
+        UpdateProfileControlsEnabled();
+        audio_->PlayConnectionErrorSignal();
+        SetStatus("Connect failed");
     }
 }
 
