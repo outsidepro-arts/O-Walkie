@@ -23,6 +23,7 @@ import android.widget.SeekBar
 import android.widget.PopupMenu
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import android.widget.Toast
 import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -522,6 +523,11 @@ class MainActivity : ComponentActivity() {
         startService(intent)
     }
 
+    private fun showConfirmation(message: String, targetView: android.view.View = binding.root) {
+        targetView.announceForAccessibility(message)
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
     private fun handleDeepLinkIntent(intent: Intent?) {
         if (intent?.action != Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
@@ -537,7 +543,7 @@ class MainActivity : ComponentActivity() {
         binding.serverPortInput.setText(profile.port.toString())
         binding.channelInput.setText(profile.channel)
         if (announce) {
-            binding.root.announceForAccessibility(getString(R.string.connection_link_imported))
+            showConfirmation(getString(R.string.connection_link_imported))
         }
     }
 
@@ -576,7 +582,7 @@ class MainActivity : ComponentActivity() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
         val clip = ClipData.newPlainText("O-Walkie connection link", link)
         clipboard.setPrimaryClip(clip)
-        binding.root.announceForAccessibility(getString(R.string.connection_link_copied))
+        showConfirmation(getString(R.string.connection_link_copied))
     }
 
     private fun importConnectionFromClipboard() {
@@ -589,17 +595,17 @@ class MainActivity : ComponentActivity() {
             ?.trim()
             .orEmpty()
         if (text.isBlank()) {
-            binding.root.announceForAccessibility(getString(R.string.connection_link_invalid))
+            showConfirmation(getString(R.string.connection_link_invalid))
             return
         }
         val linkText = extractConnectionLink(text) ?: run {
-            binding.root.announceForAccessibility(getString(R.string.connection_link_invalid))
+            showConfirmation(getString(R.string.connection_link_invalid))
             return
         }
         val uri = runCatching { Uri.parse(linkText) }.getOrNull()
         val profile = uri?.let { parseConnectionProfileFromUri(it) }
         if (profile == null) {
-            binding.root.announceForAccessibility(getString(R.string.connection_link_invalid))
+            showConfirmation(getString(R.string.connection_link_invalid))
             return
         }
         applyDeepLinkProfile(profile, announce = true)
@@ -664,7 +670,7 @@ class MainActivity : ComponentActivity() {
                 rxVolumeTouchTracking = false
                 val safe = (seekBar?.progress ?: RxVolumeStore.DEFAULT_RX_VOLUME_PERCENT)
                     .coerceIn(RxVolumeStore.MIN_RX_VOLUME_PERCENT, RxVolumeStore.MAX_RX_VOLUME_PERCENT)
-                binding.rxVolumeSeekBar.announceForAccessibility(getString(R.string.rx_volume_accessibility, safe))
+                showConfirmation(getString(R.string.rx_volume_accessibility, safe), binding.rxVolumeSeekBar)
                 uiSignalPlayer.playVolumePreview(safe)
             }
         })
@@ -800,7 +806,7 @@ class MainActivity : ComponentActivity() {
             serverStore.save(servers)
             refreshServerSpinner()
             applySelectedServerIndex(selectedServerIndex, announce = false)
-            binding.root.announceForAccessibility(getString(R.string.saved_server_announcement))
+            showConfirmation(getString(R.string.saved_server_announcement))
         }
 
         binding.deleteServerButton.setOnClickListener {
@@ -817,7 +823,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 applySelectedServerIndex(selectedServerIndex, announce = false)
             }
-            binding.root.announceForAccessibility(getString(R.string.deleted_server_announcement))
+            showConfirmation(getString(R.string.deleted_server_announcement))
         }
 
         binding.connectServerButton.setOnClickListener {
@@ -853,7 +859,7 @@ class MainActivity : ComponentActivity() {
         updateConnectButtonLabel()
         updatePttAvailability()
         updateStatusChips()
-        binding.root.announceForAccessibility(getString(R.string.connected_server_announcement))
+        showConfirmation(getString(R.string.connected_server_announcement))
     }
 
     private fun loadServerToInputs(profile: ServerProfile) {
@@ -927,7 +933,7 @@ class MainActivity : ComponentActivity() {
         if (scanJob?.isActive == true) return
         if (servers.isEmpty()) return
         scanJob = scanScope.launch {
-            binding.root.announceForAccessibility(getString(R.string.scan_started_announcement))
+            showConfirmation(getString(R.string.scan_started_announcement))
             updateScanButtonLabel()
             while (isActive) {
                 if (servers.isEmpty()) {
@@ -954,7 +960,7 @@ class MainActivity : ComponentActivity() {
                         applySelectedServerIndex(idx, announce = true)
                     }
                     val profile = foundProfile
-                    binding.root.announceForAccessibility(getString(R.string.scan_found_server_announcement, profile.name))
+                    showConfirmation(getString(R.string.scan_found_server_announcement, profile.name))
                     connectToProfileFromScan(profile)
                     stopScanning(announce = false)
                     break
@@ -970,7 +976,7 @@ class MainActivity : ComponentActivity() {
         scanJob = null
         updateScanButtonLabel()
         if (announce) {
-            binding.root.announceForAccessibility(getString(R.string.scan_stopped_announcement))
+            showConfirmation(getString(R.string.scan_stopped_announcement))
         }
     }
 
@@ -1219,7 +1225,7 @@ class MainActivity : ComponentActivity() {
         serverStore.setLastSelectedName(profile.name)
         updateServerNavigationButtons()
         if (announce) {
-            binding.root.announceForAccessibility(profile.name)
+            showConfirmation(profile.name)
         }
     }
 
