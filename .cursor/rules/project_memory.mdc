@@ -6,7 +6,7 @@ alwaysApply: true
 # O-Walkie Project Memory
 
 ## Tech Stack
-- Backend: Go relay server (`backend/cmd/relay/main.go`), WebSocket control + UDP audio data.
+- Backend: Go relay server (`backend/cmd/relay`, entry `main.go`), WebSocket control + UDP audio data; relay logic split across `config_*.go`, `hub.go`, `mixer.go`, `mixer_repeater.go`, `jitter.go`, `ws_server.go`, `udp_reader.go`, etc. (same `package main`).
 - Android client: Kotlin, foreground `WalkieService`, Opus via `kopus`, Gradle Kotlin DSL.
 - Windows client: C++ wxWidgets (`windows-client-cpp`), Boost.Beast, **miniaudio** (vendored), Opus (legacy C# WPF removed); UI i18n via **gettext** (`wxLocale` + `locale/<lang>/LC_MESSAGES/owalkie.mo`), source language English, `ui_language` (`en`|`ru`) in `config.json` (auto-migrate from legacy `audio.json`), language picker in Settings (restart required).
 - Audio protocol: Opus mono, server handshake with protocol/version/audio params.

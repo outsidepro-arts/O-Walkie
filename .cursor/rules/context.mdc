@@ -11,7 +11,7 @@ alwaysApply: true
 - Accessibility-based background PTT path has been removed from `master` to reduce Play Protect friction.
 
 ## Current Structure
-- `backend/`: Go relay server (`cmd/relay/main.go`), runtime config via `backend/config.json`.
+- `backend/`: Go relay server (`cmd/relay`, `main.go` + split `.go` sources), runtime config via `backend/config.json`.
 - `android/`: Kotlin Android client with foreground `WalkieService`, hardware/UI PTT flow, release signing pipeline.
 - `windows-client/`: WPF desktop client (Concentus + NAudio), protocol-aligned with relay handshake.
 - `.cursor/rules/`: project memory and context rules for persistent assistant guidance.
