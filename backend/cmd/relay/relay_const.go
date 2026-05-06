@@ -21,9 +21,4 @@ const (
 	// Unicast catch-up: last mixed frame may be older than one packet when a client
 	// registers UDP (punch / udp_hello); too short a window skips resend during live TX.
 	mixerCatchupFrameMaxAge = 500 * time.Millisecond
-
-	// Per-speaker adaptive jitter (uplink): concealment streak → deeper buffer; stable delivery → shallower.
-	jitterAdaptConcealThreshold    = 4
-	jitterAdaptStableDecreaseTicks = 80
-	jitterMaxPacketsLimit          = 24 // max for jitter_max_packets when jitter_adapt_enabled
 )

@@ -693,7 +693,7 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 		}
 
 		if m.jitterAdaptEnabled && !eofMarked[sessionID] {
-			m.adaptJitterOnTick(st, freshFromUDP, usedConceal)
+			st.adaptJitterOnTick(freshFromUDP, usedConceal, int(m.jitterMinPackets), int(m.jitterMaxPackets))
 		}
 
 		if !speakerActive || len(pcmFrame) == 0 {
@@ -810,38 +810,4 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	}
 	m.rememberLatestFrame(payload, exclude)
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
-}
-
-func (m *channelMixer) adaptJitterOnTick(st *speakerStreamState, freshFromUDP, usedConceal bool) {
-	if st == nil || st.jitter == nil {
-		return
-	}
-	floor := int(m.jitterMinPackets)
-	ceil := int(m.jitterMaxPackets)
-	if ceil < floor {
-		ceil = floor
-	}
-	if usedConceal {
-		st.jitterAdaptConcealStreak++
-		st.jitterAdaptStableTicks = 0
-		if st.jitterAdaptConcealStreak >= jitterAdaptConcealThreshold {
-			cur := st.jitter.minStart
-			if cur < ceil {
-				st.jitter.setMinStartClamped(cur+1, floor, ceil)
-			}
-			st.jitterAdaptConcealStreak = 0
-		}
-		return
-	}
-	if freshFromUDP {
-		st.jitterAdaptConcealStreak = 0
-		st.jitterAdaptStableTicks++
-		if st.jitterAdaptStableTicks >= jitterAdaptStableDecreaseTicks {
-			cur := st.jitter.minStart
-			if cur > floor {
-				st.jitter.setMinStartClamped(cur-1, floor, ceil)
-			}
-			st.jitterAdaptStableTicks = 0
-		}
-	}
 }

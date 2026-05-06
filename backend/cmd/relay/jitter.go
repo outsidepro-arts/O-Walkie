@@ -2,6 +2,13 @@ package main
 
 import "time"
 
+const (
+	// Per-speaker adaptive jitter (uplink): concealment streak → deeper buffer; stable delivery → shallower.
+	jitterAdaptConcealThreshold    = 4
+	jitterAdaptStableDecreaseTicks = 80
+	jitterMaxPacketsLimit          = 24 // max for jitter_max_packets when jitter_adapt_enabled
+)
+
 type speakerStreamState struct {
 	pending      *audioPacket
 	jitter       *speakerJitterBuffer
@@ -212,6 +219,40 @@ func (b *speakerJitterBuffer) setMinStartClamped(n, floor, ceil int) {
 		delete(b.packets, minSeq)
 		if b.started && minSeq >= b.head {
 			b.head = minSeq + 1
+		}
+	}
+}
+
+func (st *speakerStreamState) adaptJitterOnTick(freshFromUDP, usedConceal bool, floor, ceil int) {
+	if st == nil || st.jitter == nil {
+		return
+	}
+	if ceil < floor {
+		ceil = floor
+	}
+
+	if usedConceal {
+		st.jitterAdaptConcealStreak++
+		st.jitterAdaptStableTicks = 0
+		if st.jitterAdaptConcealStreak >= jitterAdaptConcealThreshold {
+			cur := st.jitter.minStart
+			if cur < ceil {
+				st.jitter.setMinStartClamped(cur+1, floor, ceil)
+			}
+			st.jitterAdaptConcealStreak = 0
+		}
+		return
+	}
+
+	if freshFromUDP {
+		st.jitterAdaptConcealStreak = 0
+		st.jitterAdaptStableTicks++
+		if st.jitterAdaptStableTicks >= jitterAdaptStableDecreaseTicks {
+			cur := st.jitter.minStart
+			if cur > floor {
+				st.jitter.setMinStartClamped(cur-1, floor, ceil)
+			}
+			st.jitterAdaptStableTicks = 0
 		}
 	}
 }
