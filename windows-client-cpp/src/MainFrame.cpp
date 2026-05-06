@@ -2319,7 +2319,8 @@ void MainFrame::SyncActiveProfileFromUi() {
 
 void MainFrame::UpdateProfileControlsEnabled() {
     const bool sess = connected_ || userWantsSession_;
-    profileChoice_->Enable(!sess);
+    // Android-like behavior: allow switching connections while session is active.
+    profileChoice_->Enable(true);
     saveProfileBtn_->Enable(!sess);
     newProfileBtn_->Enable(!sess);
     deleteProfileBtn_->Enable(!sess && profiles_.size() > 1);
@@ -2345,9 +2346,41 @@ void MainFrame::OnProfileChoice(wxCommandEvent&) {
     if (sel == wxNOT_FOUND || sel < 0 || sel >= static_cast<int>(profiles_.size())) {
         return;
     }
+    if (sel == activeProfileIndex_) {
+        return;
+    }
     activeProfileIndex_ = sel;
     SyncUiFromActiveProfile();
     SaveProfilesToDisk();
+
+    if (!connected_ && !userWantsSession_) {
+        return;
+    }
+
+    // Switch connection while session is active: disconnect and connect to newly selected profile.
+    StopReconnectTimer();
+    audio_->StopTransmit();
+    relay_->Disconnect();
+    ResetPttReleaseBurstGuard();
+    connected_ = false;
+    globalPttPressed_ = false;
+    globalPttToggleHookDown_ = false;
+    connectBtn_->SetLabel(_("Disconnect"));
+    UpdateProfileControlsEnabled();
+    RefreshPttUi();
+    SetStatus("Switching connection...");
+
+    if (TryConnectWithCurrentFields()) {
+        SaveProfilesToDisk();
+        SaveAudioSettings();
+        SetStatus("Connected");
+    } else {
+        userWantsSession_ = false;
+        connectBtn_->SetLabel(_("Connect"));
+        UpdateProfileControlsEnabled();
+        audio_->PlayConnectionErrorSignal();
+        SetStatus("Connect failed");
+    }
 }
 
 void MainFrame::OnSaveProfile(wxCommandEvent&) {
