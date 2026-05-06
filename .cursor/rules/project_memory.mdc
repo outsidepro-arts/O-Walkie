@@ -25,6 +25,9 @@ alwaysApply: true
 - Legacy `windows-client` (WPF/.NET) is removed from repository and no longer participates in feature parity.
 - Android and Windows are both in active feature + reliability iteration, with parity checks required before release.
 
+## Planned — Windows desktop toolchain (owner request)
+- Рассматривается перевод сборки **`windows-client-cpp` на MSVC + vcpkg** там, где это уместно (только нативный C++ клиент; **Go relay и Android** остаются на своих цепочках). Сейчас в репозитории основной путь — **MSYS2 UCRT64** (`wx-config`, `bundle-ucrt64-deps.sh`). Вернуться к проектированию/миграции **по явной просьбе в чате**; если владелец попросит забыть эту идею — **удалить этот раздел** из `project_memory.mdc`.
+
 ## Recent Key Changes
 - Android: при смене ориентации не вызывается `PTT_RELEASE` из `MainActivity.onStop` (`isChangingConfigurations`), чтобы режим PTT-переключателя не сбрасывал передачу; индикатор «Приём» (`EXTRA_RX_ACTIVE`) привязан к моменту записи декодированного RX PCM в потоковый `AudioTrack`, а не к факту прихода UDP.
 - Android: настройки — спиннер «Ориентация экрана» (`ScreenOrientationStore`): портрет, ландшафт, либо следование устройству через `SCREEN_ORIENTATION_FULL_USER` / `USER` (учитывается системный автоповорот / блокировка).
