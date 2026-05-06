@@ -208,7 +208,6 @@ class MainActivity : ComponentActivity() {
         }
 
         binding.callButton.setOnClickListener {
-            uiSignalPlayer.playSwitch()
             if (!wsConnected) return@setOnClickListener
             sendServiceAction(WalkieService.ACTION_CALL_SIGNAL)
         }

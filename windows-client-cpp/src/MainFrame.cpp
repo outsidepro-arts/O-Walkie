@@ -2996,7 +2996,6 @@ void MainFrame::OnPttButtonClicked(wxCommandEvent&) {
 }
 
 void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
-    audio_->PlaySwitchNavSignal();
     if (!connected_ || audio_->IsTransmitting() || audio_->IsSignalStreaming()) {
         return;
     }
