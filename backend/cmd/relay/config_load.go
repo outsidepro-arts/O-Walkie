@@ -25,6 +25,8 @@ func defaultConfig() appConfig {
 			EOFTimeoutMs:       420,
 			ConcealDecay:       0.90,
 			JitterMinPkts:      3,
+			JitterAdaptEnabled: false,
+			JitterMaxPkts:      0,
 			BusyMode:           false,
 			TransmitTimeoutSec: 0,
 		},
@@ -123,6 +125,14 @@ func loadConfig(path string) (appConfig, error) {
 	}
 	cfg.Server.PacketMs = normalizePacketMs(cfg.Server.PacketMs)
 	cfg.Server.JitterMinPkts = normalizeJitterMinPackets(cfg.Server.JitterMinPkts)
+	if cfg.Server.JitterAdaptEnabled {
+		if cfg.Server.JitterMaxPkts <= 0 {
+			cfg.Server.JitterMaxPkts = maxInt(cfg.Server.JitterMinPkts, 12)
+		}
+		cfg.Server.JitterMaxPkts = normalizeJitterMaxPackets(cfg.Server.JitterMinPkts, cfg.Server.JitterMaxPkts)
+	} else {
+		cfg.Server.JitterMaxPkts = 0
+	}
 	cfg.Server.Opus = normalizeOpusConfig(cfg.Server.Opus)
 	normalizeServerListenPort(&cfg.Server)
 	normalizeModulesConfig(&cfg.Modules)

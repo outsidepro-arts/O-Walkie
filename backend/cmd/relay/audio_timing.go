@@ -54,6 +54,17 @@ func normalizeJitterMinPackets(count int) int {
 	return count
 }
 
+// normalizeJitterMaxPackets clamps adaptive ceiling: at least minPkts, at most jitterMaxPacketsLimit.
+func normalizeJitterMaxPackets(minPkts, maxPkts int) int {
+	if maxPkts < minPkts {
+		maxPkts = minPkts
+	}
+	if maxPkts > jitterMaxPacketsLimit {
+		maxPkts = jitterMaxPacketsLimit
+	}
+	return maxPkts
+}
+
 func applyAudioTiming(sampleRate int, packetMs int) {
 	configuredSampleRate = normalizeSampleRate(sampleRate)
 	norm := normalizePacketMs(packetMs)

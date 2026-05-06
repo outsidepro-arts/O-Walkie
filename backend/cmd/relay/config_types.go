@@ -9,17 +9,21 @@ type serverConfig struct {
 	// Port is used for both WebSocket HTTP listener and UDP listener (same port number).
 	Port int `json:"port"`
 	// Legacy keys (optional): if port is 0, port is inferred from the first non-empty address.
-	LegacyWsAddr       string     `json:"ws_addr,omitempty"`
-	LegacyUdpAddr      string     `json:"udp_addr,omitempty"`
-	SampleRate         int        `json:"sample_rate"`
-	PacketMs           int        `json:"packet_ms"`
-	Opus               opusConfig `json:"opus"`
-	HangoverMs         int        `json:"hangover_ms"`
-	EOFTimeoutMs       int        `json:"eof_timeout_ms"`
-	ConcealDecay       float64    `json:"conceal_decay"`
-	JitterMinPkts      int        `json:"jitter_min_packets"`
-	BusyMode           bool       `json:"busy_mode"`
-	TransmitTimeoutSec int        `json:"transmit_timeout"`
+	LegacyWsAddr  string     `json:"ws_addr,omitempty"`
+	LegacyUdpAddr string     `json:"udp_addr,omitempty"`
+	SampleRate    int        `json:"sample_rate"`
+	PacketMs      int        `json:"packet_ms"`
+	Opus          opusConfig `json:"opus"`
+	HangoverMs    int        `json:"hangover_ms"`
+	EOFTimeoutMs  int        `json:"eof_timeout_ms"`
+	ConcealDecay  float64    `json:"conceal_decay"`
+	JitterMinPkts int        `json:"jitter_min_packets"`
+	// JitterAdaptEnabled: when true, each transmitter's jitter depth adapts between jitter_min_packets and jitter_max_packets.
+	JitterAdaptEnabled bool `json:"jitter_adapt_enabled"`
+	// JitterMaxPkts: ceiling for adaptive depth (ignored when jitter_adapt_enabled is false). If 0 when enabled, defaults to max(jitter_min_packets, 12).
+	JitterMaxPkts      int  `json:"jitter_max_packets,omitempty"`
+	BusyMode           bool `json:"busy_mode"`
+	TransmitTimeoutSec int  `json:"transmit_timeout"`
 }
 
 type opusConfig struct {

@@ -15,6 +15,10 @@ type speakerStreamState struct {
 	// the jitter queue has drained, so the next transmission does not inherit decoder tail.
 	decoderFlushPending bool
 	eofAt               time.Time
+
+	// Adaptive jitter (relay uplink): updated from mix loop when jitter_adapt_enabled.
+	jitterAdaptConcealStreak int
+	jitterAdaptStableTicks   int
 }
 
 type speakerJitterBuffer struct {
@@ -179,4 +183,35 @@ func (b *speakerJitterBuffer) forceStartFromMinSeq() {
 	}
 	b.head = minSeq
 	b.started = true
+}
+
+// setMinStartClamped updates buffering depth (floor..ceil) and trims excess packets.
+func (b *speakerJitterBuffer) setMinStartClamped(n, floor, ceil int) {
+	if b == nil {
+		return
+	}
+	if n < floor {
+		n = floor
+	}
+	if n > ceil {
+		n = ceil
+	}
+	if n == b.minStart {
+		return
+	}
+	b.minStart = n
+	b.maxKeep = n * 8
+	if b.maxKeep < 32 {
+		b.maxKeep = 32
+	}
+	for len(b.packets) > b.maxKeep {
+		minSeq, ok := b.minSeq()
+		if !ok {
+			break
+		}
+		delete(b.packets, minSeq)
+		if b.started && minSeq >= b.head {
+			b.head = minSeq + 1
+		}
+	}
 }

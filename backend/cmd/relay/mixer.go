@@ -43,6 +43,8 @@ type channelMixer struct {
 	eofTimeoutDur       time.Duration
 	concealDecay        float64
 	jitterMinPackets    uint16
+	jitterMaxPackets    uint16
+	jitterAdaptEnabled  bool
 	busyMode            bool
 	busyMu              sync.Mutex
 	busySessionID       uint32
@@ -83,6 +85,11 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 	if mcfg.DSP.Noise != nil {
 		noiseFloor = mcfg.DSP.Noise.MinNoiseDB
 	}
+	jMin := uint16(normalizeJitterMinPackets(cfg.Server.JitterMinPkts))
+	jMax := jMin
+	if cfg.Server.JitterAdaptEnabled {
+		jMax = uint16(normalizeJitterMaxPackets(cfg.Server.JitterMinPkts, cfg.Server.JitterMaxPkts))
+	}
 	return &channelMixer{
 		name:               name,
 		hub:                hub,
@@ -100,7 +107,9 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 		hangoverDur:        time.Duration(hangoverMs) * time.Millisecond,
 		eofTimeoutDur:      time.Duration(eofTimeoutMs) * time.Millisecond,
 		concealDecay:       cfg.Server.ConcealDecay,
-		jitterMinPackets:   uint16(normalizeJitterMinPackets(cfg.Server.JitterMinPkts)),
+		jitterMinPackets:   jMin,
+		jitterMaxPackets:   jMax,
+		jitterAdaptEnabled: cfg.Server.JitterAdaptEnabled,
 		busyMode:           cfg.Server.BusyMode,
 		transmitTimeout:    time.Duration(maxInt(cfg.Server.TransmitTimeoutSec, 0)) * time.Second,
 		txStartedAt:        make(map[uint32]time.Time),
@@ -627,6 +636,9 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 			continue
 		}
 
+		freshFromUDP := false
+		usedConceal := false
+
 		if hasPacket {
 			pcm := make([]int16, packetSamples)
 			n, err := dec.Decode(pkt.opus, pcm)
@@ -650,12 +662,14 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 				st.lastSignal = float64(pkt.signalStrength)
 				speakerSignal = st.lastSignal
 				speakerActive = true
+				freshFromUDP = true
 			} else {
 				// Zero-sample decode behaves like a gap in transport.
 				hasPacket = false
 			}
 		}
 		if !speakerActive && !hasPacket && !eofMarked[sessionID] && now.Sub(st.lastPacketAt) <= m.eofTimeoutDur && len(st.lastPCM) > 0 {
+			usedConceal = true
 			decay := math.Pow(m.concealDecay, float64(st.missCount+1))
 			if now.Sub(st.lastPacketAt) > m.hangoverDur {
 				// After hangover window we keep stream alive, but fade faster
@@ -676,6 +690,10 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 			speakerActive = true
 		} else if !speakerActive && now.Sub(st.lastPacketAt) > m.eofTimeoutDur {
 			eofMarked[sessionID] = true
+		}
+
+		if m.jitterAdaptEnabled && !eofMarked[sessionID] {
+			m.adaptJitterOnTick(st, freshFromUDP, usedConceal)
 		}
 
 		if !speakerActive || len(pcmFrame) == 0 {
@@ -792,4 +810,38 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	}
 	m.rememberLatestFrame(payload, exclude)
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
+}
+
+func (m *channelMixer) adaptJitterOnTick(st *speakerStreamState, freshFromUDP, usedConceal bool) {
+	if st == nil || st.jitter == nil {
+		return
+	}
+	floor := int(m.jitterMinPackets)
+	ceil := int(m.jitterMaxPackets)
+	if ceil < floor {
+		ceil = floor
+	}
+	if usedConceal {
+		st.jitterAdaptConcealStreak++
+		st.jitterAdaptStableTicks = 0
+		if st.jitterAdaptConcealStreak >= jitterAdaptConcealThreshold {
+			cur := st.jitter.minStart
+			if cur < ceil {
+				st.jitter.setMinStartClamped(cur+1, floor, ceil)
+			}
+			st.jitterAdaptConcealStreak = 0
+		}
+		return
+	}
+	if freshFromUDP {
+		st.jitterAdaptConcealStreak = 0
+		st.jitterAdaptStableTicks++
+		if st.jitterAdaptStableTicks >= jitterAdaptStableDecreaseTicks {
+			cur := st.jitter.minStart
+			if cur > floor {
+				st.jitter.setMinStartClamped(cur-1, floor, ceil)
+			}
+			st.jitterAdaptStableTicks = 0
+		}
+	}
 }

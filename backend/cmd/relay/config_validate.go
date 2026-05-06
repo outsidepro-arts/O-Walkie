@@ -38,6 +38,14 @@ func validateConfig(cfg appConfig) error {
 	if cfg.Server.JitterMinPkts < 1 || cfg.Server.JitterMinPkts > 12 {
 		return errors.New("server.jitter_min_packets must be in [1..12]")
 	}
+	if cfg.Server.JitterAdaptEnabled {
+		if cfg.Server.JitterMaxPkts < cfg.Server.JitterMinPkts {
+			return errors.New("server.jitter_max_packets must be >= server.jitter_min_packets when jitter_adapt_enabled")
+		}
+		if cfg.Server.JitterMaxPkts > jitterMaxPacketsLimit {
+			return fmt.Errorf("server.jitter_max_packets must be <= %d", jitterMaxPacketsLimit)
+		}
+	}
 	if cfg.Server.TransmitTimeoutSec < 0 {
 		return errors.New("server.transmit_timeout must be >= 0")
 	}
