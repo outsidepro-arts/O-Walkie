@@ -13,7 +13,9 @@
     "hangover_ms": 180,
     "eof_timeout_ms": 420,
     "conceal_decay": 0.90,
-    "jitter_min_packets": 4,
+    "jitter_min_packets": 2,
+    "jitter_adapt_enabled": true,
+    "jitter_max_packets": 10,
     "busy_mode": false,
     "transmit_timeout": 60
   },
@@ -36,7 +38,7 @@
         "multi_client_rapid_ms": 0,
         "impulse_prob_at_weak_signal": 0.9,
         "impulse_prob_at_strong_signal": 0.0,
-        "impulse_gain_db": -2.0
+        "impulse_gain_db": -10.0
       },
       "pops": {
         "enabled": true,
