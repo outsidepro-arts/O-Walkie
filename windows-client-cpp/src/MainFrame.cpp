@@ -2532,6 +2532,7 @@ void MainFrame::OnRelayConnectionLost() {
     audio_->StopTransmit();
     globalPttPressed_ = false;
     globalPttToggleHookDown_ = false;
+    suppressHoldPttUntilRelease_ = false;
     connected_ = false;
     audio_->PlayConnectionErrorSignal();
     connectBtn_->SetLabel(userWantsSession_ ? _("Disconnect") : _("Connect"));
@@ -2934,6 +2935,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
         connectBtn_->SetLabel(_("Connect"));
         globalPttPressed_ = false;
         globalPttToggleHookDown_ = false;
+        suppressHoldPttUntilRelease_ = false;
 #ifdef _WIN32
         UninstallGlobalPttHook();
 #endif
@@ -3025,6 +3027,10 @@ void MainFrame::OnPttDown(wxMouseEvent& event) {
         event.Skip();
         return;
     }
+    if (suppressHoldPttUntilRelease_) {
+        event.Skip();
+        return;
+    }
     BeginPttTx();
     event.Skip();
 }
@@ -3034,6 +3040,7 @@ void MainFrame::OnPttUp(wxMouseEvent& event) {
         event.Skip();
         return;
     }
+    suppressHoldPttUntilRelease_ = false;
     EndPttTx();
     event.Skip();
 }
@@ -3044,6 +3051,9 @@ void MainFrame::OnPttButtonKeyDown(wxKeyEvent& event) {
         return;
     }
     if (event.GetKeyCode() == WXK_SPACE && connected_) {
+        if (suppressHoldPttUntilRelease_) {
+            return;
+        }
         BeginPttTx();
         return;
     }
@@ -3056,6 +3066,7 @@ void MainFrame::OnPttButtonKeyUp(wxKeyEvent& event) {
         return;
     }
     if (event.GetKeyCode() == WXK_SPACE && connected_) {
+        suppressHoldPttUntilRelease_ = false;
         EndPttTx();
         return;
     }
@@ -3206,6 +3217,10 @@ void MainFrame::RecordPttReleaseBurst() {
 void MainFrame::OnTxStop() {
     StopTxCountdownFromServer();
     if (connected_ && audio_->IsTransmitting()) {
+        if (!pttToggleMode_) {
+            // Hold mode: block immediate re-TX until user actually releases the key/button.
+            suppressHoldPttUntilRelease_ = true;
+        }
         EndPttTx();
         SetStatus(_("TX stopped by server"));
     } else {
@@ -3356,9 +3371,13 @@ LRESULT CALLBACK MainFrame::GlobalPttKeyboardProc(int nCode, WPARAM wParam, LPAR
             }
             if ((wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) && !g_mainFrameForPttHook->globalPttPressed_) {
                 g_mainFrameForPttHook->globalPttPressed_ = true;
+                if (g_mainFrameForPttHook->suppressHoldPttUntilRelease_) {
+                    return CallNextHookEx(nullptr, nCode, wParam, lParam);
+                }
                 g_mainFrameForPttHook->CallAfter([frame = g_mainFrameForPttHook] { frame->BeginPttTx(); });
             } else if ((wParam == WM_KEYUP || wParam == WM_SYSKEYUP) && g_mainFrameForPttHook->globalPttPressed_) {
                 g_mainFrameForPttHook->globalPttPressed_ = false;
+                g_mainFrameForPttHook->suppressHoldPttUntilRelease_ = false;
                 g_mainFrameForPttHook->CallAfter([frame = g_mainFrameForPttHook] { frame->EndPttTx(); });
             }
         }

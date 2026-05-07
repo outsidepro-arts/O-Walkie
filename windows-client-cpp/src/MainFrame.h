@@ -166,6 +166,7 @@ private:
     bool protocolRegistrationHandled_ = false;
     bool globalPttPressed_ = false;
     bool globalPttToggleHookDown_ = false;
+    bool suppressHoldPttUntilRelease_ = false;
 #ifdef _WIN32
     void* globalPttHook_ = nullptr;
 #endif
