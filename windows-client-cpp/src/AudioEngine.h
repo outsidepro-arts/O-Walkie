@@ -56,10 +56,13 @@ public:
     void SetPreferredOutputDevice(int indexOrMinusOneForDefault);
     /// Incoming (RX) stream gain, 0–200 (%), same semantics as Android `RxVolumeStore`.
     void SetRxVolumePercent(int percent);
-    /// Desktop TX-collision "vibration" emulation: tone frequency (Hz) and volume 0–100 (%).
-    void SetTxCollisionVibration(double freqHz, int volumePercent);
+    /// Desktop "vibration" imitation (sine bursts): frequency (Hz) and volume 0–100 (%).
+    /// Used for parallel-TX feedback, transmit time-limit countdown, and similar cues.
+    void SetVibrationImitation(double freqHz, int volumePercent);
     /// Preview using the given parameters without changing stored settings.
-    void PlayTxCollisionVibrationPreview(double freqHz, int volumePercent);
+    void PlayVibrationImitationPreview(double freqHz, int volumePercent);
+    /// One short sine burst at current imitation settings (duration in ms).
+    void PlayVibrationImitationPulse(int durationMs);
     void SetRogerPatternId(std::string patternId);
     void SetCallPatternId(std::string patternId);
     std::string RogerPatternId() const;
@@ -99,7 +102,7 @@ private:
     void QueuePcmForPlaybackLocked(const std::vector<int16_t>& pcm);
     bool IsRxHoldoffActive() const;
     bool StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal);
-    void PlayVibrationPattern(const std::vector<int>& patternMs);
+    void PlayVibrationImitationPattern(const std::vector<int>& patternMs);
     void RecreateCodecUnlocked();
     void RecreateRxDecoderUnlocked();
     int FrameSamples() const;
@@ -160,10 +163,11 @@ private:
     std::atomic<bool> parallelTxCollisionActive_{false};
     static constexpr int64_t kParallelRxDuringTxStaleNs = 250'000'000LL;
     static constexpr int64_t kParallelPulseMinGapNs = 55'000'000LL;
+    static constexpr int kParallelCollisionPulseMs = 24;
     std::atomic<int> rxVolumePercent_{100};
 
-    double txCollisionVibrationHz_{100.0};
-    int txCollisionVibrationVolumePercent_{40};
+    double vibrationImitationHz_{100.0};
+    int vibrationImitationVolumePercent_{40};
 
     EncodedFrameCallback onEncodedFrame_;
     StatusCallback onStatus_;

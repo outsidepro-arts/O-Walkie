@@ -958,7 +958,7 @@ void AudioEngine::PollParallelTxCollisionState(int64_t steadyNowNs) {
     }
 }
 
-void AudioEngine::PlayVibrationPattern(const std::vector<int>& patternMs) {
+void AudioEngine::PlayVibrationImitationPattern(const std::vector<int>& patternMs) {
     if (patternMs.empty()) {
         return;
     }
@@ -966,8 +966,8 @@ void AudioEngine::PlayVibrationPattern(const std::vector<int>& patternMs) {
     int volPct = 40;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        volPct = txCollisionVibrationVolumePercent_;
-        hz = txCollisionVibrationHz_;
+        volPct = vibrationImitationVolumePercent_;
+        hz = vibrationImitationHz_;
     }
     if (volPct <= 0) {
         return;
@@ -979,13 +979,20 @@ void AudioEngine::PlayVibrationPattern(const std::vector<int>& patternMs) {
     PlayOneShotHighQuality(pcm, kLocalSignalSynthesisRate);
 }
 
-void AudioEngine::SetTxCollisionVibration(double freqHz, int volumePercent) {
-    std::lock_guard<std::mutex> lg(mu_);
-    txCollisionVibrationHz_ = std::clamp(freqHz, kTxCollisionVibrationHzMin, kTxCollisionVibrationHzMax);
-    txCollisionVibrationVolumePercent_ = std::clamp(volumePercent, 0, 100);
+void AudioEngine::PlayVibrationImitationPulse(int durationMs) {
+    if (durationMs <= 0) {
+        return;
+    }
+    PlayVibrationImitationPattern({durationMs});
 }
 
-void AudioEngine::PlayTxCollisionVibrationPreview(double freqHz, int volumePercent) {
+void AudioEngine::SetVibrationImitation(double freqHz, int volumePercent) {
+    std::lock_guard<std::mutex> lg(mu_);
+    vibrationImitationHz_ = std::clamp(freqHz, kTxCollisionVibrationHzMin, kTxCollisionVibrationHzMax);
+    vibrationImitationVolumePercent_ = std::clamp(volumePercent, 0, 100);
+}
+
+void AudioEngine::PlayVibrationImitationPreview(double freqHz, int volumePercent) {
     const double hz = std::clamp(freqHz, kTxCollisionVibrationHzMin, kTxCollisionVibrationHzMax);
     const int vol = std::clamp(volumePercent, 0, 100);
     if (vol <= 0) {
@@ -1139,7 +1146,7 @@ void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
         const int64_t prevPulse = lastParallelCollisionPulseNs_.load(std::memory_order_relaxed);
         if (now - prevPulse >= kParallelPulseMinGapNs) {
             lastParallelCollisionPulseNs_.store(now);
-            PlayVibrationPattern({24});
+            PlayVibrationImitationPulse(kParallelCollisionPulseMs);
         }
         PollParallelTxCollisionState(now);
         refresh_rx_decoder_.store(true);

@@ -180,6 +180,7 @@ class WalkieService : Service() {
         private const val MEDIA_SESSION_RX_ANCHOR_MIN_INTERVAL_NS = 2_000_000_000L
         /** End parallel-TX collision feedback this long after the last inbound frame while local TX is on. */
         private const val PARALLEL_TX_RX_STALE_NS = 250_000_000L
+        private const val TRANSMIT_TIMEOUT_COUNTDOWN_PULSE_MS = 35L
     }
 
     private val binder = Binder()
@@ -313,6 +314,8 @@ class WalkieService : Service() {
     private var protocolError: Boolean = false
     @Volatile
     private var busyMode: Boolean = false
+
+    private var txCountdownJob: Job? = null
 
     private lateinit var codec: OpusCodec
     private lateinit var audioManager: AudioManager
@@ -475,6 +478,7 @@ class WalkieService : Service() {
         txJob?.cancel()
         rogerJob?.cancel()
         callSignalJob?.cancel()
+        stopTxCountdownFromServer()
         localRogerPlaybackJob?.cancel()
         localCallPlaybackJob?.cancel()
         localPttPressPlaybackJob?.cancel()
@@ -801,6 +805,9 @@ class WalkieService : Service() {
                     }
                 }
                 "pong" -> Unit
+                "tx_countdown_start" -> {
+                    startTxCountdownFromServer()
+                }
                 "tx_stop" -> {
                     forceStopTransmissionFromServer()
                 }
@@ -809,12 +816,10 @@ class WalkieService : Service() {
     }
 
     private fun forceStopTransmissionFromServer() {
-        // Server-side transmit timeout requested immediate TX stop.
-        val wasTx = transmitting.getAndSet(false)
-        if (wasTx) {
-            txJob?.cancel()
-            txJob = null
-            sendTxEof()
+        stopTxCountdownFromServer()
+        if (transmitting.get()) {
+            onPttRelease()
+            return
         }
         if (rogerStreaming.getAndSet(false)) {
             rogerJob?.cancel()
@@ -884,6 +889,7 @@ class WalkieService : Service() {
      */
     private fun hardDropUdpTransportBecauseWsLost() {
         stopUdpKeepaliveLoop()
+        stopTxCountdownFromServer()
         if (transmitting.getAndSet(false)) {
             txJob?.cancel()
             txJob = null
@@ -1082,6 +1088,41 @@ class WalkieService : Service() {
         runCatching { systemVibrator()?.cancel() }
     }
 
+    private fun playTransmitTimeLimitPulse() {
+        runCatching {
+            val vibrator = systemVibrator() ?: return@runCatching
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(
+                    VibrationEffect.createOneShot(
+                        TRANSMIT_TIMEOUT_COUNTDOWN_PULSE_MS,
+                        VibrationEffect.DEFAULT_AMPLITUDE,
+                    ),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(TRANSMIT_TIMEOUT_COUNTDOWN_PULSE_MS)
+            }
+        }
+    }
+
+    private fun startTxCountdownFromServer() {
+        stopTxCountdownFromServer()
+        txCountdownJob = serviceScope.launch(Dispatchers.Default) {
+            while (isActive) {
+                if (!transmitting.get()) {
+                    break
+                }
+                playTransmitTimeLimitPulse()
+                delay(1000L)
+            }
+        }
+    }
+
+    private fun stopTxCountdownFromServer() {
+        txCountdownJob?.cancel()
+        txCountdownJob = null
+    }
+
     private fun syncParallelCollisionVibration(active: Boolean) {
         if (active) {
             if (parallelCollisionVibrationRunning.compareAndSet(false, true)) {
@@ -1116,6 +1157,7 @@ class WalkieService : Service() {
         localCallPlaybackJob?.cancel()
         localCallPlaybackJob = null
         lastRxDuringParallelTxNs.set(0L)
+        stopTxCountdownFromServer()
         if (transmitting.getAndSet(true)) return
         if (pttReleaseBurstPressBlocked.get()) {
             transmitting.set(false)
@@ -1146,6 +1188,7 @@ class WalkieService : Service() {
 
     private fun onPttRelease() {
         if (!transmitting.getAndSet(false)) return
+        stopTxCountdownFromServer()
         recordPttReleaseBurstGuard()
         scheduleRxResumeHoldoff()
         if (rogerStreaming.getAndSet(true)) return
@@ -2169,6 +2212,7 @@ class WalkieService : Service() {
      */
     private fun tearDownTransport(clearUserIntent: Boolean) {
         resetPttReleaseBurstGuard()
+        stopTxCountdownFromServer()
         transmitting.set(false)
         rogerStreaming.set(false)
         callStreaming.set(false)

@@ -17,6 +17,7 @@ type wsServerMessage struct {
 	Opus            *wsOpusConfig `json:"opus,omitempty"`
 	ProtocolVersion int           `json:"protocolVersion,omitempty"`
 	BusyMode        *bool         `json:"busyMode,omitempty"`
+	TransmitTimeout *int          `json:"transmitTimeoutSec,omitempty"`
 	Active          *bool         `json:"active,omitempty"`
 }
 

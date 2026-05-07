@@ -57,6 +57,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		},
 		ProtocolVersion: protocolVersion,
 		BusyMode:        boolPtr(s.hub.cfg.Server.BusyMode),
+		TransmitTimeout: intPtr(maxInt(s.hub.cfg.Server.TransmitTimeoutSec, 0)),
 	})
 
 	var initial wsMessage
@@ -151,6 +152,10 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func boolPtr(v bool) *bool {
+	return &v
+}
+
+func intPtr(v int) *int {
 	return &v
 }
 

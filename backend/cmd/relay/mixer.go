@@ -55,6 +55,7 @@ type channelMixer struct {
 	txStartedAt         map[uint32]time.Time
 	txForceStopped      map[uint32]bool
 	txLastStopNoticeAt  map[uint32]time.Time
+	txCountdownNotified map[uint32]bool
 
 	mixerEmergencyRestarts atomic.Uint64
 	mixerRestartMu         sync.Mutex
@@ -115,6 +116,7 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 		txStartedAt:        make(map[uint32]time.Time),
 		txForceStopped:     make(map[uint32]bool),
 		txLastStopNoticeAt: make(map[uint32]time.Time),
+		txCountdownNotified: make(map[uint32]bool),
 	}
 }
 
@@ -150,11 +152,13 @@ func (m *channelMixer) canAcceptTxPacket(sessionID uint32) bool {
 	now := time.Now()
 	m.txMu.Lock()
 	shouldNotify := false
+	shouldStartCountdown := false
 	accept := true
 	if m.transmitTimeout > 0 {
 		startedAt, started := m.txStartedAt[sessionID]
 		if !started {
 			m.txStartedAt[sessionID] = now
+			m.txCountdownNotified[sessionID] = false
 		} else if m.txForceStopped[sessionID] {
 			shouldNotify = m.shouldNotifyTxStopLocked(sessionID, now)
 			accept = false
@@ -162,9 +166,21 @@ func (m *channelMixer) canAcceptTxPacket(sessionID uint32) bool {
 			m.txForceStopped[sessionID] = true
 			shouldNotify = m.shouldNotifyTxStopLocked(sessionID, now)
 			accept = false
+		} else {
+			countdownLead := m.transmitTimeout - 5*time.Second
+			if countdownLead < 0 {
+				countdownLead = 0
+			}
+			if !m.txCountdownNotified[sessionID] && now.Sub(startedAt) >= countdownLead {
+				m.txCountdownNotified[sessionID] = true
+				shouldStartCountdown = true
+			}
 		}
 	}
 	m.txMu.Unlock()
+	if shouldStartCountdown {
+		m.notifyTxCountdownStart(sessionID)
+	}
 	if shouldNotify {
 		m.notifyTxStop(sessionID)
 	}
@@ -191,6 +207,14 @@ func (m *channelMixer) notifyTxStop(sessionID uint32) {
 		_ = c.writeJSON(wsServerMessage{
 			Type: "tx_stop",
 			Info: "transmit_timeout_reached",
+		})
+	}
+}
+
+func (m *channelMixer) notifyTxCountdownStart(sessionID uint32) {
+	if c := m.hub.getClient(sessionID); c != nil {
+		_ = c.writeJSON(wsServerMessage{
+			Type: "tx_countdown_start",
 		})
 	}
 }
@@ -265,6 +289,13 @@ func (m *channelMixer) removeParticipant(sessionID uint32) {
 	m.decodersMu.Unlock()
 
 	m.clearRepeaterState(sessionID)
+
+	m.txMu.Lock()
+	delete(m.txStartedAt, sessionID)
+	delete(m.txForceStopped, sessionID)
+	delete(m.txLastStopNoticeAt, sessionID)
+	delete(m.txCountdownNotified, sessionID)
+	m.txMu.Unlock()
 }
 
 func (m *channelMixer) clearRepeaterState(sessionID uint32) {
@@ -338,6 +369,7 @@ func (m *channelMixer) markEOF(sessionID uint32) {
 	delete(m.txStartedAt, sessionID)
 	delete(m.txForceStopped, sessionID)
 	delete(m.txLastStopNoticeAt, sessionID)
+	delete(m.txCountdownNotified, sessionID)
 	m.txMu.Unlock()
 	m.markBusyEOF(sessionID)
 	select {

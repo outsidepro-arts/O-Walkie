@@ -327,6 +327,15 @@ void RelayClient::HandleWsText(const std::string& text) {
             local.sampleRate = NormalizeSampleRate(root.value("sampleRate", 8000));
             local.packetMs = NormalizePacketMs(root.value("packetMs", 20));
             local.busyMode = root.value("busyMode", false);
+            {
+                int tt = 60;
+                if (root.contains("transmitTimeoutSec") && !root["transmitTimeoutSec"].is_null()) {
+                    tt = root.value("transmitTimeoutSec", 60);
+                } else if (root.contains("transmit_timeout") && !root["transmit_timeout"].is_null()) {
+                    tt = root.value("transmit_timeout", 60);
+                }
+                local.transmitTimeoutSec = std::max(0, tt);
+            }
             if (root.contains("opus") && root["opus"].is_object()) {
                 auto opus = root["opus"];
                 local.bitrate = std::clamp(opus.value("bitrate", 12000), 6000, 510000);
@@ -356,6 +365,10 @@ void RelayClient::HandleWsText(const std::string& text) {
             SendUdpKeepalive();
             if (onStatus_) {
                 onStatus_("Welcome received");
+            }
+        } else if (type == "tx_countdown_start") {
+            if (onTxCountdownStart_) {
+                onTxCountdownStart_();
             }
         } else if (type == "tx_stop") {
             if (onTxStop_) {

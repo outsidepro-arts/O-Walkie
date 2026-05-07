@@ -103,6 +103,8 @@ private:
     void StartReconnectAttemptAsync();
     void BeginPttTx();
     void EndPttTx();
+    void StartTxCountdownFromServer();
+    void StopTxCountdownFromServer();
     void TogglePttTx();
     void RefreshPttUi();
     void OnPttButtonClicked(wxCommandEvent& event);
@@ -158,8 +160,8 @@ private:
     bool pttToggleMode_ = false;
     bool showMicLevelIndicator_ = false;
     int rxVolumePercent_ = 100;
-    double txCollisionVibrationHz_ = 100.0;
-    int txCollisionVibrationVolumePercent_ = 40;
+    double vibrationImitationHz_ = 100.0;
+    int vibrationImitationVolumePercent_ = 40;
     std::string uiLanguageCode_{"en"};
     bool protocolRegistrationHandled_ = false;
     bool globalPttPressed_ = false;
@@ -180,6 +182,7 @@ private:
     std::atomic<uint64_t> pttReleaseBurstTimerTicket_{0};
     std::atomic<int> pttReleaseBurstCount_{0};
     std::atomic<bool> pttReleaseBurstBlocked_{false};
+    std::atomic<uint64_t> txCountdownTicket_{0};
 
     void ArmPttReleaseBurstDecay(uint64_t scheduleTicket);
 };

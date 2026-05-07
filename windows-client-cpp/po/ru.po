@@ -179,14 +179,14 @@ msgstr "Нажатие по кнопке или горячей клавише в
 msgid "Show VU meter"
 msgstr "Показывать индикатор уровня (VU)"
 
-msgid "TX collision vibration tone (Hz)"
-msgstr "Тон имитации вибрации при коллизии TX (Гц)"
+msgid "Vibration imitation — frequency (Hz)"
+msgstr "Имитация вибро — частота (Гц)"
 
-msgid "TX collision vibration volume"
-msgstr "Громкость имитации вибрации при коллизии TX"
+msgid "Vibration imitation — volume"
+msgstr "Имитация вибро — громкость"
 
-msgid "Preview vibration"
-msgstr "Прослушать вибрацию"
+msgid "Preview imitation"
+msgstr "Прослушать имитацию"
 
 msgid "Not set"
 msgstr "Не задана"
@@ -298,6 +298,12 @@ msgstr "Отправка сигнала вызова..."
 
 msgid "Transmission stopped by server"
 msgstr "Передача остановлена сервером"
+
+msgid "TX stopped by server"
+msgstr "Передача остановлена сервером"
+
+msgid "TX time limit reached"
+msgstr "Достигнут лимит времени передачи"
 
 msgid "Unable to connect"
 msgstr "Не удалось подключиться"

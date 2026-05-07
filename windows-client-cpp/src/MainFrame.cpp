@@ -1204,8 +1204,8 @@ public:
         bool showMicLevelIndicator,
         bool pttToggleMode,
         const std::string& uiLanguage,
-        double txCollisionVibrationHz,
-        int txCollisionVibrationVolumePercent)
+        double vibrationImitationHz,
+        int vibrationImitationVolumePercent)
         : wxDialog(parent, wxID_ANY, _("Settings"), wxDefaultPosition, wxSize(640, 620), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
           host_(host),
           inputDevices_(inputDevices),
@@ -1322,7 +1322,7 @@ public:
         }
 
         {
-            auto* box = new wxStaticBox(panel, wxID_ANY, _("TX collision vibration tone (Hz)"));
+            auto* box = new wxStaticBox(panel, wxID_ANY, _("Vibration imitation — frequency (Hz)"));
             auto* sz = new wxStaticBoxSizer(wxVERTICAL, box);
             txCollHzSpin_ = new wxSpinCtrlDouble(
                 box,
@@ -1333,34 +1333,34 @@ public:
                 wxSP_ARROW_KEYS,
                 30.0,
                 500.0,
-                std::clamp(txCollisionVibrationHz, 30.0, 500.0),
+                std::clamp(vibrationImitationHz, 30.0, 500.0),
                 1.0);
 #if defined(_WIN32) && wxUSE_ACCESSIBILITY
-            OwAttachMsaaFieldLabel(txCollHzSpin_, _("TX collision vibration tone (Hz)"));
+            OwAttachMsaaFieldLabel(txCollHzSpin_, _("Vibration imitation — frequency (Hz)"));
 #endif
             sz->Add(txCollHzSpin_, 0, wxEXPAND);
             root->Add(sz, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
         }
 
         {
-            auto* box = new wxStaticBox(panel, wxID_ANY, _("TX collision vibration volume"));
+            auto* box = new wxStaticBox(panel, wxID_ANY, _("Vibration imitation — volume"));
             auto* sz = new wxStaticBoxSizer(wxVERTICAL, box);
             auto* txCollVolRow = new wxBoxSizer(wxHORIZONTAL);
             txCollVolSlider_ = new wxSlider(
                 box,
                 wxID_ANY,
-                std::clamp(txCollisionVibrationVolumePercent, 0, 100),
+                std::clamp(vibrationImitationVolumePercent, 0, 100),
                 0,
                 100,
                 wxDefaultPosition,
                 wxDefaultSize,
                 wxSL_HORIZONTAL);
 #if defined(_WIN32) && wxUSE_ACCESSIBILITY
-            OwAttachMsaaFieldLabel(txCollVolSlider_, _("TX collision vibration volume"));
+            OwAttachMsaaFieldLabel(txCollVolSlider_, _("Vibration imitation — volume"));
 #endif
             txCollVolValue_ = new wxStaticText(box, wxID_ANY, wxString::Format(wxT("%d%%"), txCollVolSlider_->GetValue()));
-            txCollPreviewBtn_ = new wxButton(box, wxID_ANY, _("Preview vibration"));
-            txCollPreviewBtn_->SetName(_("Preview vibration"));
+            txCollPreviewBtn_ = new wxButton(box, wxID_ANY, _("Preview imitation"));
+            txCollPreviewBtn_->SetName(_("Preview imitation"));
             SkipKeyboardFocus(txCollVolValue_);
             txCollVolRow->Add(txCollVolSlider_, 1, wxEXPAND | wxRIGHT, 8);
             txCollVolRow->Add(txCollVolValue_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
@@ -1392,7 +1392,7 @@ public:
             if (!host_ || !host_->AudioEnginePtr() || !txCollHzSpin_ || !txCollVolSlider_) {
                 return;
             }
-            host_->AudioEnginePtr()->PlayTxCollisionVibrationPreview(txCollHzSpin_->GetValue(), txCollVolSlider_->GetValue());
+            host_->AudioEnginePtr()->PlayVibrationImitationPreview(txCollHzSpin_->GetValue(), txCollVolSlider_->GetValue());
         });
 
         pttCaptureBtn_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
@@ -1500,8 +1500,8 @@ public:
     int SelectedGlobalPttMods() const { return selectedPttMods_; }
     bool ShowMicLevelIndicator() const { return micLevelCheck_ && micLevelCheck_->GetValue(); }
     bool PttToggleMode() const { return pttToggleCheck_ && pttToggleCheck_->GetValue(); }
-    double SelectedTxCollisionVibrationHz() const { return txCollHzSpin_ ? txCollHzSpin_->GetValue() : 100.0; }
-    int SelectedTxCollisionVibrationVolumePercent() const { return txCollVolSlider_ ? txCollVolSlider_->GetValue() : 40; }
+    double SelectedVibrationImitationHz() const { return txCollHzSpin_ ? txCollHzSpin_->GetValue() : 100.0; }
+    int SelectedVibrationImitationVolumePercent() const { return txCollVolSlider_ ? txCollVolSlider_->GetValue() : 40; }
 
 private:
     void ReloadRogerCallChoicesFromHost() {
@@ -1710,6 +1710,7 @@ MainFrame::MainFrame(const std::string& connectUri)
     relay_->SetOpusFrameCallback([this](const std::vector<uint8_t>& opus) {
         audio_->OnIncomingOpusFrame(opus);
     });
+    relay_->SetTxCountdownStartCallback([this] { this->CallAfter([this] { StartTxCountdownFromServer(); }); });
     relay_->SetTxStopCallback([this] { this->CallAfter([this] { OnTxStop(); }); });
     relay_->SetConnectionLostCallback([this] { this->CallAfter([this] { OnRelayConnectionLost(); }); });
 
@@ -2208,10 +2209,18 @@ void MainFrame::LoadAllSettings() {
                 pttToggleMode_ = j.value("ptt_toggle_mode", false);
                 showMicLevelIndicator_ = j.value("show_mic_level_indicator", false);
                 rxVolumePercent_ = j.value("rx_volume_percent", 100);
-                txCollisionVibrationHz_ = j.value("tx_collision_vibration_hz", 100.0);
-                txCollisionVibrationVolumePercent_ = j.value("tx_collision_vibration_volume_percent", 40);
-                txCollisionVibrationHz_ = std::clamp(txCollisionVibrationHz_, 30.0, 500.0);
-                txCollisionVibrationVolumePercent_ = std::clamp(txCollisionVibrationVolumePercent_, 0, 100);
+                if (j.contains("vibration_imitation_hz")) {
+                    vibrationImitationHz_ = j.value("vibration_imitation_hz", 100.0);
+                } else {
+                    vibrationImitationHz_ = j.value("tx_collision_vibration_hz", 100.0);
+                }
+                if (j.contains("vibration_imitation_volume_percent")) {
+                    vibrationImitationVolumePercent_ = j.value("vibration_imitation_volume_percent", 40);
+                } else {
+                    vibrationImitationVolumePercent_ = j.value("tx_collision_vibration_volume_percent", 40);
+                }
+                vibrationImitationHz_ = std::clamp(vibrationImitationHz_, 30.0, 500.0);
+                vibrationImitationVolumePercent_ = std::clamp(vibrationImitationVolumePercent_, 0, 100);
                 uiLanguageCode_ = j.value("ui_language", std::string("en"));
                 protocolRegistrationHandled_ = j.value("protocol_registration_handled", false);
                 if (uiLanguageCode_ != "ru") {
@@ -2265,8 +2274,10 @@ void MainFrame::SaveAudioSettings() {
     j["ptt_toggle_mode"] = pttToggleMode_;
     j["show_mic_level_indicator"] = showMicLevelIndicator_;
     j["rx_volume_percent"] = std::clamp(rxVolumePercent_, 0, 200);
-    j["tx_collision_vibration_hz"] = txCollisionVibrationHz_;
-    j["tx_collision_vibration_volume_percent"] = std::clamp(txCollisionVibrationVolumePercent_, 0, 100);
+    j["vibration_imitation_hz"] = vibrationImitationHz_;
+    j["vibration_imitation_volume_percent"] = std::clamp(vibrationImitationVolumePercent_, 0, 100);
+    j["tx_collision_vibration_hz"] = vibrationImitationHz_;
+    j["tx_collision_vibration_volume_percent"] = std::clamp(vibrationImitationVolumePercent_, 0, 100);
     j["ui_language"] = uiLanguageCode_;
     j["protocol_registration_handled"] = protocolRegistrationHandled_;
     try {
@@ -2517,6 +2528,7 @@ void MainFrame::StartReconnectAttemptAsync() {
 
 void MainFrame::OnRelayConnectionLost() {
     ResetPttReleaseBurstGuard();
+    StopTxCountdownFromServer();
     audio_->StopTransmit();
     globalPttPressed_ = false;
     globalPttToggleHookDown_ = false;
@@ -2914,6 +2926,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
     if (connected_ || userWantsSession_) {
         userWantsSession_ = false;
         audio_->PlayManualDisconnectSignal();
+        StopTxCountdownFromServer();
         audio_->StopTransmit();
         relay_->Disconnect();
         ResetPttReleaseBurstGuard();
@@ -3088,6 +3101,7 @@ void MainFrame::BeginPttTx() {
     }
     audio_->PlayPttPressSignal();
     if (audio_->StartTransmit()) {
+        StopTxCountdownFromServer();
         if (audio_->IsParallelTxCollisionActive()) {
             SetStatus("parallel_tx_collision");
         } else {
@@ -3102,6 +3116,7 @@ void MainFrame::EndPttTx() {
         RefreshPttUi();
         return;
     }
+    StopTxCountdownFromServer();
     RecordPttReleaseBurst();
     audio_->StopTransmit();
     audio_->ScheduleRxResumeHoldoff();
@@ -3189,9 +3204,39 @@ void MainFrame::RecordPttReleaseBurst() {
 }
 
 void MainFrame::OnTxStop() {
-    audio_->StopTransmit();
-    SetStatus("TX stopped by server");
-    RefreshPttUi();
+    StopTxCountdownFromServer();
+    if (connected_ && audio_->IsTransmitting()) {
+        EndPttTx();
+        SetStatus(_("TX stopped by server"));
+    } else {
+        RefreshPttUi();
+    }
+}
+
+void MainFrame::StartTxCountdownFromServer() {
+    StopTxCountdownFromServer();
+    const uint64_t ticket = txCountdownTicket_.fetch_add(1, std::memory_order_relaxed) + 1;
+    std::thread([this, ticket] {
+        while (true) {
+            if (ticket != txCountdownTicket_.load(std::memory_order_relaxed)) {
+                break;
+            }
+            this->CallAfter([this, ticket] {
+                if (ticket != txCountdownTicket_.load(std::memory_order_relaxed)) {
+                    return;
+                }
+                if (!connected_ || !audio_ || !audio_->IsTransmitting()) {
+                    return;
+                }
+                audio_->PlayVibrationImitationPulse(35);
+            });
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    }).detach();
+}
+
+void MainFrame::StopTxCountdownFromServer() {
+    txCountdownTicket_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void MainFrame::PopulateAudioDeviceChoices() {
@@ -3205,7 +3250,7 @@ void MainFrame::ApplyAudioSettingsToEngine() {
     audio_->SetRogerPatternId(selectedRogerPatternId_);
     audio_->SetCallPatternId(selectedCallPatternId_);
     audio_->SetRxVolumePercent(rxVolumePercent_);
-    audio_->SetTxCollisionVibration(txCollisionVibrationHz_, txCollisionVibrationVolumePercent_);
+    audio_->SetVibrationImitation(vibrationImitationHz_, vibrationImitationVolumePercent_);
 }
 
 void MainFrame::OnSettingsClicked(wxCommandEvent&) {
@@ -3229,8 +3274,8 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
         showMicLevelIndicator_,
         pttToggleMode_,
         uiLanguageCode_,
-        txCollisionVibrationHz_,
-        txCollisionVibrationVolumePercent_);
+        vibrationImitationHz_,
+        vibrationImitationVolumePercent_);
     if (dlg.ShowModal() != wxID_OK) {
         return;
     }
@@ -3241,8 +3286,8 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
     globalPttVKey_ = dlg.SelectedGlobalPttVKey();
     globalPttMods_ = dlg.SelectedGlobalPttMods();
     showMicLevelIndicator_ = dlg.ShowMicLevelIndicator();
-    txCollisionVibrationHz_ = std::clamp(dlg.SelectedTxCollisionVibrationHz(), 30.0, 500.0);
-    txCollisionVibrationVolumePercent_ = std::clamp(dlg.SelectedTxCollisionVibrationVolumePercent(), 0, 100);
+    vibrationImitationHz_ = std::clamp(dlg.SelectedVibrationImitationHz(), 30.0, 500.0);
+    vibrationImitationVolumePercent_ = std::clamp(dlg.SelectedVibrationImitationVolumePercent(), 0, 100);
     uiLanguageCode_ = dlg.SelectedUiLanguage();
     if (uiLanguageCode_ != "ru") {
         uiLanguageCode_ = "en";
