@@ -91,15 +91,10 @@ func validateConfig(cfg appConfig) error {
 		allowed := map[string]struct{}{
 			"pops": {}, "clicks": {}, "noise": {}, "squelch": {}, "filter": {}, "dispersion": {}, "compressor": {}, "distortion": {},
 		}
-		seen := make(map[string]struct{}, len(cfg.Modules.DSP.Chain))
 		for _, name := range cfg.Modules.DSP.Chain {
 			if _, ok := allowed[name]; !ok {
 				return fmt.Errorf("modules.dsp.chain contains unknown module %q", name)
 			}
-			if _, dup := seen[name]; dup {
-				return fmt.Errorf("modules.dsp.chain contains duplicate module %q", name)
-			}
-			seen[name] = struct{}{}
 		}
 	}
 	if cfg.Modules.DSP.Squelch != nil && cfg.Modules.DSP.Squelch.Enabled {
