@@ -1790,7 +1790,10 @@ MainFrame::MainFrame(const std::string& connectUri)
     UpdateProfileControlsEnabled();
     RefreshPttUi();
 #ifdef _WIN32
-    EnsureUserProtocolRegistration();
+    if (!PortableConfigDir().empty()) {
+        // Keep runtime protocol registration prompt only for portable mode.
+        EnsureUserProtocolRegistration();
+    }
 #endif
 
     CallAfter([this] {
