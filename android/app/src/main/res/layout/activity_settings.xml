@@ -184,4 +184,32 @@
             android:layout_marginStart="8dp"
             android:text="@string/calling_custom_button" />
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/settingsAboutTitleText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:text="@string/settings_about_title"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/settingsAuthorText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="@string/settings_author" />
+
+    <TextView
+        android:id="@+id/settingsVersionInfoText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp" />
+
+    <Button
+        android:id="@+id/settingsOpenGithubButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="@string/settings_open_github" />
 </LinearLayout>

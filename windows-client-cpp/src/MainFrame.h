@@ -72,6 +72,7 @@ private:
     void ApplyCustomPatternsToEngine();
     void SaveAudioSettings();
     void SaveProfilesToDisk();
+    static wxString PortableConfigDir();
     static wxString UserDataDir();
     static wxString ProfilesPath();
     static wxString AudioSettingsPath();

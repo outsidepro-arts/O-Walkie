@@ -9,12 +9,27 @@
 #include <wx/intl.h>
 #include <wx/stdpaths.h>
 
+static wxString PortableConfigDir() {
+    wxFileName exe(wxStandardPaths::Get().GetExecutablePath());
+    const wxString portableDir = wxFileName(exe.GetPath(), "config").GetFullPath();
+    if (wxFileName::DirExists(portableDir)) {
+        return portableDir;
+    }
+    return wxString();
+}
+
 wxString OwReadSavedUiLanguage() {
-    wxString dir = wxStandardPaths::Get().GetUserDataDir();
+    wxString dir = PortableConfigDir();
+    if (dir.empty()) {
+        dir = wxStandardPaths::Get().GetUserDataDir();
+    }
     if (!wxFileName::DirExists(dir)) {
         return "en";
     }
-    const wxString path = wxFileName(dir, "audio.json").GetFullPath();
+    wxString path = wxFileName(dir, "config.json").GetFullPath();
+    if (!wxFileName::FileExists(path)) {
+        path = wxFileName(dir, "audio.json").GetFullPath();
+    }
     if (!wxFileName::FileExists(path)) {
         return "en";
     }

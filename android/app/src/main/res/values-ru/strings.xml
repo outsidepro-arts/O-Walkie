@@ -24,6 +24,11 @@
     <string name="menu_exit">Выход</string>
     <string name="settings_screen_title">Настройки приложения</string>
     <string name="settings_screen_placeholder">Это макет окна настроек. В следующих этапах добавим сюда параметры приложения.</string>
+    <string name="settings_about_title">О приложении</string>
+    <string name="settings_author">Автор: Outsidepro Arts</string>
+    <string name="settings_version_info_format">Версия клиента: %1$s\nВерсия протокола: %2$d</string>
+    <string name="settings_open_github">Открыть репозиторий GitHub</string>
+    <string name="settings_github_open_failed">Не удалось открыть браузер</string>
     <string name="screen_orientation_label">Ориентация экрана</string>
     <string name="screen_orientation_portrait">Вертикальная</string>
     <string name="screen_orientation_landscape">Горизонтальная</string>

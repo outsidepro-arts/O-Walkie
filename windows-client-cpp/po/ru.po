@@ -194,6 +194,24 @@ msgstr "Прослушать имитацию"
 msgid "Volume"
 msgstr "Громкость"
 
+msgid "About"
+msgstr "О приложении"
+
+msgid "Author: Outsidepro Arts"
+msgstr "Автор: Outsidepro Arts"
+
+msgid "Client version: %s"
+msgstr "Версия клиента: %s"
+
+msgid "Protocol version: %d"
+msgstr "Версия протокола: %d"
+
+msgid "Open GitHub repository"
+msgstr "Открыть репозиторий GitHub"
+
+msgid "Could not open browser."
+msgstr "Не удалось открыть браузер."
+
 msgid "Not set"
 msgstr "Не задана"
 

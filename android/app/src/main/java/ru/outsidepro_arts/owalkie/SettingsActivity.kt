@@ -1,6 +1,9 @@
 package ru.outsidepro_arts.owalkie
 
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
@@ -24,6 +27,11 @@ import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 import ru.outsidepro_arts.owalkie.model.ScreenOrientationStore
 
 class SettingsActivity : ComponentActivity() {
+    companion object {
+        private const val CLIENT_PROTOCOL_VERSION = 2
+        private const val PROJECT_GITHUB_URL = "https://github.com/outsidepro-arts/O-Walkie"
+    }
+
     private lateinit var rogerPatternStore: RogerPatternStore
     private lateinit var callingPatternStore: CallingPatternStore
     private lateinit var microphoneConfigStore: MicrophoneConfigStore
@@ -49,6 +57,8 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var playCallingButton: Button
     private lateinit var editRogerButton: Button
     private lateinit var editCallingButton: Button
+    private lateinit var versionInfoText: TextView
+    private lateinit var openGithubButton: Button
     private val microphoneOptions = mutableListOf<MicrophoneConfigStore.MicrophoneOption>()
     private val rogerPatterns = mutableListOf<RogerPattern>()
     private val callingPatterns = mutableListOf<RogerPattern>()
@@ -93,6 +103,26 @@ class SettingsActivity : ComponentActivity() {
         playCallingButton = findViewById(R.id.playCallingButton)
         editRogerButton = findViewById(R.id.editRogerButton)
         editCallingButton = findViewById(R.id.editCallingButton)
+        versionInfoText = findViewById(R.id.settingsVersionInfoText)
+        openGithubButton = findViewById(R.id.settingsOpenGithubButton)
+
+        versionInfoText.text = getString(
+            R.string.settings_version_info_format,
+            currentClientVersionName(),
+            CLIENT_PROTOCOL_VERSION,
+        )
+        openGithubButton.setOnClickListener {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(PROJECT_GITHUB_URL))
+            runCatching { startActivity(intent) }.onFailure {
+                if (it is ActivityNotFoundException) {
+                    android.widget.Toast.makeText(
+                        this,
+                        getString(R.string.settings_github_open_failed),
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
 
         customRogerButton.setOnClickListener {
             customPatternEditorLauncher.launch(
@@ -158,6 +188,14 @@ class SettingsActivity : ComponentActivity() {
         refreshBluetoothHeadsetToggle()
         refreshRogerPatterns()
         refreshCallingPatterns()
+    }
+
+    private fun currentClientVersionName(): String {
+        return runCatching {
+            @Suppress("DEPRECATION")
+            val pkgInfo = packageManager.getPackageInfo(packageName, 0)
+            pkgInfo.versionName ?: "dev"
+        }.getOrDefault("dev")
     }
 
     private fun initScreenOrientationSpinner() {

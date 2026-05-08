@@ -29,10 +29,13 @@
 #include <wx/stdpaths.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
+#include <wx/utils.h>
 
 #ifndef OWALKIE_VERSION
 #define OWALKIE_VERSION "dev"
 #endif
+
+constexpr int kClientProtocolVersion = 2;
 
 #ifdef _WIN32
 #include <windows.h>
@@ -1364,6 +1367,41 @@ public:
             sz->Add(txCollVolRow, 0, wxEXPAND);
             root->Add(sz, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
         }
+
+        {
+            auto* box = new wxStaticBox(panel, wxID_ANY, _("About"));
+            auto* sz = new wxStaticBoxSizer(wxVERTICAL, box);
+            sz->Add(new wxStaticText(box, wxID_ANY, _("Author: Outsidepro Arts")), 0, wxBOTTOM, 4);
+            sz->Add(
+                new wxStaticText(
+                    box,
+                    wxID_ANY,
+                    wxString::Format(_("Client version: %s"), wxString::FromUTF8(OWALKIE_VERSION))),
+                0,
+                wxBOTTOM,
+                4);
+            sz->Add(
+                new wxStaticText(
+                    box,
+                    wxID_ANY,
+                    wxString::Format(_("Protocol version: %d"), kClientProtocolVersion)),
+                0,
+                wxBOTTOM,
+                8);
+            auto* openRepoBtn = new wxButton(box, wxID_ANY, _("Open GitHub repository"));
+            openRepoBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+                const wxString repoUrl = "https://github.com/outsidepro-arts/O-Walkie";
+                if (!wxLaunchDefaultBrowser(repoUrl)) {
+                    wxMessageBox(
+                        _("Could not open browser."),
+                        _("Open GitHub repository"),
+                        wxOK | wxICON_WARNING,
+                        this);
+                }
+            });
+            sz->Add(openRepoBtn, 0, wxALIGN_LEFT);
+            root->Add(sz, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+        }
         panel->SetSizer(root);
 
         auto* dlgSizer = new wxBoxSizer(wxVERTICAL);
@@ -1810,11 +1848,25 @@ void MainFrame::EnsureUserProtocolRegistration() {
 #endif
 
 wxString MainFrame::UserDataDir() {
+    const wxString portableDir = PortableConfigDir();
+    if (!portableDir.empty()) {
+        return portableDir;
+    }
+
     wxString dir = wxStandardPaths::Get().GetUserDataDir();
     if (!wxFileName::DirExists(dir)) {
         wxFileName::Mkdir(dir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
     }
     return dir;
+}
+
+wxString MainFrame::PortableConfigDir() {
+    wxFileName exe(wxStandardPaths::Get().GetExecutablePath());
+    const wxString portableDir = wxFileName(exe.GetPath(), "config").GetFullPath();
+    if (wxFileName::DirExists(portableDir)) {
+        return portableDir;
+    }
+    return wxString();
 }
 
 wxString MainFrame::ProfilesPath() {

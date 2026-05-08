@@ -24,6 +24,11 @@
     <string name="menu_exit">Exit</string>
     <string name="settings_screen_title">Application settings</string>
     <string name="settings_screen_placeholder">This is a settings screen template. New options will be added here in the next stages.</string>
+    <string name="settings_about_title">About</string>
+    <string name="settings_author">Author: Outsidepro Arts</string>
+    <string name="settings_version_info_format">Client version: %1$s\nProtocol version: %2$d</string>
+    <string name="settings_open_github">Open GitHub repository</string>
+    <string name="settings_github_open_failed">Could not open browser</string>
     <string name="screen_orientation_label">Screen orientation</string>
     <string name="screen_orientation_portrait">Portrait</string>
     <string name="screen_orientation_landscape">Landscape</string>
