@@ -24,7 +24,7 @@ func buildChannelModuleSets(mcfg modulesConfig) (generators []audioModule, dsp [
 		available["pops"] = newPopsModule(packetDur, *mcfg.DSP.Pops)
 	}
 	if mcfg.DSP.Clicks != nil && mcfg.DSP.Clicks.Enabled {
-		available["clicks"] = newClicksModule(*mcfg.DSP.Clicks)
+		available["clicks"] = newClicksModule(configuredSampleRate, *mcfg.DSP.Clicks)
 	}
 	if mcfg.DSP.Noise != nil && mcfg.DSP.Noise.Enabled {
 		available["noise"] = newNoiseDSPModule(*mcfg.DSP.Noise)

@@ -163,6 +163,17 @@ func validateConfig(cfg appConfig) error {
 		if math.IsNaN(c.ImpulseGainDB) || math.IsInf(c.ImpulseGainDB, 0) {
 			return errors.New("modules.dsp.clicks.impulse_gain_db must be finite")
 		}
+		if c.ImpulseGainAtWeakDB != nil && (math.IsNaN(*c.ImpulseGainAtWeakDB) || math.IsInf(*c.ImpulseGainAtWeakDB, 0)) {
+			return errors.New("modules.dsp.clicks.impulse_gain_at_weak_signal_db must be finite")
+		}
+		if c.ImpulseGainAtStrongDB != nil && (math.IsNaN(*c.ImpulseGainAtStrongDB) || math.IsInf(*c.ImpulseGainAtStrongDB, 0)) {
+			return errors.New("modules.dsp.clicks.impulse_gain_at_strong_signal_db must be finite")
+		}
+		if c.Filter != nil && c.Filter.Enabled {
+			if err := validateBandPassCutoffs(c.Filter.LowCutHz, c.Filter.HighCutHz, "modules.dsp.clicks.filter"); err != nil {
+				return err
+			}
+		}
 	}
 	if cfg.Modules.DSP.Distortion != nil && cfg.Modules.DSP.Distortion.Enabled {
 		if cfg.Modules.DSP.Distortion.Mix < 0 || cfg.Modules.DSP.Distortion.Mix > 1 {
@@ -177,16 +188,8 @@ func validateConfig(cfg appConfig) error {
 		}
 	}
 	if cfg.Modules.DSP.Filter != nil && cfg.Modules.DSP.Filter.Enabled {
-		if math.IsNaN(cfg.Modules.DSP.Filter.LowCutHz) || math.IsInf(cfg.Modules.DSP.Filter.LowCutHz, 0) ||
-			math.IsNaN(cfg.Modules.DSP.Filter.HighCutHz) || math.IsInf(cfg.Modules.DSP.Filter.HighCutHz, 0) {
-			return errors.New("modules.dsp.filter cutoff range must be finite")
-		}
-		if cfg.Modules.DSP.Filter.LowCutHz < 0 || cfg.Modules.DSP.Filter.HighCutHz < 0 {
-			return errors.New("modules.dsp.filter cutoff range is invalid")
-		}
-		if cfg.Modules.DSP.Filter.LowCutHz > 0 && cfg.Modules.DSP.Filter.HighCutHz > 0 &&
-			cfg.Modules.DSP.Filter.HighCutHz <= cfg.Modules.DSP.Filter.LowCutHz {
-			return errors.New("modules.dsp.filter cutoff range is invalid")
+		if err := validateBandPassCutoffs(cfg.Modules.DSP.Filter.LowCutHz, cfg.Modules.DSP.Filter.HighCutHz, "modules.dsp.filter"); err != nil {
+			return err
 		}
 	}
 	if cfg.Modules.DSP.Dispersion != nil && cfg.Modules.DSP.Dispersion.Enabled {
@@ -218,6 +221,21 @@ func validateConfig(cfg appConfig) error {
 		if style != "" && style != "octaves" && style != "linear" {
 			return errors.New("modules.dsp.dispersion.spread_style must be octaves or linear")
 		}
+	}
+	return nil
+}
+
+func validateBandPassCutoffs(lowCutHz, highCutHz float64, path string) error {
+	if math.IsNaN(lowCutHz) || math.IsInf(lowCutHz, 0) ||
+		math.IsNaN(highCutHz) || math.IsInf(highCutHz, 0) {
+		return fmt.Errorf("%s cutoff range must be finite", path)
+	}
+	if lowCutHz < 0 || highCutHz < 0 {
+		return fmt.Errorf("%s cutoff range is invalid", path)
+	}
+	if lowCutHz > 0 && highCutHz > 0 &&
+		highCutHz <= lowCutHz {
+		return fmt.Errorf("%s cutoff range is invalid", path)
 	}
 	return nil
 }

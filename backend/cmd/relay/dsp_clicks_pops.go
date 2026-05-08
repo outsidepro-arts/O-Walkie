@@ -9,12 +9,16 @@ import (
 type clicksModule struct {
 	probWeak      float64
 	probStrong    float64
-	impulseAmp    float64
+	gainWeakDB    float64
+	gainStrongDB  float64
+	peakLinearAmp float64
+	clickBP       *bandPass
+	tailBuf       []float64
 	rapidInterval time.Duration
 	rapidRemain   time.Duration
 }
 
-func newClicksModule(cfg clicksConfig) *clicksModule {
+func newClicksModule(sr int, cfg clicksConfig) *clicksModule {
 	m := &clicksModule{
 		probWeak:   cfg.ImpulseProbAtWeak,
 		probStrong: cfg.ImpulseProbAtStrong,
@@ -22,12 +26,26 @@ func newClicksModule(cfg clicksConfig) *clicksModule {
 	if cfg.MultiClientRapidMs > 0 {
 		m.rapidInterval = time.Duration(cfg.MultiClientRapidMs) * time.Millisecond
 	}
-	m.impulseAmp = 32767.0 * dbToLinear(cfg.ImpulseGainDB)
-	if m.impulseAmp < 0 {
-		m.impulseAmp = 0
+	weakDB := cfg.ImpulseGainDB
+	strongDB := cfg.ImpulseGainDB
+	if cfg.ImpulseGainAtWeakDB != nil {
+		weakDB = *cfg.ImpulseGainAtWeakDB
 	}
-	if m.impulseAmp > 32767.0 {
-		m.impulseAmp = 32767.0
+	if cfg.ImpulseGainAtStrongDB != nil {
+		strongDB = *cfg.ImpulseGainAtStrongDB
+	}
+	m.gainWeakDB = weakDB
+	m.gainStrongDB = strongDB
+	peakLin := 32767.0 * math.Max(dbToLinear(weakDB), dbToLinear(strongDB))
+	if peakLin < 0 || math.IsNaN(peakLin) {
+		peakLin = 0
+	}
+	if peakLin > 32767.0 {
+		peakLin = 32767.0
+	}
+	m.peakLinearAmp = peakLin
+	if cfg.Filter != nil && cfg.Filter.Enabled {
+		m.clickBP = newBandPass(sr, cfg.Filter.LowCutHz, cfg.Filter.HighCutHz)
 	}
 	return m
 }
@@ -35,41 +53,91 @@ func newClicksModule(cfg clicksConfig) *clicksModule {
 func (m *clicksModule) Name() string { return "clicks" }
 
 func (m *clicksModule) Process(ctx *audioProcessContext) {
-	if m.impulseAmp <= 0 || len(ctx.Mixed) == 0 {
+	if m.peakLinearAmp <= 0 || len(ctx.Mixed) == 0 {
 		return
+	}
+	m.flushClickTail(ctx)
+	signalByte := ctx.AvgSignalByte
+	if ctx.Control.SignalByte != nil {
+		signalByte = *ctx.Control.SignalByte
 	}
 	// With multiple active transmitters we can accelerate click generation
 	// to emulate stronger RF overlap texture.
 	if ctx.Control.MultiClientMix {
 		if m.rapidInterval <= 0 {
-			m.injectImpulse(ctx)
+			m.injectImpulse(ctx, signalByte)
 			return
 		}
 		if m.rapidRemain <= 0 {
-			m.injectImpulse(ctx)
+			m.injectImpulse(ctx, signalByte)
 			m.rapidRemain = m.rapidInterval
 		}
 		m.rapidRemain -= packetDur
 		return
 	}
 	m.rapidRemain = 0
-	signalByte := ctx.AvgSignalByte
-	if ctx.Control.SignalByte != nil {
-		signalByte = *ctx.Control.SignalByte
-	}
 	p := mapSignalByteToImpulseProbability(signalByte, m.probWeak, m.probStrong)
 	if p <= 0 || rand.Float64() >= p {
 		return
 	}
-	m.injectImpulse(ctx)
+	m.injectImpulse(ctx, signalByte)
 }
 
-func (m *clicksModule) injectImpulse(ctx *audioProcessContext) {
+func (m *clicksModule) flushClickTail(ctx *audioProcessContext) {
+	if len(m.tailBuf) == 0 || len(ctx.Mixed) == 0 {
+		return
+	}
+	n := min(len(m.tailBuf), len(ctx.Mixed))
+	for i := 0; i < n; i++ {
+		ctx.Mixed[i] += m.tailBuf[i]
+	}
+	if n > 0 {
+		ctx.EmitFrame = true
+	}
+	m.tailBuf = append(m.tailBuf[:0], m.tailBuf[n:]...)
+}
+
+func (m *clicksModule) injectImpulse(ctx *audioProcessContext, signalByte float64) {
+	if len(ctx.Mixed) == 0 {
+		return
+	}
+	gainDB := mapSignalByteToImpulseGainDB(signalByte, m.gainWeakDB, m.gainStrongDB)
+	amp := 32767.0 * dbToLinear(gainDB)
+	if amp <= 0 || math.IsNaN(amp) {
+		return
+	}
+	if amp > 32767.0 {
+		amp = 32767.0
+	}
 	i := rand.Intn(len(ctx.Mixed))
+	sign := 1.0
 	if rand.Intn(2) == 0 {
-		ctx.Mixed[i] -= m.impulseAmp
-	} else {
-		ctx.Mixed[i] += m.impulseAmp
+		sign = -1.0
+	}
+	if m.clickBP == nil {
+		ctx.Mixed[i] += sign * amp
+		ctx.EmitFrame = true
+		return
+	}
+	m.clickBP.reset()
+	const (
+		clickTailEpsilon    = 1e-6
+		clickTailMaxSamples = 6000
+		clickTailMinSamples = 24
+	)
+	inVal := sign * amp
+	for n := 0; n < clickTailMaxSamples; n++ {
+		y := m.clickBP.processSample(inVal)
+		inVal = 0
+		if n >= clickTailMinSamples && math.Abs(y) < clickTailEpsilon {
+			break
+		}
+		pos := i + n
+		if pos < len(ctx.Mixed) {
+			ctx.Mixed[pos] += y
+		} else {
+			m.tailBuf = append(m.tailBuf, y)
+		}
 	}
 	ctx.EmitFrame = true
 }
@@ -191,4 +259,15 @@ func mapSignalByteToImpulseProbability(signalByte, probWeak, probStrong float64)
 		return probStrong
 	}
 	return probWeak + ((pct-10.0)/90.0)*(probStrong-probWeak)
+}
+
+func mapSignalByteToImpulseGainDB(signalByte, dbWeak, dbStrong float64) float64 {
+	pct := (signalByte / 255.0) * 100.0
+	if pct <= 10.0 {
+		return dbWeak
+	}
+	if pct >= 100.0 {
+		return dbStrong
+	}
+	return dbWeak + ((pct-10.0)/90.0)*(dbStrong-dbWeak)
 }

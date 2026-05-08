@@ -108,3 +108,16 @@ func (b *bandPass) processSample(x float64) float64 {
 	}
 	return y
 }
+
+func (b *bandPass) reset() {
+	if b == nil {
+		return
+	}
+	for _, hp := range b.hp {
+		hp.prevX = 0
+		hp.prevY = 0
+	}
+	for _, lp := range b.lp {
+		lp.prevY = 0
+	}
+}

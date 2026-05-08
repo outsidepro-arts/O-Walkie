@@ -130,7 +130,13 @@ type clicksConfig struct {
 	// RF-style sparse impulses (flat under modules.dsp.clicks); on/off is clicks.enabled only.
 	ImpulseProbAtWeak   float64 `json:"impulse_prob_at_weak_signal,omitempty"`
 	ImpulseProbAtStrong float64 `json:"impulse_prob_at_strong_signal,omitempty"`
-	ImpulseGainDB       float64 `json:"impulse_gain_db,omitempty"`
+	// ImpulseGainDB is the default for both weak/strong when the optional *DB pointers are omitted.
+	ImpulseGainDB float64 `json:"impulse_gain_db,omitempty"`
+	// Optional per-endpoint gain (dB); when nil, ImpulseGainDB is used for that endpoint.
+	ImpulseGainAtWeakDB   *float64 `json:"impulse_gain_at_weak_signal_db,omitempty"`
+	ImpulseGainAtStrongDB *float64 `json:"impulse_gain_at_strong_signal_db,omitempty"`
+	// Optional band-pass on the impulse path only (same fields/semantics as modules.dsp.filter).
+	Filter *filterConfig `json:"filter,omitempty"`
 }
 
 // popsConfig: sinusoidal PTT / in-TX glitch pops (flat under modules.dsp.pops).
