@@ -24,6 +24,7 @@ android/keystore/
 
 # Release artifacts
 release/
+releases/
 
 # C++ desktop client local build
 windows-client-cpp/build/
