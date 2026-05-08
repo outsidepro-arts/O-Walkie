@@ -18,7 +18,9 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.SeekBar
 import android.widget.PopupMenu
 import android.widget.AdapterView
@@ -214,6 +216,9 @@ class MainActivity : ComponentActivity() {
 
         binding.toggleConnectionDetailsButton.setOnClickListener {
             connectionDetailsExpanded = !connectionDetailsExpanded
+            if (!connectionDetailsExpanded) {
+                clearConnectionEditorFocus()
+            }
             updateConnectionDetailsUi()
         }
 
@@ -274,6 +279,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         ScreenOrientationStore.applyTo(this)
+        if (!connectionDetailsExpanded) {
+            // After activity restore, IME can reopen for the previously focused editor.
+            // Explicitly clear focus when connection details are collapsed.
+            clearConnectionEditorFocus()
+        }
         syncKeepScreenOnWhileTransmitting()
         refreshPttToggleModeSetting()
         updateBatteryOptimizationUi()
@@ -1170,6 +1180,27 @@ class MainActivity : ComponentActivity() {
             if (connectionDetailsExpanded) R.string.collapse_connection_details else R.string.expand_connection_details,
         )
         updateServerNavigationButtons()
+    }
+
+    private fun clearConnectionEditorFocus() {
+        binding.serverNameInput.clearFocus()
+        binding.serverHostInput.clearFocus()
+        binding.serverPortInput.clearFocus()
+        binding.channelInput.clearFocus()
+        binding.root.requestFocus()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        val token = currentFocus?.windowToken ?: binding.root.windowToken
+        if (token != null) {
+            imm?.hideSoftInputFromWindow(token, 0)
+        } else {
+            // Fallback when window token is not ready yet right after resume.
+            binding.root.post {
+                val delayedToken = currentFocus?.windowToken ?: binding.root.windowToken
+                if (delayedToken != null) {
+                    imm?.hideSoftInputFromWindow(delayedToken, 0)
+                }
+            }
+        }
     }
 
     private fun updateServerNavigationButtons() {
