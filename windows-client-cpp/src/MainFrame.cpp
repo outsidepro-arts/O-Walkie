@@ -1322,8 +1322,9 @@ public:
         }
 
         {
-            auto* box = new wxStaticBox(panel, wxID_ANY, _("Vibration imitation — frequency (Hz)"));
+            auto* box = new wxStaticBox(panel, wxID_ANY, _("Vibration imitation"));
             auto* sz = new wxStaticBoxSizer(wxVERTICAL, box);
+            sz->Add(new wxStaticText(box, wxID_ANY, _("Frequency (Hz)")), 0, wxBOTTOM, 4);
             txCollHzSpin_ = new wxSpinCtrlDouble(
                 box,
                 wxID_ANY,
@@ -1336,15 +1337,10 @@ public:
                 std::clamp(vibrationImitationHz, 30.0, 500.0),
                 1.0);
 #if defined(_WIN32) && wxUSE_ACCESSIBILITY
-            OwAttachMsaaFieldLabel(txCollHzSpin_, _("Vibration imitation — frequency (Hz)"));
+            OwAttachMsaaFieldLabel(txCollHzSpin_, _("Frequency (Hz)"));
 #endif
-            sz->Add(txCollHzSpin_, 0, wxEXPAND);
-            root->Add(sz, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
-        }
-
-        {
-            auto* box = new wxStaticBox(panel, wxID_ANY, _("Vibration imitation — volume"));
-            auto* sz = new wxStaticBoxSizer(wxVERTICAL, box);
+            sz->Add(txCollHzSpin_, 0, wxEXPAND | wxBOTTOM, 10);
+            sz->Add(new wxStaticText(box, wxID_ANY, _("Volume")), 0, wxBOTTOM, 4);
             auto* txCollVolRow = new wxBoxSizer(wxHORIZONTAL);
             txCollVolSlider_ = new wxSlider(
                 box,
@@ -1356,7 +1352,7 @@ public:
                 wxDefaultSize,
                 wxSL_HORIZONTAL);
 #if defined(_WIN32) && wxUSE_ACCESSIBILITY
-            OwAttachMsaaFieldLabel(txCollVolSlider_, _("Vibration imitation — volume"));
+            OwAttachMsaaFieldLabel(txCollVolSlider_, _("Volume"));
 #endif
             txCollVolValue_ = new wxStaticText(box, wxID_ANY, wxString::Format(wxT("%d%%"), txCollVolSlider_->GetValue()));
             txCollPreviewBtn_ = new wxButton(box, wxID_ANY, _("Preview imitation"));

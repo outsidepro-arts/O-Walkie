@@ -179,6 +179,9 @@ msgstr "Нажатие по кнопке или горячей клавише в
 msgid "Show VU meter"
 msgstr "Показывать индикатор уровня (VU)"
 
+msgid "Vibration imitation"
+msgstr "Имитация вибро"
+
 msgid "Vibration imitation — frequency (Hz)"
 msgstr "Имитация вибро — частота (Гц)"
 
@@ -187,6 +190,9 @@ msgstr "Имитация вибро — громкость"
 
 msgid "Preview imitation"
 msgstr "Прослушать имитацию"
+
+msgid "Volume"
+msgstr "Громкость"
 
 msgid "Not set"
 msgstr "Не задана"
