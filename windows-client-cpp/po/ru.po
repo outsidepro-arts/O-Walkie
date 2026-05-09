@@ -371,6 +371,9 @@ msgstr "Некорректные порты"
 msgid "PTT unavailable"
 msgstr "PTT недоступна"
 
+msgid "PTT in %d s"
+msgstr "PTT через %d с"
+
 msgid "Stop talking"
 msgstr "Остановить передачу"
 

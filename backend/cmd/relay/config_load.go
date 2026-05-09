@@ -28,6 +28,7 @@ func defaultConfig() appConfig {
 			JitterAdaptEnabled: false,
 			JitterMaxPkts:      0,
 			BusyMode:           false,
+			BusyTimeoutSec:     0,
 			TransmitTimeoutSec: 0,
 		},
 		Modules: modulesConfig{

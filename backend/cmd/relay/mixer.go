@@ -50,6 +50,9 @@ type channelMixer struct {
 	busySessionID       uint32
 	busyLastPacketAt    time.Time
 	busyExplicitEOF     bool
+	busyStartedAt       time.Time
+	busyParallelAllowed bool
+	busyTimeout         time.Duration
 	transmitTimeout     time.Duration
 	txMu                sync.Mutex
 	txStartedAt         map[uint32]time.Time
@@ -92,30 +95,31 @@ func newChannelMixer(name string, hub *relayHub, cfg appConfig) *channelMixer {
 		jMax = uint16(normalizeJitterMaxPackets(cfg.Server.JitterMinPkts, cfg.Server.JitterMaxPkts))
 	}
 	return &channelMixer{
-		name:               name,
-		hub:                hub,
-		input:              make(chan *audioPacket, 256),
-		eof:                make(chan uint32, 64),
-		participants:       make(map[uint32]struct{}),
-		decoders:           make(map[uint32]*opus.Decoder),
-		encoder:            enc,
-		noiseLevelDB:       noiseFloor,
-		lastSignal:         255.0,
-		modulesCfg:         mcfg,
-		generators:         gen,
-		dspMods:            dsp,
-		repeaterState:      make(map[uint32]*repeaterSession),
-		hangoverDur:        time.Duration(hangoverMs) * time.Millisecond,
-		eofTimeoutDur:      time.Duration(eofTimeoutMs) * time.Millisecond,
-		concealDecay:       cfg.Server.ConcealDecay,
-		jitterMinPackets:   jMin,
-		jitterMaxPackets:   jMax,
-		jitterAdaptEnabled: cfg.Server.JitterAdaptEnabled,
-		busyMode:           cfg.Server.BusyMode,
-		transmitTimeout:    time.Duration(maxInt(cfg.Server.TransmitTimeoutSec, 0)) * time.Second,
-		txStartedAt:        make(map[uint32]time.Time),
-		txForceStopped:     make(map[uint32]bool),
-		txLastStopNoticeAt: make(map[uint32]time.Time),
+		name:                name,
+		hub:                 hub,
+		input:               make(chan *audioPacket, 256),
+		eof:                 make(chan uint32, 64),
+		participants:        make(map[uint32]struct{}),
+		decoders:            make(map[uint32]*opus.Decoder),
+		encoder:             enc,
+		noiseLevelDB:        noiseFloor,
+		lastSignal:          255.0,
+		modulesCfg:          mcfg,
+		generators:          gen,
+		dspMods:             dsp,
+		repeaterState:       make(map[uint32]*repeaterSession),
+		hangoverDur:         time.Duration(hangoverMs) * time.Millisecond,
+		eofTimeoutDur:       time.Duration(eofTimeoutMs) * time.Millisecond,
+		concealDecay:        cfg.Server.ConcealDecay,
+		jitterMinPackets:    jMin,
+		jitterMaxPackets:    jMax,
+		jitterAdaptEnabled:  cfg.Server.JitterAdaptEnabled,
+		busyMode:            cfg.Server.BusyMode,
+		busyTimeout:         time.Duration(maxInt(cfg.Server.BusyTimeoutSec, 0)) * time.Second,
+		transmitTimeout:     time.Duration(maxInt(cfg.Server.TransmitTimeoutSec, 0)) * time.Second,
+		txStartedAt:         make(map[uint32]time.Time),
+		txForceStopped:      make(map[uint32]bool),
+		txLastStopNoticeAt:  make(map[uint32]time.Time),
 		txCountdownNotified: make(map[uint32]bool),
 	}
 }
@@ -224,19 +228,42 @@ func (m *channelMixer) tryAcceptPacket(sessionID uint32) bool {
 		return true
 	}
 	now := time.Now()
+	notifyBusyTimeoutElapsed := false
 	m.busyMu.Lock()
-	defer m.busyMu.Unlock()
-
 	if m.busySessionID == 0 || m.busyWindowExpiredLocked(now) {
 		m.busySessionID = sessionID
 		m.busyLastPacketAt = now
 		m.busyExplicitEOF = false
+		m.busyStartedAt = now
+		m.busyParallelAllowed = false
+		m.busyMu.Unlock()
+		return true
+	}
+	if m.busyTimeout > 0 && !m.busyParallelAllowed && !m.busyStartedAt.IsZero() && now.Sub(m.busyStartedAt) >= m.busyTimeout {
+		m.busyParallelAllowed = true
+		notifyBusyTimeoutElapsed = true
+	}
+	if m.busyParallelAllowed {
+		m.busyLastPacketAt = now
+		m.busyExplicitEOF = false
+		m.busyMu.Unlock()
+		if notifyBusyTimeoutElapsed {
+			m.notifyBusyTimeoutElapsed()
+		}
 		return true
 	}
 	if m.busySessionID == sessionID {
 		m.busyLastPacketAt = now
 		m.busyExplicitEOF = false
+		m.busyMu.Unlock()
+		if notifyBusyTimeoutElapsed {
+			m.notifyBusyTimeoutElapsed()
+		}
 		return true
+	}
+	m.busyMu.Unlock()
+	if notifyBusyTimeoutElapsed {
+		m.notifyBusyTimeoutElapsed()
 	}
 	return false
 }
@@ -263,6 +290,20 @@ func (m *channelMixer) busyWindowExpiredLocked(now time.Time) bool {
 		hold = packetDur
 	}
 	return now.Sub(m.busyLastPacketAt) > hold
+}
+
+func (m *channelMixer) notifyBusyTimeoutElapsed() {
+	m.participantsMu.RLock()
+	participants := make([]uint32, 0, len(m.participants))
+	for sid := range m.participants {
+		participants = append(participants, sid)
+	}
+	m.participantsMu.RUnlock()
+	for _, sid := range participants {
+		if c := m.hub.getClient(sid); c != nil {
+			_ = c.writeJSON(wsServerMessage{Type: "busy_timeout_elapsed"})
+		}
+	}
 }
 func (m *channelMixer) pullNextPacket(sessionID uint32, st *speakerStreamState) *audioPacket {
 	pkt := st.jitter.pop()

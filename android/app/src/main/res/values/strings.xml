@@ -146,6 +146,8 @@
     <string name="ptt_start_talking">Start talking</string>
     <string name="ptt_stop_talking">Stop talking</string>
     <string name="ptt_unavailable">PTT unavailable: no connection</string>
+    <string name="ptt_busy_timeout_countdown">PTT in %1$d s</string>
+    <string name="ptt_busy_timeout_countdown_accessibility">PTT unlocks in %1$d seconds</string>
     <string name="status_idle">Status: Idle</string>
     <string name="status_tx">Status: Transmitting</string>
     <string name="status_calling">Status: Calling</string>

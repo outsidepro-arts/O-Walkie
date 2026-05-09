@@ -59,7 +59,7 @@ func main() {
 	})
 
 	log.Printf(
-		"relay started port=%d (ws+udp) sample_rate=%d packet_ms=%d opus_bitrate=%d opus_complexity=%d opus_fec=%t opus_dtx=%t opus_application=%s protocol_version=%d jitter_min_packets=%d jitter_adapt=%t jitter_max_packets=%d busy_mode=%t transmit_timeout=%ds",
+		"relay started port=%d (ws+udp) sample_rate=%d packet_ms=%d opus_bitrate=%d opus_complexity=%d opus_fec=%t opus_dtx=%t opus_application=%s protocol_version=%d jitter_min_packets=%d jitter_adapt=%t jitter_max_packets=%d busy_mode=%t busy_timeout=%ds transmit_timeout=%ds",
 		cfg.Server.Port,
 		normalizeSampleRate(cfg.Server.SampleRate),
 		normalizePacketMs(cfg.Server.PacketMs),
@@ -73,6 +73,7 @@ func main() {
 		cfg.Server.JitterAdaptEnabled,
 		cfg.Server.JitterMaxPkts,
 		cfg.Server.BusyMode,
+		cfg.Server.BusyTimeoutSec,
 		cfg.Server.TransmitTimeoutSec,
 	)
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {

@@ -328,6 +328,15 @@ void RelayClient::HandleWsText(const std::string& text) {
             local.packetMs = NormalizePacketMs(root.value("packetMs", 20));
             local.busyMode = root.value("busyMode", false);
             {
+                int bt = 0;
+                if (root.contains("busyTimeoutSec") && !root["busyTimeoutSec"].is_null()) {
+                    bt = root.value("busyTimeoutSec", 0);
+                } else if (root.contains("busy_timeout") && !root["busy_timeout"].is_null()) {
+                    bt = root.value("busy_timeout", 0);
+                }
+                local.busyTimeoutSec = std::max(0, bt);
+            }
+            {
                 int tt = 60;
                 if (root.contains("transmitTimeoutSec") && !root["transmitTimeoutSec"].is_null()) {
                     tt = root.value("transmitTimeoutSec", 60);
@@ -369,6 +378,10 @@ void RelayClient::HandleWsText(const std::string& text) {
         } else if (type == "tx_countdown_start") {
             if (onTxCountdownStart_) {
                 onTxCountdownStart_();
+            }
+        } else if (type == "busy_timeout_elapsed") {
+            if (onBusyTimeoutElapsed_) {
+                onBusyTimeoutElapsed_();
             }
         } else if (type == "tx_stop") {
             if (onTxStop_) {

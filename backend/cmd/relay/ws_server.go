@@ -57,6 +57,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		},
 		ProtocolVersion: protocolVersion,
 		BusyMode:        boolPtr(s.hub.cfg.Server.BusyMode),
+		BusyTimeoutSec:  intPtr(maxInt(s.hub.cfg.Server.BusyTimeoutSec, 0)),
 		TransmitTimeout: intPtr(maxInt(s.hub.cfg.Server.TransmitTimeoutSec, 0)),
 	})
 

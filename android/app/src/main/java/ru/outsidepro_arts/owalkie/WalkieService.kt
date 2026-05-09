@@ -108,6 +108,9 @@ class WalkieService : Service() {
         const val EXTRA_PROTOCOL_ERROR = "protocolError"
         const val EXTRA_BUSY_MODE = "busyMode"
         const val EXTRA_BUSY_RX_ACTIVE = "busyRxActive"
+        const val EXTRA_BUSY_TIMEOUT_SEC = "busyTimeoutSec"
+        const val EXTRA_BUSY_PARALLEL_ALLOWED = "busyParallelAllowed"
+        const val EXTRA_BUSY_UNLOCK_IN_SEC = "busyUnlockInSec"
         const val EXTRA_RX_ACTIVE = "rxActive"
         const val EXTRA_TX_ACTIVE = "txActive"
         /** Inbound audio while local TX/Roger/Call is active (another station doubling). */
@@ -175,6 +178,12 @@ class WalkieService : Service() {
         private const val SIGNAL_POLL_INTERVAL_BACKGROUND_MS = 5000L
         private const val SIGNAL_REFRESH_INTERVAL_FOREGROUND_MS = 1000L
         private const val SIGNAL_REFRESH_INTERVAL_BACKGROUND_MS = 50000L
+        /**
+         * Busy-mode: treat inbound audio as one continuous session across packet jitter.
+         * Only after this much quiet do we end the session / reset the busy countdown anchor.
+         */
+        private const val BUSY_RX_HOLD_MS = 200L
+
         /** Gap between RX [AudioTrack] writes to treat as a new burst (media session anchor). */
         private const val RX_PLAYBACK_BURST_GAP_MS = 600L
         private const val MEDIA_SESSION_RX_ANCHOR_MIN_INTERVAL_NS = 2_000_000_000L
@@ -314,6 +323,10 @@ class WalkieService : Service() {
     private var protocolError: Boolean = false
     @Volatile
     private var busyMode: Boolean = false
+    @Volatile
+    private var busyTimeoutSec: Int = 0
+    private val busyParallelAllowed = AtomicBoolean(false)
+    private val busyWindowStartedAtNs = AtomicLong(0L)
 
     private var txCountdownJob: Job? = null
 
@@ -643,7 +656,8 @@ class WalkieService : Service() {
                 wsConnected.set(false)
                 channelBound = false
                 busyMode = false
-                busyRxActive.set(false)
+                busyTimeoutSec = 0
+                resetBusyRuntimeState()
 
                 runCatching { webSocket?.close(1001, "reconnect") }
                 runCatching { webSocket?.cancel() }
@@ -675,7 +689,8 @@ class WalkieService : Service() {
                 channelBound = false
                 protocolError = false
                 busyMode = false
-                busyRxActive.set(false)
+                busyTimeoutSec = 0
+                resetBusyRuntimeState()
                 broadcastStatus(currentSignalByte())
                 syncPttMediaSession()
             }
@@ -691,7 +706,8 @@ class WalkieService : Service() {
                 wsConnected.set(false)
                 channelBound = false
                 busyMode = false
-                busyRxActive.set(false)
+                busyTimeoutSec = 0
+                resetBusyRuntimeState()
                 hardDropUdpTransportBecauseWsLost()
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
@@ -708,7 +724,8 @@ class WalkieService : Service() {
                 wsConnected.set(false)
                 channelBound = false
                 busyMode = false
-                busyRxActive.set(false)
+                busyTimeoutSec = 0
+                resetBusyRuntimeState()
                 hardDropUdpTransportBecauseWsLost()
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
@@ -788,7 +805,8 @@ class WalkieService : Service() {
                         restartPlaybackLoop()
                     }
                     busyMode = obj.optBoolean("busyMode", false)
-                    busyRxActive.set(false)
+                    busyTimeoutSec = obj.optInt("busyTimeoutSec", 0).coerceAtLeast(0)
+                    resetBusyRuntimeState()
                     if (!channelBound) {
                         val selectedChannel = channel.trim()
                         if (selectedChannel.isNotBlank()) {
@@ -810,6 +828,10 @@ class WalkieService : Service() {
                 }
                 "tx_stop" -> {
                     forceStopTransmissionFromServer()
+                }
+                "busy_timeout_elapsed" -> {
+                    busyParallelAllowed.set(true)
+                    broadcastStatus(currentSignalByte())
                 }
             }
         }
@@ -980,8 +1002,13 @@ class WalkieService : Service() {
                     }
                     if (packet.length <= 9) continue
                     if (busyMode) {
-                        busyLastRxAtNs.set(System.nanoTime())
-                        if (!busyRxActive.getAndSet(true)) {
+                        val prevNs = busyLastRxAtNs.get()
+                        val gapNs = if (prevNs == 0L) Long.MAX_VALUE else (nowNs - prevNs)
+                        busyLastRxAtNs.set(nowNs)
+                        val holdNs = BUSY_RX_HOLD_MS * 1_000_000L
+                        if (gapNs > holdNs) {
+                            busyWindowStartedAtNs.set(nowNs)
+                            busyParallelAllowed.set(false)
                             broadcastStatus(currentSignalByte())
                         }
                     }
@@ -1711,12 +1738,41 @@ class WalkieService : Service() {
 
     private fun updateBusyRxState() {
         if (!busyMode) {
-            busyRxActive.set(false)
+            resetBusyRuntimeState()
             return
         }
-        val holdNs = (currentPacketMs().coerceAtLeast(DEFAULT_PACKET_MS) * 2L) * 1_000_000L
-        val active = (System.nanoTime() - busyLastRxAtNs.get()) <= holdNs
+        val holdNs = BUSY_RX_HOLD_MS * 1_000_000L
+        val last = busyLastRxAtNs.get()
+        val active = last != 0L && (System.nanoTime() - last) <= holdNs
         busyRxActive.set(active)
+        if (!active) {
+            busyParallelAllowed.set(false)
+            busyWindowStartedAtNs.set(0L)
+        }
+    }
+
+    private fun resetBusyRuntimeState() {
+        busyRxActive.set(false)
+        busyLastRxAtNs.set(0L)
+        busyParallelAllowed.set(false)
+        busyWindowStartedAtNs.set(0L)
+    }
+
+    private fun busyUnlockRemainingSec(): Int {
+        if (!busyMode || busyTimeoutSec <= 0 || busyParallelAllowed.get() || !busyRxActive.get()) {
+            return 0
+        }
+        val startedAt = busyWindowStartedAtNs.get()
+        if (startedAt <= 0L) {
+            return busyTimeoutSec
+        }
+        val timeoutNs = busyTimeoutSec * 1_000_000_000L
+        val elapsedNs = (System.nanoTime() - startedAt).coerceAtLeast(0L)
+        val remainingNs = timeoutNs - elapsedNs
+        if (remainingNs <= 0L) {
+            return 0
+        }
+        return ((remainingNs + 999_999_999L) / 1_000_000_000L).toInt()
     }
 
     private fun updateRxActiveState() {
@@ -1742,6 +1798,9 @@ class WalkieService : Service() {
             putExtra(EXTRA_PROTOCOL_ERROR, protocolError)
             putExtra(EXTRA_BUSY_MODE, busyMode)
             putExtra(EXTRA_BUSY_RX_ACTIVE, busyRxActive.get())
+            putExtra(EXTRA_BUSY_TIMEOUT_SEC, busyTimeoutSec)
+            putExtra(EXTRA_BUSY_PARALLEL_ALLOWED, busyParallelAllowed.get())
+            putExtra(EXTRA_BUSY_UNLOCK_IN_SEC, busyUnlockRemainingSec())
             putExtra(EXTRA_RX_ACTIVE, rxActive.get())
             putExtra(EXTRA_TX_ACTIVE, transmitting.get() || rogerStreaming.get() || callStreaming.get())
             putExtra(EXTRA_PARALLEL_TX_COLLISION, parallelTxCollisionActive.get())
@@ -2234,9 +2293,9 @@ class WalkieService : Service() {
         channelBound = false
         protocolError = false
         busyMode = false
-        busyRxActive.set(false)
+        busyTimeoutSec = 0
+        resetBusyRuntimeState()
         rxActive.set(false)
-        busyLastRxAtNs.set(0L)
         lastInboundUdpAtNs.set(0L)
         lastRxDuringParallelTxNs.set(0L)
         parallelTxCollisionActive.set(false)

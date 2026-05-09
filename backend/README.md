@@ -28,6 +28,7 @@ go run ./cmd/relay ./config.json
 - `server.conceal_decay` frame-to-frame attenuation for concealment replay during hangover (`0..1`)
 - `server.jitter_min_packets` minimum packets to accumulate before server-side jitter playout (`1..12`, recommended `2..4`)
 - `server.busy_mode` allow only one active transmitter per channel at a time (others are blocked until TX ends)
+- `server.busy_timeout` busy-mode parallel unlock delay in seconds (`0` disables unlock and keeps strict single-TX behavior)
 - `server.transmit_timeout` max continuous TX duration in seconds (`0` disables timeout)
 - each module block in `modules.*` is optional:
   - if the block is missing, module is disabled
@@ -51,7 +52,8 @@ go run ./cmd/relay ./config.json
 Server -> client:
 
 - `{"type":"welcome","sessionId":123,"packetMs":20,"sampleRate":8000,"opus":{"bitrate":12000,"complexity":5,"fec":true,"dtx":false,"application":"voip"},"protocolVersion":2}`
-  - includes `busyMode: true|false` so clients can lock PTT while channel is receiving
+  - includes `busyMode: true|false` and `busyTimeoutSec` so clients can lock PTT and display unlock countdown
+- `{"type":"busy_timeout_elapsed"}` busy-mode timeout elapsed; parallel TX may start now
 - `{"type":"tx_stop","info":"transmit_timeout_reached"}` server-enforced stop for overlong TX
 - `{"type":"joined","channel":"teamA"}`
 - `{"type":"pong"}`

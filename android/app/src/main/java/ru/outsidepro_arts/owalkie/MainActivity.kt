@@ -84,6 +84,9 @@ class MainActivity : ComponentActivity() {
     private var protocolIncompatible = false
     private var busyModeEnabled = false
     private var busyRxActive = false
+    private var busyTimeoutSec = 0
+    private var busyParallelAllowed = false
+    private var busyUnlockInSec = 0
     private var pttBurstPressBlocked = false
     private var rxActive = false
     private var parallelTxCollision = false
@@ -116,6 +119,9 @@ class MainActivity : ComponentActivity() {
             protocolIncompatible = intent.getBooleanExtra(WalkieService.EXTRA_PROTOCOL_ERROR, false)
             busyModeEnabled = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_MODE, false)
             busyRxActive = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_RX_ACTIVE, false)
+            busyTimeoutSec = intent.getIntExtra(WalkieService.EXTRA_BUSY_TIMEOUT_SEC, 0).coerceAtLeast(0)
+            busyParallelAllowed = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_PARALLEL_ALLOWED, false)
+            busyUnlockInSec = intent.getIntExtra(WalkieService.EXTRA_BUSY_UNLOCK_IN_SEC, 0).coerceAtLeast(0)
             pttBurstPressBlocked = intent.getBooleanExtra(WalkieService.EXTRA_PTT_BURST_PRESS_BLOCKED, false)
             rxActive = intent.getBooleanExtra(WalkieService.EXTRA_RX_ACTIVE, false)
             parallelTxCollision = intent.getBooleanExtra(WalkieService.EXTRA_PARALLEL_TX_COLLISION, false)
@@ -459,9 +465,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updatePttLabel() {
+        val blockedByBusyMode = busyModeEnabled && busyRxActive && !busyParallelAllowed && !transmitting
         if (!binding.pttButton.isEnabled) {
-            binding.pttButton.text = getString(R.string.ptt_unavailable)
-            binding.pttButton.contentDescription = getString(R.string.ptt_unavailable)
+            if (blockedByBusyMode && busyTimeoutSec > 0) {
+                val sec = busyUnlockInSec.coerceAtLeast(0)
+                binding.pttButton.text = getString(R.string.ptt_busy_timeout_countdown, sec)
+                binding.pttButton.contentDescription = getString(R.string.ptt_busy_timeout_countdown_accessibility, sec)
+            } else {
+                binding.pttButton.text = getString(R.string.ptt_unavailable)
+                binding.pttButton.contentDescription = getString(R.string.ptt_unavailable)
+            }
             return
         }
         if (pttToggleModeEnabled) {
@@ -1142,7 +1155,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updatePttAvailability() {
-        val blockedByBusyMode = busyModeEnabled && busyRxActive && !transmitting
+        val blockedByBusyMode = busyModeEnabled && busyRxActive && !busyParallelAllowed && !transmitting
         val enabled = wsConnected && !blockedByBusyMode && !pttBurstPressBlocked
         binding.pttButton.isEnabled = enabled
         binding.callButton.isEnabled = enabled && !transmitting

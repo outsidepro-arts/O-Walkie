@@ -21,9 +21,11 @@ type serverConfig struct {
 	// JitterAdaptEnabled: when true, each transmitter's jitter depth adapts between jitter_min_packets and jitter_max_packets.
 	JitterAdaptEnabled bool `json:"jitter_adapt_enabled"`
 	// JitterMaxPkts: ceiling for adaptive depth (ignored when jitter_adapt_enabled is false). If 0 when enabled, defaults to max(jitter_min_packets, 12).
-	JitterMaxPkts      int  `json:"jitter_max_packets,omitempty"`
-	BusyMode           bool `json:"busy_mode"`
-	TransmitTimeoutSec int  `json:"transmit_timeout"`
+	JitterMaxPkts int  `json:"jitter_max_packets,omitempty"`
+	BusyMode      bool `json:"busy_mode"`
+	// BusyTimeoutSec: when >0 and busy_mode enabled, parallel TX is unlocked after this many seconds.
+	BusyTimeoutSec     int `json:"busy_timeout,omitempty"`
+	TransmitTimeoutSec int `json:"transmit_timeout"`
 }
 
 type opusConfig struct {

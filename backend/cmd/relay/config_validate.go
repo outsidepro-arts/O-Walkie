@@ -49,6 +49,9 @@ func validateConfig(cfg appConfig) error {
 	if cfg.Server.TransmitTimeoutSec < 0 {
 		return errors.New("server.transmit_timeout must be >= 0")
 	}
+	if cfg.Server.BusyTimeoutSec < 0 {
+		return errors.New("server.busy_timeout must be >= 0")
+	}
 	if cfg.Modules.DSP.Compressor != nil && cfg.Modules.DSP.Compressor.Enabled {
 		if cfg.Modules.DSP.Compressor.Ratio <= 0 {
 			return errors.New("modules.compressor.ratio must be > 0")
