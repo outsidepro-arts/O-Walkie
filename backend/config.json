@@ -38,8 +38,8 @@
         "multi_client_rapid_ms": 0,
         "impulse_prob_at_weak_signal": 0.98,
         "impulse_prob_at_strong_signal": 0.05,
-        "impulse_gain_db": 5.0,
-        "impulse_gain_at_weak_signal_db": 0.0,
+        "impulse_gain_db": 10.0,
+        "impulse_gain_at_weak_signal_db": 5.0,
         "impulse_gain_at_strong_signal_db": -20.0,
         "filter": {
           "enabled": true,
