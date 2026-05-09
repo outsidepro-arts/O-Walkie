@@ -56,6 +56,12 @@ func (m *clicksModule) Process(ctx *audioProcessContext) {
 	if m.peakLinearAmp <= 0 || len(ctx.Mixed) == 0 {
 		return
 	}
+	// Like pops: only texture incoming carrier — idle channel must stay silent (no EmitFrame from clicks alone).
+	if !ctx.Control.TxActive && ctx.ActiveSpeakers <= 0 {
+		m.tailBuf = m.tailBuf[:0]
+		m.rapidRemain = 0
+		return
+	}
 	m.flushClickTail(ctx)
 	signalByte := ctx.AvgSignalByte
 	if ctx.Control.SignalByte != nil {
