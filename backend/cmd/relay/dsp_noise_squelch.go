@@ -122,6 +122,7 @@ type squelchDSPModule struct {
 	squelchLatched     bool
 	lastActive         bool
 	cfg                squelchDSPConfig
+	edgeImpulseLinear  float64
 }
 
 func newSquelchDSPModule(frameDuration time.Duration, cfg squelchDSPConfig) *squelchDSPModule {
@@ -130,10 +131,18 @@ func newSquelchDSPModule(frameDuration time.Duration, cfg squelchDSPConfig) *squ
 		distribution = "gaussian"
 	}
 	cfg.NoiseDistribution = distribution
+	edgeLin := 0.0
+	if cfg.EdgeImpulseDB != nil {
+		v := cfg.NoiseGain * dbToLinear(*cfg.EdgeImpulseDB)
+		if v > 0 && !math.IsNaN(v) && !math.IsInf(v, 0) {
+			edgeLin = v
+		}
+	}
 	return &squelchDSPModule{
-		white:         newWhiteNoise(distribution, cfg.ThermalLowpassHz),
-		frameDuration: frameDuration,
-		cfg:           cfg,
+		white:             newWhiteNoise(distribution, cfg.ThermalLowpassHz),
+		frameDuration:     frameDuration,
+		cfg:               cfg,
+		edgeImpulseLinear: edgeLin,
 	}
 }
 
@@ -146,22 +155,32 @@ func (m *squelchDSPModule) Process(ctx *audioProcessContext) {
 	txEOF := ctx.Control.TxEOF || (!active && m.lastActive)
 	if !active {
 		// End-of-transmission tail burst: jump to 0 dB and emit white hiss briefly.
+		burstJustStarted := false
 		if txEOF && m.squelchBurstRemain <= 0 {
 			m.squelchBurstRemain = randomDurationMs(m.cfg.TailMinMs, m.cfg.TailMaxMs)
+			burstJustStarted = true
 		}
 		m.lastActive = false
 		if m.squelchBurstRemain > 0 {
+			remainBefore := m.squelchBurstRemain
 			noiseAmplitude := m.cfg.NoiseGain * dbToLinear(m.cfg.TailNoiseDB)
 			for i := range ctx.Mixed {
 				ctx.Mixed[i] += m.white.next() * noiseAmplitude
 			}
-			ctx.EmitFrame = true
-			m.squelchBurstRemain -= m.frameDuration
-			if m.squelchBurstRemain <= 0 {
+			if burstJustStarted && m.edgeImpulseLinear > 0 {
+				m.addEdgeImpulseSample(ctx, 0)
+			}
+			afterDec := remainBefore - m.frameDuration
+			m.squelchBurstRemain = afterDec
+			if afterDec <= 0 {
 				m.squelchBurstRemain = 0
+				if m.edgeImpulseLinear > 0 {
+					m.addEdgeImpulseSample(ctx, len(ctx.Mixed)-1)
+				}
 				ctx.SquelchHissJustEnded = true
 				ctx.QueueSynthSilenceTail = true
 			}
+			ctx.EmitFrame = true
 			return
 		}
 		m.squelchLatched = false
@@ -181,15 +200,27 @@ func (m *squelchDSPModule) Process(ctx *audioProcessContext) {
 			ctx.DropFrame = true
 			return
 		}
+		burstJustStarted := false
 		if m.squelchBurstRemain <= 0 {
 			m.squelchBurstRemain = randomDurationMs(m.cfg.SquelchMinMs, m.cfg.SquelchMaxMs)
+			burstJustStarted = true
 		}
+		remainBefore := m.squelchBurstRemain
 		noiseAmplitude := m.cfg.NoiseGain * dbToLinear(m.cfg.TailNoiseDB)
 		for i := range ctx.Mixed {
 			ctx.Mixed[i] += m.white.next() * noiseAmplitude
 		}
-		m.squelchBurstRemain -= m.frameDuration
-		if m.squelchBurstRemain <= 0 {
+		if burstJustStarted && m.edgeImpulseLinear > 0 {
+			m.addEdgeImpulseSample(ctx, 0)
+		}
+		afterDec := remainBefore - m.frameDuration
+		m.squelchBurstRemain = afterDec
+		// Last frame of burst is dropped; put closing click on last emitted frame.
+		lastEmitted := afterDec > 0 && afterDec <= m.frameDuration
+		if lastEmitted && m.edgeImpulseLinear > 0 {
+			m.addEdgeImpulseSample(ctx, len(ctx.Mixed)-1)
+		}
+		if afterDec <= 0 {
 			m.squelchLatched = true
 			ctx.DropFrame = true
 		}
@@ -197,6 +228,20 @@ func (m *squelchDSPModule) Process(ctx *audioProcessContext) {
 	}
 	m.squelchLatched = false
 	m.squelchBurstRemain = 0
+}
+
+func (m *squelchDSPModule) addEdgeImpulseSample(ctx *audioProcessContext, idx int) {
+	if m.edgeImpulseLinear <= 0 || len(ctx.Mixed) == 0 {
+		return
+	}
+	if idx < 0 || idx >= len(ctx.Mixed) {
+		return
+	}
+	sign := 1.0
+	if rand.Intn(2) == 0 {
+		sign = -1.0
+	}
+	ctx.Mixed[idx] += sign * m.edgeImpulseLinear
 }
 
 func mapSignalByteToNoiseDB(signalByte float64, minNoiseDB float64, maxNoiseDB float64) float64 {

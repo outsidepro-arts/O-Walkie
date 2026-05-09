@@ -89,6 +89,9 @@ type squelchDSPConfig struct {
 	TailNoiseDB      float64 `json:"tail_noise_db"`
 	TailMinMs        int     `json:"tail_min_ms"`
 	TailMaxMs        int     `json:"tail_max_ms"`
+	// EdgeImpulseDB: optional dB peak (scaled by noise_gain like tail hiss) for a single-sample
+	// ± impulse at hiss burst start/end; nil = disabled (legacy smooth noise edges).
+	EdgeImpulseDB *float64 `json:"edge_impulse_db,omitempty"`
 	// SynthSilenceTailPackets: zero-PCM frames after each squelch-generated burst tail.
 	// 0 = default jitter_min_packets+2 (min 4).
 	SynthSilenceTailPackets int `json:"synth_silence_tail_packets,omitempty"`

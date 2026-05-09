@@ -125,6 +125,10 @@ func validateConfig(cfg appConfig) error {
 		if cfg.Modules.DSP.Squelch.SynthSilenceTailPackets < 0 {
 			return errors.New("modules.dsp.squelch.synth_silence_tail_packets must be >= 0")
 		}
+		if cfg.Modules.DSP.Squelch.EdgeImpulseDB != nil &&
+			(math.IsNaN(*cfg.Modules.DSP.Squelch.EdgeImpulseDB) || math.IsInf(*cfg.Modules.DSP.Squelch.EdgeImpulseDB, 0)) {
+			return errors.New("modules.dsp.squelch.edge_impulse_db must be finite")
+		}
 	}
 	if cfg.Modules.DSP.Pops != nil && cfg.Modules.DSP.Pops.Enabled {
 		p := cfg.Modules.DSP.Pops
