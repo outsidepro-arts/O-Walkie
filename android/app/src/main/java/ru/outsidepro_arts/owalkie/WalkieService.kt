@@ -1175,6 +1175,7 @@ class WalkieService : Service() {
     }
 
     private fun onPttPress() {
+        if (isPttStartBlockedByBusyMode()) return
         rogerJob?.cancel()
         rogerJob = null
         rogerStreaming.set(false)
@@ -1756,6 +1757,19 @@ class WalkieService : Service() {
         busyLastRxAtNs.set(0L)
         busyParallelAllowed.set(false)
         busyWindowStartedAtNs.set(0L)
+    }
+
+    /**
+     * Same condition as MainActivity `blockedByBusyMode` for starting PTT: on-screen button is disabled,
+     * but hardware / media / external intents must also respect busy here.
+     */
+    private fun isPttStartBlockedByBusyMode(): Boolean {
+        if (!busyMode) return false
+        if (!busyRxActive.get()) return false
+        if (busyParallelAllowed.get()) return false
+        val anyOutgoing = transmitting.get() || rogerStreaming.get() || callStreaming.get()
+        if (anyOutgoing) return false
+        return true
     }
 
     private fun busyUnlockRemainingSec(): Int {
