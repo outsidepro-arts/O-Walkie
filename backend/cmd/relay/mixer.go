@@ -61,6 +61,14 @@ type channelMixer struct {
 	txCountdownNotified map[uint32]bool
 
 	mixerEmergencyRestarts atomic.Uint64
+
+	// WebSocket-driven client UX: outbound mix session + server PTT lock (v3 protocol).
+	rxWsMu                sync.Mutex
+	rxOutSessionActive   bool
+	rxLastOutboundAt     time.Time
+	pttLockServerActive  bool
+	lastPttLockDisplaySec int
+
 	mixerRestartMu         sync.Mutex
 	mixerRestartWindow     []time.Time
 	mixerRestartLastAlert  time.Time
@@ -230,6 +238,14 @@ func (m *channelMixer) tryAcceptPacket(sessionID uint32) bool {
 	now := time.Now()
 	notifyBusyTimeoutElapsed := false
 	m.busyMu.Lock()
+	if m.busySessionID != 0 {
+		m.participantsMu.RLock()
+		_, holderPresent := m.participants[m.busySessionID]
+		m.participantsMu.RUnlock()
+		if !holderPresent {
+			m.resetBusyHoldLocked()
+		}
+	}
 	if m.busySessionID == 0 || m.busyWindowExpiredLocked(now) {
 		m.busySessionID = sessionID
 		m.busyLastPacketAt = now
@@ -292,16 +308,35 @@ func (m *channelMixer) busyWindowExpiredLocked(now time.Time) bool {
 	return now.Sub(m.busyLastPacketAt) > hold
 }
 
+// resetBusyHoldLocked clears busy ownership; caller must hold busyMu.
+func (m *channelMixer) resetBusyHoldLocked() {
+	m.busySessionID = 0
+	m.busyExplicitEOF = false
+	m.busyStartedAt = time.Time{}
+	m.busyParallelAllowed = false
+}
+
 func (m *channelMixer) notifyBusyTimeoutElapsed() {
+	notifyUnlock := false
+	m.rxWsMu.Lock()
+	if m.busyMode && m.busyTimeout > 0 && m.pttLockServerActive {
+		m.pttLockServerActive = false
+		notifyUnlock = true
+	}
+	m.rxWsMu.Unlock()
+
 	m.participantsMu.RLock()
 	participants := make([]uint32, 0, len(m.participants))
 	for sid := range m.participants {
 		participants = append(participants, sid)
 	}
 	m.participantsMu.RUnlock()
+	if !notifyUnlock {
+		return
+	}
 	for _, sid := range participants {
 		if c := m.hub.getClient(sid); c != nil {
-			_ = c.writeJSON(wsServerMessage{Type: "busy_timeout_elapsed"})
+			_ = c.writeJSON(wsServerMessage{Type: "ptt_unlock"})
 		}
 	}
 }
@@ -337,6 +372,12 @@ func (m *channelMixer) removeParticipant(sessionID uint32) {
 	delete(m.txLastStopNoticeAt, sessionID)
 	delete(m.txCountdownNotified, sessionID)
 	m.txMu.Unlock()
+
+	m.busyMu.Lock()
+	if m.busySessionID == sessionID {
+		m.resetBusyHoldLocked()
+	}
+	m.busyMu.Unlock()
 }
 
 func (m *channelMixer) clearRepeaterState(sessionID uint32) {
@@ -536,6 +577,7 @@ func (m *channelMixer) runLoop() (panicked bool) {
 		case <-ticker.C:
 			m.mixAndBroadcast(states, eofMarked)
 			m.cleanupStreamStates(states, eofMarked, time.Now())
+			m.probeRxBroadcastWsIdle(time.Now())
 		}
 	}
 }
@@ -565,6 +607,7 @@ func (m *channelMixer) resetAfterLoopFailure() {
 
 	m.synthSilenceRemain = 0
 	m.lastTxActive = false
+	m.resetRxWsBroadcastState()
 }
 
 func (m *channelMixer) cleanupStreamStates(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool, now time.Time) {
@@ -652,6 +695,7 @@ func (m *channelMixer) emitEncodedSilenceFrame(now time.Time, activeSpeakers []u
 	}
 	m.rememberLatestFrame(payload, exclude)
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, sigByte)
+	m.noteOutboundMixedUDP(now, exclude)
 }
 
 func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eofMarked map[uint32]bool) {
@@ -883,4 +927,5 @@ func (m *channelMixer) mixAndBroadcast(states map[uint32]*speakerStreamState, eo
 	}
 	m.rememberLatestFrame(payload, exclude)
 	m.hub.broadcastMixed(m.name, exclude, opusBuf[:n], m.seq, uint8(ctx.AvgSignalByte))
+	m.noteOutboundMixedUDP(now, exclude)
 }

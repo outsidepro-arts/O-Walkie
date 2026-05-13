@@ -108,7 +108,11 @@ private:
     void StopTxCountdownFromServer();
     void StartBusyTimeoutCountdown();
     void StopBusyTimeoutCountdown();
-    void OnBusyTimeoutElapsedFromServer();
+    void OnServerPttUnlockFromRelay();
+    void OnServerPttLockFromRelay(int displaySec);
+    void OnRxBroadcastStartFromRelay(bool busyMode);
+    void OnRxBroadcastEndFromRelay();
+    void ForceAbortOutgoingForServerPttLock();
     void TogglePttTx();
     void RefreshPttUi();
     void OnPttButtonClicked(wxCommandEvent& event);
@@ -189,10 +193,9 @@ private:
     std::atomic<bool> pttReleaseBurstBlocked_{false};
     std::atomic<uint64_t> txCountdownTicket_{0};
     bool busyModeEnabled_ = false;
-    bool busyParallelAllowed_ = false;
-    int busyTimeoutSec_ = 0;
-    std::chrono::steady_clock::time_point busyCountdownStartedAt_{};
-    std::chrono::steady_clock::time_point busyLastRxAt_{};
+    bool serverRxBroadcastActive_ = false;
+    bool serverPttLocked_ = false;
+    int pttLockDisplaySec_ = 0;
     std::atomic<uint64_t> busyCountdownTicket_{0};
 
     void ArmPttReleaseBurstDecay(uint64_t scheduleTicket);

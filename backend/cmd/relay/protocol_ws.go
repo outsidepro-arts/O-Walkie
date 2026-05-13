@@ -17,9 +17,12 @@ type wsServerMessage struct {
 	Opus            *wsOpusConfig `json:"opus,omitempty"`
 	ProtocolVersion int           `json:"protocolVersion,omitempty"`
 	BusyMode        *bool         `json:"busyMode,omitempty"`
-	BusyTimeoutSec  *int          `json:"busyTimeoutSec,omitempty"`
 	TransmitTimeout *int          `json:"transmitTimeoutSec,omitempty"`
 	Active          *bool         `json:"active,omitempty"`
+	// rx_broadcast_end: server idle guard (ms) after last outbound mix frame (same order as EOF timeout).
+	EndDelayMs *int `json:"endDelayMs,omitempty"`
+	// ptt_lock: UI-only countdown hint; clients must not unlock on timer — only on ptt_unlock.
+	DisplaySec *int `json:"displaySec,omitempty"`
 }
 
 type wsOpusConfig struct {

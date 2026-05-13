@@ -233,3 +233,46 @@ func (h *relayHub) sendToClient(sessionID uint32, payload []byte) {
 		log.Printf("udp send failed to %d (%s): %v", sessionID, addr, err)
 	}
 }
+
+// broadcastChannelWSJSON sends a JSON control message to every WebSocket client in the channel
+// (including repeater-mode clients, which still need UI/session state).
+func (h *relayHub) broadcastChannelWSJSON(channel string, msg wsServerMessage) {
+	h.broadcastChannelWSJSONExcept(channel, 0, msg)
+}
+
+// broadcastChannelWSJSONExcept skips exceptSession (non-zero), matching broadcastMixed exclude.
+func (h *relayHub) broadcastChannelWSJSONExcept(channel string, exceptSession uint32, msg wsServerMessage) {
+	channel = normalizeChannelName(channel)
+	if channel == "" {
+		return
+	}
+	h.clientsMu.RLock()
+	defer h.clientsMu.RUnlock()
+	for _, c := range h.clients {
+		if c.getChannel() != channel {
+			continue
+		}
+		if exceptSession != 0 && c.sessionID == exceptSession {
+			continue
+		}
+		_ = c.writeJSON(msg)
+	}
+}
+
+// syncChannelWsSessionToClient replays live rx/ptt-lock WS state to a client that just joined.
+func (h *relayHub) syncChannelWsSessionToClient(c *client) {
+	if c == nil {
+		return
+	}
+	ch := normalizeChannelName(c.getChannel())
+	if ch == "" {
+		return
+	}
+	h.channelMu.RLock()
+	m := h.channels[ch]
+	h.channelMu.RUnlock()
+	if m == nil {
+		return
+	}
+	m.syncWsSessionStateToClient(c)
+}

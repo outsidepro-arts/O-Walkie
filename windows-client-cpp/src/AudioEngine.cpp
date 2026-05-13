@@ -760,31 +760,21 @@ void AudioEngine::StopTransmit() {
     CloseCaptureDeviceLocked();
 }
 
-void AudioEngine::ScheduleRxResumeHoldoff(int multiplier) {
-    const int safeMult = std::max(multiplier, 1);
-    int packetMs = 20;
-    {
-        std::lock_guard<std::mutex> lg(mu_);
-        packetMs = std::max(packetMs_, 10);
-    }
-    const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                              std::chrono::steady_clock::now().time_since_epoch())
-                              .count();
-    rxResumeAtNs_.store(nowNs + static_cast<int64_t>(packetMs) * safeMult * 1'000'000LL);
-    refresh_rx_decoder_.store(true);
+void AudioEngine::RequestAbortOutgoingSignalStream() {
+    signalStreamAbortRequested_.store(true, std::memory_order_release);
 }
 
-bool AudioEngine::IsRxHoldoffActive() const {
-    const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                              std::chrono::steady_clock::now().time_since_epoch())
-                              .count();
-    return nowNs < rxResumeAtNs_.load();
+void AudioEngine::ScheduleRxResumeHoldoff(int /*multiplier*/) {
+    // No time-based RX mute after local TX/Roger/Call; next inbound frame may decode immediately.
+    // Flag RX decoder refresh after periods when inbound audio was dropped during local TX.
+    refresh_rx_decoder_.store(true);
 }
 
 bool AudioEngine::StreamRogerSignal() {
     if (transmitting_.load() || signalStreaming_.exchange(true)) {
         return false;
     }
+    signalStreamAbortRequested_.store(false, std::memory_order_release);
     lastRxDuringLocalTxNs_.store(0);
     lastParallelCollisionPulseNs_.store(0);
     std::vector<int16_t> remotePcm;
@@ -825,6 +815,7 @@ bool AudioEngine::StreamCallSignal() {
     if (transmitting_.load() || signalStreaming_.exchange(true)) {
         return false;
     }
+    signalStreamAbortRequested_.store(false, std::memory_order_release);
     lastRxDuringLocalTxNs_.store(0);
     lastParallelCollisionPulseNs_.store(0);
     std::vector<int16_t> remotePcm;
@@ -1057,6 +1048,10 @@ bool AudioEngine::StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal) {
     std::vector<int16_t> frame(static_cast<size_t>(frameSamples), 0);
     size_t offset = 0;
     while (offset < pcmSignal.size()) {
+        if (signalStreamAbortRequested_.load(std::memory_order_acquire)) {
+            signalStreamAbortRequested_.store(false, std::memory_order_release);
+            return false;
+        }
         std::fill(frame.begin(), frame.end(), 0);
         const size_t copyN = std::min(frame.size(), pcmSignal.size() - offset);
         std::memcpy(frame.data(), pcmSignal.data() + offset, copyN * sizeof(int16_t));
@@ -1154,7 +1149,7 @@ void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
     }
 
     std::lock_guard<std::mutex> lg(mu_);
-    if (!decoder_ || IsRxHoldoffActive()) {
+    if (!decoder_) {
         return;
     }
     if (refresh_rx_decoder_.exchange(false)) {

@@ -282,9 +282,6 @@ namespace {
 // Release-burst anti-spam (aligned with Android WalkieService): quiet window before reset; refreshed on release and on blocked press.
 constexpr int kPttReleaseBurstTimerMs = 1000;
 constexpr int kPttReleaseBurstBlockThreshold = 3;
-/// Busy-mode: same-session hold across UDP jitter; must match Android [BUSY_RX_HOLD_MS].
-constexpr int kBusyRxHoldMs = 200;
-
 #ifdef _WIN32
 MainFrame* g_mainFrameForPttHook = nullptr;
 constexpr int kPttModShift = 1;
@@ -1721,10 +1718,10 @@ MainFrame::MainFrame(const std::string& connectUri)
                 reconnectBackoffMs_ = 1500;
                 StopReconnectTimer();
             } else {
-                busyParallelAllowed_ = false;
-                busyTimeoutSec_ = 0;
                 busyModeEnabled_ = false;
-                busyLastRxAt_ = std::chrono::steady_clock::time_point{};
+                serverRxBroadcastActive_ = false;
+                serverPttLocked_ = false;
+                pttLockDisplaySec_ = 0;
                 StopBusyTimeoutCountdown();
             }
 #ifdef _WIN32
@@ -1748,37 +1745,25 @@ MainFrame::MainFrame(const std::string& connectUri)
     relay_->SetWelcomeCallback([this](const WelcomeConfig& cfg) {
         audio_->Reconfigure(cfg);
         busyModeEnabled_ = cfg.busyMode;
-        busyTimeoutSec_ = std::max(0, cfg.busyTimeoutSec);
-        busyParallelAllowed_ = false;
-        busyLastRxAt_ = std::chrono::steady_clock::time_point{};
+        serverRxBroadcastActive_ = false;
+        serverPttLocked_ = false;
+        pttLockDisplaySec_ = 0;
         StopBusyTimeoutCountdown();
         audio_->PlayConnectedSignal();
         RefreshPttUi();
     });
     relay_->SetOpusFrameCallback([this](const std::vector<uint8_t>& opus) {
-        if (busyModeEnabled_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming()) {
-            this->CallAfter([this] {
-                if (!busyModeEnabled_ || audio_->IsTransmitting() || audio_->IsSignalStreaming()) {
-                    return;
-                }
-                const auto now = std::chrono::steady_clock::now();
-                const bool wasIdle = busyLastRxAt_ == std::chrono::steady_clock::time_point{} ||
-                    now - busyLastRxAt_ > std::chrono::milliseconds(kBusyRxHoldMs);
-                busyLastRxAt_ = now;
-                if (wasIdle) {
-                    busyParallelAllowed_ = false;
-                    StopBusyTimeoutCountdown();
-                }
-                if (!busyParallelAllowed_) {
-                    StartBusyTimeoutCountdown();
-                }
-                RefreshPttUi();
-            });
-        }
         audio_->OnIncomingOpusFrame(opus);
     });
     relay_->SetTxCountdownStartCallback([this] { this->CallAfter([this] { StartTxCountdownFromServer(); }); });
-    relay_->SetBusyTimeoutElapsedCallback([this] { this->CallAfter([this] { OnBusyTimeoutElapsedFromServer(); }); });
+    relay_->SetRxBroadcastStartCallback([this](bool bm) {
+        this->CallAfter([this, bm] { OnRxBroadcastStartFromRelay(bm); });
+    });
+    relay_->SetRxBroadcastEndCallback([this] { this->CallAfter([this] { OnRxBroadcastEndFromRelay(); }); });
+    relay_->SetServerPttLockCallback([this](int ds) {
+        this->CallAfter([this, ds] { OnServerPttLockFromRelay(ds); });
+    });
+    relay_->SetServerPttUnlockCallback([this] { this->CallAfter([this] { OnServerPttUnlockFromRelay(); }); });
     relay_->SetTxStopCallback([this] { this->CallAfter([this] { OnTxStop(); }); });
     relay_->SetConnectionLostCallback([this] { this->CallAfter([this] { OnRelayConnectionLost(); }); });
 
@@ -2795,6 +2780,9 @@ wxString MainFrame::HumanizeStatus(const wxString& status) const {
     if (s.IsEmpty()) {
         return _("Disconnected");
     }
+    if (s.Contains("receiving")) {
+        return _("Receiving");
+    }
     if (s.Contains("welcome received") || s == "connected" || s == "reconnected") {
         return _("Connected");
     }
@@ -3169,6 +3157,9 @@ void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
     if (!connected_ || audio_->IsTransmitting() || audio_->IsSignalStreaming()) {
         return;
     }
+    if (serverPttLocked_) {
+        return;
+    }
     if (callBtn_) {
         callBtn_->Enable(false);
     }
@@ -3189,9 +3180,7 @@ void MainFrame::BeginPttTx() {
         RefreshPttUi();
         return;
     }
-    const bool busyRxActive = busyLastRxAt_ != std::chrono::steady_clock::time_point{} &&
-        (std::chrono::steady_clock::now() - busyLastRxAt_) <= std::chrono::milliseconds(kBusyRxHoldMs);
-    if (busyModeEnabled_ && busyRxActive && !busyParallelAllowed_) {
+    if (serverPttLocked_) {
         RefreshPttUi();
         return;
     }
@@ -3244,29 +3233,13 @@ void MainFrame::RefreshPttUi() {
         return;
     }
     const bool burstBlocked = pttReleaseBurstBlocked_.load(std::memory_order_relaxed);
-    bool blockedByBusy = false;
-    int busyRemainSec = 0;
-    const bool busyRxActive = busyLastRxAt_ != std::chrono::steady_clock::time_point{} &&
-        (std::chrono::steady_clock::now() - busyLastRxAt_) <= std::chrono::milliseconds(kBusyRxHoldMs);
-    if (!busyRxActive && !audio_->IsTransmitting() && !audio_->IsSignalStreaming()) {
-        busyParallelAllowed_ = false;
-        StopBusyTimeoutCountdown();
-    }
-    if (connected_ && busyModeEnabled_ && busyRxActive && !busyParallelAllowed_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming()) {
-        blockedByBusy = true;
-        if (busyTimeoutSec_ > 0 && busyCountdownStartedAt_ != std::chrono::steady_clock::time_point{}) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - busyCountdownStartedAt_);
-            busyRemainSec = std::max(0, busyTimeoutSec_ - static_cast<int>(elapsed.count()));
-        } else if (busyTimeoutSec_ > 0) {
-            busyRemainSec = busyTimeoutSec_;
-        }
-    }
-    const bool allowPtt = connected_ && !burstBlocked && !blockedByBusy;
+    const bool blockedByServerPtt =
+        connected_ && serverPttLocked_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming();
+    const bool allowPtt = connected_ && !burstBlocked && !blockedByServerPtt;
     pttBtn_->Enable(allowPtt);
     if (!allowPtt) {
-        if (blockedByBusy && busyTimeoutSec_ > 0) {
-            pttBtn_->SetLabel(wxString::Format(_("PTT in %d s"), busyRemainSec));
+        if (blockedByServerPtt && pttLockDisplaySec_ > 0) {
+            pttBtn_->SetLabel(wxString::Format(_("PTT in %d s"), pttLockDisplaySec_));
         } else {
             pttBtn_->SetLabel(_("PTT unavailable"));
         }
@@ -3276,7 +3249,7 @@ void MainFrame::RefreshPttUi() {
         pttBtn_->SetLabel(_("Hold to Talk"));
     }
     if (callBtn_) {
-        callBtn_->Enable(connected_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming());
+        callBtn_->Enable(connected_ && !serverPttLocked_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming());
     }
 }
 
@@ -3368,39 +3341,77 @@ void MainFrame::StopTxCountdownFromServer() {
 }
 
 void MainFrame::StartBusyTimeoutCountdown() {
-    if (!busyModeEnabled_ || busyTimeoutSec_ <= 0 || busyParallelAllowed_) {
-        StopBusyTimeoutCountdown();
+    StopBusyTimeoutCountdown();
+    if (!serverPttLocked_ || pttLockDisplaySec_ <= 0) {
         return;
     }
-    if (busyCountdownStartedAt_ != std::chrono::steady_clock::time_point{}) {
-        return;
-    }
-    busyCountdownStartedAt_ = std::chrono::steady_clock::now();
     const uint64_t ticket = busyCountdownTicket_.fetch_add(1, std::memory_order_relaxed) + 1;
     std::thread([this, ticket] {
         while (true) {
             if (ticket != busyCountdownTicket_.load(std::memory_order_relaxed)) {
                 break;
             }
+            std::this_thread::sleep_for(std::chrono::seconds(1));
             this->CallAfter([this, ticket] {
                 if (ticket != busyCountdownTicket_.load(std::memory_order_relaxed)) {
                     return;
                 }
+                if (serverPttLocked_ && pttLockDisplaySec_ > 0) {
+                    pttLockDisplaySec_--;
+                }
                 RefreshPttUi();
             });
-            std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }).detach();
 }
 
 void MainFrame::StopBusyTimeoutCountdown() {
     busyCountdownTicket_.fetch_add(1, std::memory_order_relaxed);
-    busyCountdownStartedAt_ = std::chrono::steady_clock::time_point{};
 }
 
-void MainFrame::OnBusyTimeoutElapsedFromServer() {
-    busyParallelAllowed_ = true;
+void MainFrame::ForceAbortOutgoingForServerPttLock() {
+    StopTxCountdownFromServer();
+    const bool had = audio_->IsTransmitting() || audio_->IsSignalStreaming();
+    audio_->RequestAbortOutgoingSignalStream();
+    if (audio_->IsTransmitting()) {
+        audio_->StopTransmit();
+    }
+    if (had) {
+        relay_->SendTxEofBurst();
+    }
+    audio_->ScheduleRxResumeHoldoff();
+}
+
+void MainFrame::OnRxBroadcastStartFromRelay(bool bm) {
+    serverRxBroadcastActive_ = true;
+    busyModeEnabled_ = bm;
+    RefreshPttUi();
+    SetStatus(_("Receiving"));
+}
+
+void MainFrame::OnRxBroadcastEndFromRelay() {
+    serverRxBroadcastActive_ = false;
+    RefreshPttUi();
+    if (connected_) {
+        SetStatus("Connected");
+    }
+}
+
+void MainFrame::OnServerPttLockFromRelay(int displaySec) {
+    ForceAbortOutgoingForServerPttLock();
+    serverPttLocked_ = true;
+    pttLockDisplaySec_ = std::max(0, displaySec);
+    StartBusyTimeoutCountdown();
+    RefreshPttUi();
+}
+
+void MainFrame::OnServerPttUnlockFromRelay() {
+    serverPttLocked_ = false;
+    pttLockDisplaySec_ = 0;
     StopBusyTimeoutCountdown();
+    if (audio_) {
+        audio_->ScheduleRxResumeHoldoff();
+    }
     RefreshPttUi();
 }
 

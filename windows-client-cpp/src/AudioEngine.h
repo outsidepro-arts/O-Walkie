@@ -70,10 +70,13 @@ public:
 
     bool StartTransmit();
     void StopTransmit();
+    /// Best-effort: break out of an in-progress Roger/Call Opus stream loop (no Roger tail).
+    void RequestAbortOutgoingSignalStream();
     bool IsTransmitting() const { return transmitting_.load(); }
     bool IsSignalStreaming() const { return signalStreaming_.load(); }
     bool IsParallelTxCollisionActive() const { return parallelTxCollisionActive_.load(std::memory_order_relaxed); }
     void PollParallelTxCollisionState(int64_t steadyNowNs);
+    /// After local TX/Roger/Call dropped inbound audio, refresh RX Opus decoder on next decode (no time delay).
     void ScheduleRxResumeHoldoff(int multiplier = 2);
     bool StreamRogerSignal();
     bool StreamCallSignal();
@@ -100,7 +103,6 @@ private:
     const SignalPattern* FindRogerPatternLocked() const;
     const SignalPattern* FindCallPatternLocked() const;
     void QueuePcmForPlaybackLocked(const std::vector<int16_t>& pcm);
-    bool IsRxHoldoffActive() const;
     bool StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal);
     void PlayVibrationImitationPattern(const std::vector<int>& patternMs);
     void RecreateCodecUnlocked();
@@ -153,9 +155,9 @@ private:
 
     std::atomic<bool> transmitting_{false};
     std::atomic<bool> signalStreaming_{false};
-    /// After dropping inbound audio (TX/holdoff), rebuild RX decoder before next decode.
+    std::atomic<bool> signalStreamAbortRequested_{false};
+    /// After dropping inbound audio during local TX / signal stream, rebuild RX decoder before next decode.
     std::atomic<bool> refresh_rx_decoder_{false};
-    std::atomic<int64_t> rxResumeAtNs_{0};
     std::atomic<int64_t> lastInboundNs_{0};
     /// Inbound audio while local TX / signal stream is active (another station doubling).
     std::atomic<int64_t> lastRxDuringLocalTxNs_{0};

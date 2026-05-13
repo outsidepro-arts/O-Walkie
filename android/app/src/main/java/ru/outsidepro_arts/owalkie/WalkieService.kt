@@ -107,10 +107,9 @@ class WalkieService : Service() {
         const val EXTRA_UDP_READY = "udpReady"
         const val EXTRA_PROTOCOL_ERROR = "protocolError"
         const val EXTRA_BUSY_MODE = "busyMode"
-        const val EXTRA_BUSY_RX_ACTIVE = "busyRxActive"
-        const val EXTRA_BUSY_TIMEOUT_SEC = "busyTimeoutSec"
-        const val EXTRA_BUSY_PARALLEL_ALLOWED = "busyParallelAllowed"
-        const val EXTRA_BUSY_UNLOCK_IN_SEC = "busyUnlockInSec"
+        const val EXTRA_PTT_SERVER_LOCKED = "pttServerLocked"
+        /** Decorative only; unlock is strictly via server `ptt_unlock`. */
+        const val EXTRA_PTT_LOCK_DISPLAY_SEC = "pttLockDisplaySec"
         const val EXTRA_RX_ACTIVE = "rxActive"
         const val EXTRA_TX_ACTIVE = "txActive"
         /** Inbound audio while local TX/Roger/Call is active (another station doubling). */
@@ -178,11 +177,6 @@ class WalkieService : Service() {
         private const val SIGNAL_POLL_INTERVAL_BACKGROUND_MS = 5000L
         private const val SIGNAL_REFRESH_INTERVAL_FOREGROUND_MS = 1000L
         private const val SIGNAL_REFRESH_INTERVAL_BACKGROUND_MS = 50000L
-        /**
-         * Busy-mode: treat inbound audio as one continuous session across packet jitter.
-         * Only after this much quiet do we end the session / reset the busy countdown anchor.
-         */
-        private const val BUSY_RX_HOLD_MS = 200L
 
         /** Gap between RX [AudioTrack] writes to treat as a new burst (media session anchor). */
         private const val RX_PLAYBACK_BURST_GAP_MS = 600L
@@ -263,10 +257,9 @@ class WalkieService : Service() {
     private val sessionId = AtomicLong(0L)
     private val seq = AtomicInteger(0)
     private val encodeLock = Any()
-    private val rxResumeAtNs = AtomicLong(0L)
-    private val busyRxActive = AtomicBoolean(false)
-    private val rxActive = AtomicBoolean(false)
-    private val busyLastRxAtNs = AtomicLong(0L)
+    private val serverRxBroadcastActive = AtomicBoolean(false)
+    private val serverPttLocked = AtomicBoolean(false)
+    private val pttLockDisplaySec = AtomicInteger(0)
     private val lastInboundUdpAtNs = AtomicLong(0L)
     /** Last UDP audio (not keepalive) received while local TX/Roger/Call is active. */
     private val lastRxDuringParallelTxNs = AtomicLong(0L)
@@ -323,10 +316,6 @@ class WalkieService : Service() {
     private var protocolError: Boolean = false
     @Volatile
     private var busyMode: Boolean = false
-    @Volatile
-    private var busyTimeoutSec: Int = 0
-    private val busyParallelAllowed = AtomicBoolean(false)
-    private val busyWindowStartedAtNs = AtomicLong(0L)
 
     private var txCountdownJob: Job? = null
 
@@ -357,6 +346,7 @@ class WalkieService : Service() {
     private var activityFocused: Boolean = true
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var pttLockDisplayTickRunnable: Runnable? = null
     private lateinit var mediaButtonPttToggleRunnable: Runnable
     private var pttMediaSessionController: PttMediaSessionController? = null
 
@@ -656,8 +646,7 @@ class WalkieService : Service() {
                 wsConnected.set(false)
                 channelBound = false
                 busyMode = false
-                busyTimeoutSec = 0
-                resetBusyRuntimeState()
+                clearServerSessionControlState()
 
                 runCatching { webSocket?.close(1001, "reconnect") }
                 runCatching { webSocket?.cancel() }
@@ -689,8 +678,7 @@ class WalkieService : Service() {
                 channelBound = false
                 protocolError = false
                 busyMode = false
-                busyTimeoutSec = 0
-                resetBusyRuntimeState()
+                clearServerSessionControlState()
                 broadcastStatus(currentSignalByte())
                 syncPttMediaSession()
             }
@@ -706,8 +694,7 @@ class WalkieService : Service() {
                 wsConnected.set(false)
                 channelBound = false
                 busyMode = false
-                busyTimeoutSec = 0
-                resetBusyRuntimeState()
+                clearServerSessionControlState()
                 hardDropUdpTransportBecauseWsLost()
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
@@ -724,8 +711,7 @@ class WalkieService : Service() {
                 wsConnected.set(false)
                 channelBound = false
                 busyMode = false
-                busyTimeoutSec = 0
-                resetBusyRuntimeState()
+                clearServerSessionControlState()
                 hardDropUdpTransportBecauseWsLost()
                 this@WalkieService.webSocket = null
                 if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
@@ -805,8 +791,7 @@ class WalkieService : Service() {
                         restartPlaybackLoop()
                     }
                     busyMode = obj.optBoolean("busyMode", false)
-                    busyTimeoutSec = obj.optInt("busyTimeoutSec", 0).coerceAtLeast(0)
-                    resetBusyRuntimeState()
+                    clearServerSessionControlState()
                     if (!channelBound) {
                         val selectedChannel = channel.trim()
                         if (selectedChannel.isNotBlank()) {
@@ -821,6 +806,7 @@ class WalkieService : Service() {
                             syncPttMediaSession()
                         }
                     }
+                    broadcastStatus(currentSignalByte())
                 }
                 "pong" -> Unit
                 "tx_countdown_start" -> {
@@ -829,8 +815,29 @@ class WalkieService : Service() {
                 "tx_stop" -> {
                     forceStopTransmissionFromServer()
                 }
-                "busy_timeout_elapsed" -> {
-                    busyParallelAllowed.set(true)
+                "rx_broadcast_start" -> {
+                    serverRxBroadcastActive.set(true)
+                    if (obj.has("busyMode")) {
+                        busyMode = obj.getBoolean("busyMode")
+                    }
+                    broadcastStatus(currentSignalByte())
+                }
+                "rx_broadcast_end" -> {
+                    serverRxBroadcastActive.set(false)
+                    broadcastStatus(currentSignalByte())
+                }
+                "ptt_lock" -> {
+                    forceAbortAllOutgoingForPttLock()
+                    serverPttLocked.set(true)
+                    pttLockDisplaySec.set(obj.optInt("displaySec", 0).coerceAtLeast(0))
+                    schedulePttLockDisplayTicks()
+                    broadcastStatus(currentSignalByte())
+                }
+                "ptt_unlock" -> {
+                    stopPttLockDisplayTicks()
+                    serverPttLocked.set(false)
+                    pttLockDisplaySec.set(0)
+                    pendingRxCodecReinit.set(true)
                     broadcastStatus(currentSignalByte())
                 }
             }
@@ -852,7 +859,6 @@ class WalkieService : Service() {
             callSignalJob = null
         }
         releaseVoiceProfileIfIdle()
-        scheduleRxResumeHoldoff()
         broadcastStatus(currentSignalByte())
     }
 
@@ -926,7 +932,6 @@ class WalkieService : Service() {
             callSignalJob?.cancel()
             callSignalJob = null
         }
-        scheduleRxResumeHoldoff()
         releaseVoiceProfileIfIdle()
         sessionId.set(0L)
         synchronized(udpSocketLock) {
@@ -1001,17 +1006,6 @@ class WalkieService : Service() {
                         }
                     }
                     if (packet.length <= 9) continue
-                    if (busyMode) {
-                        val prevNs = busyLastRxAtNs.get()
-                        val gapNs = if (prevNs == 0L) Long.MAX_VALUE else (nowNs - prevNs)
-                        busyLastRxAtNs.set(nowNs)
-                        val holdNs = BUSY_RX_HOLD_MS * 1_000_000L
-                        if (gapNs > holdNs) {
-                            busyWindowStartedAtNs.set(nowNs)
-                            busyParallelAllowed.set(false)
-                            broadcastStatus(currentSignalByte())
-                        }
-                    }
                     onUdpKeepaliveAck(nowNs)
                     val previousInboundNs = lastInboundUdpAtNs.getAndSet(nowNs)
                     if (previousInboundNs > 0L && nowNs > previousInboundNs) {
@@ -1021,7 +1015,7 @@ class WalkieService : Service() {
                     if (txActive) {
                         lastRxDuringParallelTxNs.set(nowNs)
                     }
-                    if (transmitting.get() || rogerStreaming.get() || callStreaming.get() || isRxHoldoffActive()) {
+                    if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
                         // During local TX we intentionally drop inbound audio
                         // to avoid hearing server stream in parallel with speaking.
                         pendingRxCodecReinit.set(true)
@@ -1175,7 +1169,7 @@ class WalkieService : Service() {
     }
 
     private fun onPttPress() {
-        if (isPttStartBlockedByBusyMode()) return
+        if (serverPttLocked.get()) return
         rogerJob?.cancel()
         rogerJob = null
         rogerStreaming.set(false)
@@ -1199,9 +1193,15 @@ class WalkieService : Service() {
         localPttPressPlaybackJob = serviceScope.launch(Dispatchers.IO) {
             playLocalSignalPcm(localPttPressPcm, LOCAL_PLAYBACK_SAMPLE_RATE, 0.0)
         }
-        if (!txLoopRunning.compareAndSet(false, true)) return
+        if (!txLoopRunning.compareAndSet(false, true)) {
+            transmitting.set(false)
+            broadcastStatus(currentSignalByte())
+            return
+        }
         if (txJob?.isActive == true) {
             txLoopRunning.set(false)
+            transmitting.set(false)
+            broadcastStatus(currentSignalByte())
             return
         }
         txJob = serviceScope.launch(Dispatchers.Default) {
@@ -1218,7 +1218,6 @@ class WalkieService : Service() {
         if (!transmitting.getAndSet(false)) return
         stopTxCountdownFromServer()
         recordPttReleaseBurstGuard()
-        scheduleRxResumeHoldoff()
         if (rogerStreaming.getAndSet(true)) return
         localRogerPlaybackJob?.cancel()
         rogerJob = serviceScope.launch(Dispatchers.Default) {
@@ -1232,7 +1231,6 @@ class WalkieService : Service() {
                 streamRogerBeep(rogerPcm)
                 sendTxEof()
             } finally {
-                scheduleRxResumeHoldoff()
                 rogerStreaming.set(false)
                 releaseVoiceProfileIfIdle()
                 drainPendingUdpNetworkRecreate()
@@ -1241,6 +1239,7 @@ class WalkieService : Service() {
     }
 
     private fun onCallSignal() {
+        if (serverPttLocked.get()) return
         if (transmitting.get() || rogerStreaming.get()) return
         if (callStreaming.getAndSet(true)) return
         lastRxDuringParallelTxNs.set(0L)
@@ -1256,7 +1255,6 @@ class WalkieService : Service() {
                 streamGeneratedSignal(callPcm)
                 sendTxEof()
             } finally {
-                scheduleRxResumeHoldoff()
                 callStreaming.set(false)
                 releaseVoiceProfileIfIdle()
                 drainPendingUdpNetworkRecreate()
@@ -1338,7 +1336,11 @@ class WalkieService : Service() {
             source = MediaRecorder.AudioSource.MIC,
             frameSamples = frameSamples,
             minBuffer = minBuffer,
-        ) ?: return@withContext
+        ) ?: run {
+            transmitting.set(false)
+            broadcastStatus(currentSignalByte())
+            return@withContext
+        }
         disableRecordPreprocessing(recorder.audioSessionId)
 
         val readBuffer = ShortArray(frameSamples)
@@ -1657,8 +1659,6 @@ class WalkieService : Service() {
                 // auto-applies when headset connects and auto-falls back when disconnected.
                 enforceAudioRoutePolicy()
                 val signal = currentSignalByte()
-                updateBusyRxState()
-                updateRxActiveState()
                 broadcastStatus(signal)
                 val loopDelayMs = if (activityFocused) {
                     SIGNAL_POLL_INTERVAL_FOREGROUND_MS
@@ -1737,63 +1737,61 @@ class WalkieService : Service() {
         }
     }
 
-    private fun updateBusyRxState() {
-        if (!busyMode) {
-            resetBusyRuntimeState()
-            return
-        }
-        val holdNs = BUSY_RX_HOLD_MS * 1_000_000L
-        val last = busyLastRxAtNs.get()
-        val active = last != 0L && (System.nanoTime() - last) <= holdNs
-        busyRxActive.set(active)
-        if (!active) {
-            busyParallelAllowed.set(false)
-            busyWindowStartedAtNs.set(0L)
-        }
+    private fun clearServerSessionControlState() {
+        stopPttLockDisplayTicks()
+        serverRxBroadcastActive.set(false)
+        serverPttLocked.set(false)
+        pttLockDisplaySec.set(0)
     }
 
-    private fun resetBusyRuntimeState() {
-        busyRxActive.set(false)
-        busyLastRxAtNs.set(0L)
-        busyParallelAllowed.set(false)
-        busyWindowStartedAtNs.set(0L)
+    private fun stopPttLockDisplayTicks() {
+        pttLockDisplayTickRunnable?.let { mainHandler.removeCallbacks(it) }
+        pttLockDisplayTickRunnable = null
     }
 
-    /**
-     * Same condition as MainActivity `blockedByBusyMode` for starting PTT: on-screen button is disabled,
-     * but hardware / media / external intents must also respect busy here.
-     */
-    private fun isPttStartBlockedByBusyMode(): Boolean {
-        if (!busyMode) return false
-        if (!busyRxActive.get()) return false
-        if (busyParallelAllowed.get()) return false
-        val anyOutgoing = transmitting.get() || rogerStreaming.get() || callStreaming.get()
-        if (anyOutgoing) return false
-        return true
+    private fun schedulePttLockDisplayTicks() {
+        stopPttLockDisplayTicks()
+        val tick = object : Runnable {
+            override fun run() {
+                if (!serverPttLocked.get()) return
+                val v = pttLockDisplaySec.get()
+                if (v <= 0) return
+                pttLockDisplaySec.set(v - 1)
+                broadcastStatus(currentSignalByte())
+                pttLockDisplayTickRunnable = this
+                mainHandler.postDelayed(this, 1000L)
+            }
+        }
+        pttLockDisplayTickRunnable = tick
+        mainHandler.postDelayed(tick, 1000L)
     }
 
-    private fun busyUnlockRemainingSec(): Int {
-        if (!busyMode || busyTimeoutSec <= 0 || busyParallelAllowed.get() || !busyRxActive.get()) {
-            return 0
+    private fun forceAbortAllOutgoingForPttLock() {
+        stopTxCountdownFromServer()
+        val hadStream = transmitting.get() || rogerStreaming.get() || callStreaming.get()
+        if (transmitting.get()) {
+            transmitting.set(false)
+            txJob?.cancel()
+            txLoopRunning.set(false)
         }
-        val startedAt = busyWindowStartedAtNs.get()
-        if (startedAt <= 0L) {
-            return busyTimeoutSec
+        if (rogerStreaming.getAndSet(false)) {
+            rogerJob?.cancel()
+            rogerJob = null
         }
-        val timeoutNs = busyTimeoutSec * 1_000_000_000L
-        val elapsedNs = (System.nanoTime() - startedAt).coerceAtLeast(0L)
-        val remainingNs = timeoutNs - elapsedNs
-        if (remainingNs <= 0L) {
-            return 0
+        if (callStreaming.getAndSet(false)) {
+            callSignalJob?.cancel()
+            callSignalJob = null
         }
-        return ((remainingNs + 999_999_999L) / 1_000_000_000L).toInt()
-    }
-
-    private fun updateRxActiveState() {
-        val holdNs = (currentPacketMs().coerceAtLeast(DEFAULT_PACKET_MS) * 2L) * 1_000_000L
-        val lastWrite = lastRxAudiblePlaybackWriteNs.get()
-        val active = lastWrite != 0L && (System.nanoTime() - lastWrite) <= holdNs
-        rxActive.set(active)
+        localRogerPlaybackJob?.cancel()
+        localRogerPlaybackJob = null
+        localCallPlaybackJob?.cancel()
+        localCallPlaybackJob = null
+        localPttPressPlaybackJob?.cancel()
+        localPttPressPlaybackJob = null
+        if (hadStream) {
+            sendTxEof()
+        }
+        releaseVoiceProfileIfIdle()
     }
 
     private fun broadcastStatus(signal: Int) {
@@ -1811,11 +1809,9 @@ class WalkieService : Service() {
             putExtra(EXTRA_UDP_READY, udpSocket?.isClosed == false)
             putExtra(EXTRA_PROTOCOL_ERROR, protocolError)
             putExtra(EXTRA_BUSY_MODE, busyMode)
-            putExtra(EXTRA_BUSY_RX_ACTIVE, busyRxActive.get())
-            putExtra(EXTRA_BUSY_TIMEOUT_SEC, busyTimeoutSec)
-            putExtra(EXTRA_BUSY_PARALLEL_ALLOWED, busyParallelAllowed.get())
-            putExtra(EXTRA_BUSY_UNLOCK_IN_SEC, busyUnlockRemainingSec())
-            putExtra(EXTRA_RX_ACTIVE, rxActive.get())
+            putExtra(EXTRA_PTT_SERVER_LOCKED, serverPttLocked.get())
+            putExtra(EXTRA_PTT_LOCK_DISPLAY_SEC, pttLockDisplaySec.get().coerceAtLeast(0))
+            putExtra(EXTRA_RX_ACTIVE, serverRxBroadcastActive.get())
             putExtra(EXTRA_TX_ACTIVE, transmitting.get() || rogerStreaming.get() || callStreaming.get())
             putExtra(EXTRA_PARALLEL_TX_COLLISION, parallelTxCollisionActive.get())
             putExtra(EXTRA_CALL_ACTIVE, callStreaming.get())
@@ -2062,13 +2058,6 @@ class WalkieService : Service() {
 
     private fun currentPacketMs(): Int = normalizePacketMs(packetMs)
 
-    private fun scheduleRxResumeHoldoff(multiplier: Int = 2) {
-        val holdMs = (currentPacketMs() * multiplier).coerceAtLeast(currentPacketMs())
-        rxResumeAtNs.set(System.nanoTime() + (holdMs * 1_000_000L))
-    }
-
-    private fun isRxHoldoffActive(): Boolean = System.nanoTime() < rxResumeAtNs.get()
-
     private fun currentFrameSamples(): Int = (currentCodecSampleRate() * currentPacketMs()) / 1000
 
     private fun resolveHost(host: String): InetAddress? {
@@ -2162,7 +2151,8 @@ class WalkieService : Service() {
         return pttHardwareKeyStore.isToggleModeEnabled() &&
             pttHardwareKeyStore.isMediaButtonPttEnabled() &&
             isRelaySessionReady() &&
-            !protocolError
+            !protocolError &&
+            !serverPttLocked.get()
     }
 
     private fun handleMediaButtonPttToggle() {
@@ -2307,9 +2297,7 @@ class WalkieService : Service() {
         channelBound = false
         protocolError = false
         busyMode = false
-        busyTimeoutSec = 0
-        resetBusyRuntimeState()
-        rxActive.set(false)
+        clearServerSessionControlState()
         lastInboundUdpAtNs.set(0L)
         lastRxDuringParallelTxNs.set(0L)
         parallelTxCollisionActive.set(false)

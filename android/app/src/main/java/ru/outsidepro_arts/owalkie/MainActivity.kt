@@ -83,10 +83,8 @@ class MainActivity : ComponentActivity() {
     private var lastSignalPercent = 0
     private var protocolIncompatible = false
     private var busyModeEnabled = false
-    private var busyRxActive = false
-    private var busyTimeoutSec = 0
-    private var busyParallelAllowed = false
-    private var busyUnlockInSec = 0
+    private var serverPttLocked = false
+    private var pttLockDisplaySec = 0
     private var pttBurstPressBlocked = false
     private var rxActive = false
     private var parallelTxCollision = false
@@ -118,10 +116,8 @@ class MainActivity : ComponentActivity() {
             val prevProtocolIncompatible = protocolIncompatible
             protocolIncompatible = intent.getBooleanExtra(WalkieService.EXTRA_PROTOCOL_ERROR, false)
             busyModeEnabled = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_MODE, false)
-            busyRxActive = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_RX_ACTIVE, false)
-            busyTimeoutSec = intent.getIntExtra(WalkieService.EXTRA_BUSY_TIMEOUT_SEC, 0).coerceAtLeast(0)
-            busyParallelAllowed = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_PARALLEL_ALLOWED, false)
-            busyUnlockInSec = intent.getIntExtra(WalkieService.EXTRA_BUSY_UNLOCK_IN_SEC, 0).coerceAtLeast(0)
+            serverPttLocked = intent.getBooleanExtra(WalkieService.EXTRA_PTT_SERVER_LOCKED, false)
+            pttLockDisplaySec = intent.getIntExtra(WalkieService.EXTRA_PTT_LOCK_DISPLAY_SEC, 0).coerceAtLeast(0)
             pttBurstPressBlocked = intent.getBooleanExtra(WalkieService.EXTRA_PTT_BURST_PRESS_BLOCKED, false)
             rxActive = intent.getBooleanExtra(WalkieService.EXTRA_RX_ACTIVE, false)
             parallelTxCollision = intent.getBooleanExtra(WalkieService.EXTRA_PARALLEL_TX_COLLISION, false)
@@ -301,17 +297,12 @@ class MainActivity : ComponentActivity() {
         // Configuration change runs onStop/onStart on a new Activity instance; do not send PTT_RELEASE
         // or the service drops toggle-mode TX while the user only rotated the device.
         if (!isChangingConfigurations) {
-            // If touch sequence is interrupted (app backgrounded/system overlay), ACTION_UP may never arrive.
-            // Force TX release to prevent stuck PTT state.
-            if (holdPttFingerDown) {
-                holdPttFingerDown = false
-                sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
-                binding.callButton.isEnabled = wsConnected
-                updatePttLabel()
-                updateStatusChips()
-            } else {
-                stopTransmitUi()
-            }
+            // Background / interrupted touch / toggle: ensure service does not keep TX without ACTION_UP.
+            holdPttFingerDown = false
+            sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
+            binding.callButton.isEnabled = wsConnected
+            updatePttLabel()
+            updateStatusChips()
         }
         // Orientation recreation is not a real background transition; avoid toggling
         // service focus state which can disturb active network/session timing.
@@ -423,6 +414,7 @@ class MainActivity : ComponentActivity() {
     private fun startTransmitUi() {
         if (transmitting) return
         if (!wsConnected) return
+        if (serverPttLocked) return
         sendServiceAction(WalkieService.ACTION_PTT_PRESS)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         binding.callButton.isEnabled = false
@@ -465,12 +457,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updatePttLabel() {
-        val blockedByBusyMode = busyModeEnabled && busyRxActive && !busyParallelAllowed && !transmitting
+        val blockedByServerPtt = serverPttLocked && !transmitting
         if (!binding.pttButton.isEnabled) {
-            if (blockedByBusyMode && busyTimeoutSec > 0) {
-                val sec = busyUnlockInSec.coerceAtLeast(0)
-                binding.pttButton.text = getString(R.string.ptt_busy_timeout_countdown, sec)
-                binding.pttButton.contentDescription = getString(R.string.ptt_busy_timeout_countdown_accessibility, sec)
+            if (blockedByServerPtt && pttLockDisplaySec > 0) {
+                binding.pttButton.text = getString(R.string.ptt_busy_timeout_countdown, pttLockDisplaySec)
+                binding.pttButton.contentDescription = getString(R.string.ptt_busy_timeout_countdown_accessibility, pttLockDisplaySec)
             } else {
                 binding.pttButton.text = getString(R.string.ptt_unavailable)
                 binding.pttButton.contentDescription = getString(R.string.ptt_unavailable)
@@ -1155,8 +1146,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updatePttAvailability() {
-        val blockedByBusyMode = busyModeEnabled && busyRxActive && !busyParallelAllowed && !transmitting
-        val enabled = wsConnected && !blockedByBusyMode && !pttBurstPressBlocked
+        val enabled = wsConnected && !serverPttLocked && !pttBurstPressBlocked
         binding.pttButton.isEnabled = enabled
         binding.callButton.isEnabled = enabled && !transmitting
         binding.pttButton.alpha = if (enabled) 1.0f else 0.5f

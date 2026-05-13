@@ -51,9 +51,12 @@ go run ./cmd/relay ./config.json
 
 Server -> client:
 
-- `{"type":"welcome","sessionId":123,"packetMs":20,"sampleRate":8000,"opus":{"bitrate":12000,"complexity":5,"fec":true,"dtx":false,"application":"voip"},"protocolVersion":2}`
-  - includes `busyMode: true|false` and `busyTimeoutSec` so clients can lock PTT and display unlock countdown
-- `{"type":"busy_timeout_elapsed"}` busy-mode timeout elapsed; parallel TX may start now
+- `{"type":"welcome","sessionId":123,"packetMs":20,"sampleRate":8000,"opus":{"bitrate":12000,"complexity":5,"fec":true,"dtx":false,"application":"voip"},"protocolVersion":2,"busyMode":true|false,"transmitTimeoutSec":60}`
+  - `busyMode` indicates server busy feature (UI hint); **PTT lock/unlock** is driven only by `ptt_lock` / `ptt_unlock` WebSocket messages (not client-side RX heuristics). Server busy-hold duration is configured on the relay but is **not** exposed as `busyTimeoutSec` in `welcome` for current clients.
+- `{"type":"rx_broadcast_start","busyMode":true|false}` first outbound mixed UDP frame to the channel after idle; `busyMode` mirrors server config for optional UI.
+- `{"type":"rx_broadcast_end","endDelayMs":…}` outbound mix idle for at least the server EOF/hold guard (`endDelayMs` ≈ configured idle window in ms).
+- `{"type":"ptt_lock","displaySec":N}` server forbids starting any TX path (UI/hotkey/signals); `displaySec` is **UI-only** (decorative countdown); clients must **not** auto-unlock when it reaches zero — wait for `ptt_unlock`. `ptt_unlock` is sent when the outbound mixed-audio burst ends (`rx_broadcast_end` / idle guard), clearing the lock that was tied to that burst. If `server.busy_timeout` > 0, an **additional** `ptt_unlock` may be sent from the uplink busy-hold path when parallel TX becomes allowed (same moment clients used to treat as `busy_timeout_elapsed`).
+- `{"type":"ptt_unlock"}` server allows PTT again.
 - `{"type":"tx_stop","info":"transmit_timeout_reached"}` server-enforced stop for overlong TX
 - `{"type":"joined","channel":"teamA"}`
 - `{"type":"pong"}`
@@ -70,7 +73,7 @@ Client -> server:
 If the first client message does not contain a valid channel bind, server replies with `error` and closes the WebSocket session.
 
 Protocol compatibility:
-- current protocol version is `2`
+- current protocol version is `2` (additive WebSocket message types may appear without bumping the number)
 - clients must validate `welcome.protocolVersion`
 - missing or mismatched protocol version must be treated as incompatible protocol
 

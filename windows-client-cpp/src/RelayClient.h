@@ -25,6 +25,7 @@ struct WelcomeConfig {
     bool dtx = false;
     std::string application = "voip";
     bool busyMode = false;
+    /// Not sent in current `welcome` (PTT lock/unlock is WebSocket-driven). Kept for struct defaults / future use.
     int busyTimeoutSec = 0;
     /// Server PTT time limit (seconds); 0 = none. Clients default to 60 if omitted in welcome.
     int transmitTimeoutSec = 60;
@@ -37,7 +38,10 @@ public:
     using WelcomeCallback = std::function<void(const WelcomeConfig&)>;
     using OpusFrameCallback = std::function<void(const std::vector<uint8_t>&)>;
     using TxCountdownStartCallback = std::function<void()>;
-    using BusyTimeoutElapsedCallback = std::function<void()>;
+    using ServerPttLockCallback = std::function<void(int displaySec)>;
+    using ServerPttUnlockCallback = std::function<void()>;
+    using RxBroadcastStartCallback = std::function<void(bool busyMode)>;
+    using RxBroadcastEndCallback = std::function<void()>;
     using TxStopCallback = std::function<void()>;
     using ConnectionLostCallback = std::function<void()>;
 
@@ -62,7 +66,10 @@ public:
     void SetWelcomeCallback(WelcomeCallback cb) { onWelcome_ = std::move(cb); }
     void SetOpusFrameCallback(OpusFrameCallback cb) { onOpusFrame_ = std::move(cb); }
     void SetTxCountdownStartCallback(TxCountdownStartCallback cb) { onTxCountdownStart_ = std::move(cb); }
-    void SetBusyTimeoutElapsedCallback(BusyTimeoutElapsedCallback cb) { onBusyTimeoutElapsed_ = std::move(cb); }
+    void SetServerPttLockCallback(ServerPttLockCallback cb) { onServerPttLock_ = std::move(cb); }
+    void SetServerPttUnlockCallback(ServerPttUnlockCallback cb) { onServerPttUnlock_ = std::move(cb); }
+    void SetRxBroadcastStartCallback(RxBroadcastStartCallback cb) { onRxBroadcastStart_ = std::move(cb); }
+    void SetRxBroadcastEndCallback(RxBroadcastEndCallback cb) { onRxBroadcastEnd_ = std::move(cb); }
     void SetTxStopCallback(TxStopCallback cb) { onTxStop_ = std::move(cb); }
     void SetConnectionLostCallback(ConnectionLostCallback cb) { onConnectionLost_ = std::move(cb); }
 
@@ -109,7 +116,10 @@ private:
     WelcomeCallback onWelcome_;
     OpusFrameCallback onOpusFrame_;
     TxCountdownStartCallback onTxCountdownStart_;
-    BusyTimeoutElapsedCallback onBusyTimeoutElapsed_;
+    ServerPttLockCallback onServerPttLock_;
+    ServerPttUnlockCallback onServerPttUnlock_;
+    RxBroadcastStartCallback onRxBroadcastStart_;
+    RxBroadcastEndCallback onRxBroadcastEnd_;
     TxStopCallback onTxStop_;
     ConnectionLostCallback onConnectionLost_;
 };

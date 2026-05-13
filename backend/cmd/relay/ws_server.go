@@ -57,7 +57,6 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		},
 		ProtocolVersion: protocolVersion,
 		BusyMode:        boolPtr(s.hub.cfg.Server.BusyMode),
-		BusyTimeoutSec:  intPtr(maxInt(s.hub.cfg.Server.BusyTimeoutSec, 0)),
 		TransmitTimeout: intPtr(maxInt(s.hub.cfg.Server.TransmitTimeoutSec, 0)),
 	})
 
@@ -100,6 +99,7 @@ func (s *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.hub.switchChannel(c, initialChannel)
 	_ = c.writeJSON(wsServerMessage{Type: "joined", Channel: initialChannel})
+	s.hub.syncChannelWsSessionToClient(c)
 
 	for {
 		var msg wsMessage
