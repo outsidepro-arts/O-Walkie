@@ -17,7 +17,7 @@
     "jitter_adapt_enabled": true,
     "jitter_max_packets": 10,
     "busy_mode": true,
-    "busy_timeout": 2,
+    "busy_timeout": 5,
     "transmit_timeout": 60
   },
   "modules": {
