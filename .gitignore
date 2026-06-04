@@ -4,6 +4,14 @@ local.properties
 **/build/
 **/.DS_Store
 
+# CMake / Ninja local out-of-tree dirs (owalkie-core, etc.)
+**/build-debug/
+**/build-release/
+
+# Android Gradle external native build (NDK + CMake cache)
+**/.cxx/
+**/.externalNativeBuild/
+
 # Go
 backend/bin/
 backend/.cache/
@@ -25,9 +33,11 @@ android/keystore/
 # Release artifacts
 release/
 
-# C++ desktop client local build
+# C++ desktop client local build (build-debug/release covered by **/build-* above)
 windows-client-cpp/build/
 windows-client-cpp/build-*/
+owalkie-core/build/
+owalkie-core/build-*/
 windows-client-cpp/*.exe
 windows-client-cpp/*.dll
 debug-*.log
