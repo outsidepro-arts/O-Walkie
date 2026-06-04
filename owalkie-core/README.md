@@ -22,12 +22,19 @@ Options:
 Public header: `include/owalkie_core.h`
 
 - **Utilities** (always available): protocol normalize, JSON parse (welcome/server messages), signal PCM, UDP pack/unpack. Outbound WS wire messages (`join`, `udp_hello`, …) are built inside the session only.
-- **Managed session** (when `OWALKIE_CORE_HAS_SESSION` is defined): `owalkie_connect`, TX/RX PCM, `owalkie_get_session_info`, repeater mode, `punch_nat`
+- **Managed session** (when `OWALKIE_CORE_HAS_SESSION` is defined): `owalkie_connect`, TX/RX PCM, `owalkie_get_session_info`, `owalkie_set_repeater_mode`, `owalkie_set_power_profile`, `owalkie_punch_nat`
+
+`owalkie_connect` requires `on_session_event`; `on_rx_pcm` is optional.
 
 Callbacks:
 
-- `on_rx_pcm` — decoded PCM frames from relay
-- `on_session_event` — `Ready`, `Disconnected`, `ConnectFailed`, `ProtocolError`, RX broadcast start/end, PTT lock/unlock, TX countdown/stop (transport steps are internal)
+- `on_rx_pcm` — decoded PCM from relay (Opus decode is inside core)
+- `on_session_event` — public `owalkie_event_type` values only (connecting, welcome, UDP hello/ready/lost, local TX, etc. stay internal):
+  - `OWALKIE_EV_READY`, `DISCONNECTED`, `PROTOCOL_ERROR`, `CONNECT_FAILED`
+  - `RX_BROADCAST_START` / `RX_BROADCAST_END`, `PTT_LOCKED` / `PTT_UNLOCKED`
+  - `TX_COUNTDOWN_START`, `TX_STOP`
+
+Lifecycle: `owalkie_disconnect`, `owalkie_disconnect_all`, `owalkie_disconnect_all_and_wait` (app exit), `owalkie_session_id_valid`, `owalkie_session_id_ready`.
 
 ### UDP keepalive
 
@@ -58,11 +65,7 @@ owalkie_push_tx_pcm(session_id, pcm_samples, sample_count);
 owalkie_tx_end(session_id);  // UDP EOF burst + local TX end
 ```
 
-Uplink signal byte comes from `owalkie_report_signal` / `owalkie_get_uplink_signal_byte()`.
-
-Managed RX delivers decoded PCM via `on_rx_pcm` (not Opus).
-
-After `OWALKIE_EV_READY`, read negotiated parameters with `owalkie_get_session_info` (no JSON round-trip).
+After `OWALKIE_EV_READY`, prefer `owalkie_get_session_info` for welcome/transport flags (Android JNI uses this; no JSON round-trip). The ready event may still carry `u.welcome.config`, but string pointers are only valid for the callback.
 
 Roger/Call tones are generated client-side via `owalkie_signal_generate_pcm`; the library does not send them automatically.
 
@@ -70,8 +73,13 @@ Roger/Call tones are generated client-side via `owalkie_signal_generate_pcm`; th
 
 Current `protocolVersion` is **2** (`OWALKIE_PROTOCOL_VERSION`).
 
-TLS (`use_tls`) is not implemented yet; `owalkie_session_connect` returns `OWALKIE_ERR_UNSUPPORTED`.
+TLS is not implemented: `owalkie_connect` with `use_tls != 0` or a `wss://` host fails during connect (`Result::Unsupported` / invalid session id).
+
+## Integrations
+
+- **Android** — always native relay via `libowalkie_jni.so` → owalkie-core; see [`android/README-ndk.md`](../android/README-ndk.md).
+- **Windows** — `windows-client-cpp` uses managed sessions + PCM `AudioEngine` / `RelayClient`.
 
 ## Status
 
-v0.1.0 — initial utilities + session port from `windows-client-cpp/src/RelayClient.cpp`. Android JNI and Windows client integration are planned next.
+Library version string: **0.1.0** (`owalkie_version_string`). Repo changelog may be ahead of the embedded version until the next core release tag.
