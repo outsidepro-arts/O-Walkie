@@ -92,6 +92,8 @@ class MainActivity : ComponentActivity() {
     private var userRequestedConnection = false
     private var suppressSpinnerReconnect = false
     private var skipNextConnectedTone = false
+    /** Intentional server profile switch tears down transport; do not play link-loss error tones. */
+    private var suppressTransientConnectionErrorTone = false
     /** Hold-to-talk: finger is down; release must send PTT_RELEASE even if STATUS has not arrived yet. */
     private var holdPttFingerDown = false
     private var rxVolumeTouchTracking = false
@@ -132,16 +134,27 @@ class MainActivity : ComponentActivity() {
                 }
             } else if (!prevProtocolIncompatible && protocolIncompatible) {
                 uiSignalPlayer.playConnectionError()
-            } else if (
-                userRequestedConnection &&
-                prevConnecting &&
-                !wsConnecting &&
-                !wsConnected &&
-                !relayPausedForPhoneCall
-            ) {
-                uiSignalPlayer.playConnectionError()
-            } else if (userRequestedConnection && prevConnected && !wsConnected && !relayPausedForPhoneCall) {
-                uiSignalPlayer.playConnectionError()
+            } else if (!suppressTransientConnectionErrorTone) {
+                if (
+                    userRequestedConnection &&
+                    prevConnecting &&
+                    !wsConnecting &&
+                    !wsConnected &&
+                    !relayPausedForPhoneCall
+                ) {
+                    uiSignalPlayer.playConnectionError()
+                } else if (
+                    userRequestedConnection &&
+                    prevConnected &&
+                    !wsConnected &&
+                    !relayPausedForPhoneCall
+                ) {
+                    uiSignalPlayer.playConnectionError()
+                }
+            }
+
+            if (wsConnected) {
+                suppressTransientConnectionErrorTone = false
             }
 
             updateStatusChips()
@@ -875,8 +888,9 @@ class MainActivity : ComponentActivity() {
         uiSignalPlayer.playSwitch()
         if (wsConnecting || wsConnected || (userRequestedConnection && relayPausedForPhoneCall)) {
             userRequestedConnection = false
+            suppressTransientConnectionErrorTone = false
             uiSignalPlayer.playManualDisconnect()
-            sendServiceAction(WalkieService.ACTION_DISCONNECT_AND_STOP)
+            sendServiceAction(WalkieService.ACTION_CANCEL_CONNECT)
             wsConnecting = false
             wsConnected = false
             protocolIncompatible = false
@@ -1250,25 +1264,24 @@ class MainActivity : ComponentActivity() {
     private fun reconnectToSelectedServerIfRequested() {
         if (!userRequestedConnection) return
         val profile = servers.getOrNull(selectedServerIndex) ?: return
+        suppressTransientConnectionErrorTone = true
 
-        // Explicit reconnect flow: disconnect current session first, then start selected one.
-        sendServiceAction(WalkieService.ACTION_CANCEL_CONNECT)
-        wsConnecting = false
+        val intent = Intent(this, WalkieService::class.java).apply {
+            action = WalkieService.ACTION_SWITCH_SERVER
+            putExtra(WalkieService.EXTRA_SERVER_HOST, profile.host)
+            putExtra(WalkieService.EXTRA_SERVER_PORT, profile.port)
+            putExtra(WalkieService.EXTRA_CHANNEL, profile.channel)
+            putExtra(WalkieService.EXTRA_REPEATER_ENABLED, repeaterModeEnabled)
+            putExtra(WalkieService.EXTRA_RX_VOLUME_PERCENT, rxVolumeStore.getPercent())
+            putExtra(WalkieService.EXTRA_USE_BLUETOOTH_HEADSET, bluetoothHeadsetRouteStore.isEnabled())
+        }
+        ContextCompat.startForegroundService(this, intent)
+        wsConnecting = true
         wsConnected = false
         protocolIncompatible = false
         updateConnectButtonLabel()
         updatePttAvailability()
         updateStatusChips()
-
-        binding.root.postDelayed({
-            startWalkieService(profile)
-            wsConnecting = true
-            wsConnected = false
-            protocolIncompatible = false
-            updateConnectButtonLabel()
-            updatePttAvailability()
-            updateStatusChips()
-        }, 150L)
     }
 
     private fun applySelectedServerIndex(index: Int, announce: Boolean) {

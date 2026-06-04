@@ -6,11 +6,13 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "owalkie/json.hpp"
 #include "owalkie/protocol.hpp"
 #include "owalkie/session.hpp"
+#include "owalkie/session_manager.hpp"
 #include "owalkie/signal.hpp"
 #include "owalkie/udp.hpp"
 
@@ -36,6 +38,10 @@ owalkie_result toC(owalkie::Result r) {
             return OWALKIE_ERR_UNSUPPORTED;
         case owalkie::Result::BufferTooSmall:
             return OWALKIE_ERR_BUFFER_TOO_SMALL;
+        case owalkie::Result::NotReady:
+            return OWALKIE_ERR_NOT_READY;
+        case owalkie::Result::NoEvent:
+            return OWALKIE_OK;
     }
     return OWALKIE_ERR_INTERNAL;
 }
@@ -75,6 +81,10 @@ owalkie_event_type toC(owalkie::EventType t) {
             return OWALKIE_EV_CONNECTING;
         case owalkie::EventType::Connected:
             return OWALKIE_EV_CONNECTED;
+        case owalkie::EventType::ConnectFailed:
+            return OWALKIE_EV_CONNECT_FAILED;
+        case owalkie::EventType::SessionReady:
+            return OWALKIE_EV_SESSION_READY;
         case owalkie::EventType::Disconnected:
             return OWALKIE_EV_DISCONNECTED;
         case owalkie::EventType::ProtocolError:
@@ -103,6 +113,45 @@ owalkie_event_type toC(owalkie::EventType t) {
             return OWALKIE_EV_UDP_TRANSPORT_LOST;
     }
     return OWALKIE_EV_CONNECTING;
+}
+
+void fillManagedEventC(
+    const owalkie::Event& ev,
+    owalkie_event& cev,
+    std::string& scratch) {
+    std::memset(&cev, 0, sizeof(cev));
+    cev.type = toC(ev.type);
+    switch (ev.type) {
+        case owalkie::EventType::Welcome:
+        case owalkie::EventType::SessionReady:
+            fillWelcomeC(ev.welcome, cev.u.welcome.config, scratch);
+            break;
+        case owalkie::EventType::RxBroadcastStart:
+            cev.u.rx_broadcast_start.busy_mode = ev.rxBusyMode ? 1 : 0;
+            break;
+        case owalkie::EventType::RxBroadcastEnd:
+            cev.u.rx_broadcast_end.end_delay_ms = ev.rxEndDelayMs;
+            break;
+        case owalkie::EventType::PttLocked:
+            cev.u.ptt_locked.display_sec = ev.pttDisplaySec;
+            break;
+        case owalkie::EventType::TxStop:
+            scratch = ev.txStopInfo;
+            cev.u.tx_stop.info = scratch.c_str();
+            break;
+        case owalkie::EventType::ProtocolError:
+            scratch = ev.protocolError;
+            cev.u.protocol_error.message = scratch.c_str();
+            break;
+        case owalkie::EventType::ConnectFailed:
+        case owalkie::EventType::Disconnected:
+            cev.u.disconnected.code = ev.disconnectCode;
+            scratch = ev.disconnectReason;
+            cev.u.disconnected.reason = scratch.empty() ? nullptr : scratch.c_str();
+            break;
+        default:
+            break;
+    }
 }
 
 struct SessionWrapper {
@@ -177,6 +226,10 @@ owalkie_result owalkie_json_parse_server_message(
     owalkie::Event ev{};
     const auto text = std::string_view(json_text, json_len == 0 ? std::strlen(json_text) : json_len);
     const owalkie::Result r = owalkie::json::parseServerMessage(text, ev);
+    if (r == owalkie::Result::NoEvent) {
+        std::memset(out_event, 0, sizeof(*out_event));
+        return OWALKIE_OK;
+    }
     if (r != owalkie::Result::Ok) {
         return toC(r);
     }
@@ -418,6 +471,204 @@ int owalkie_udp_is_tx_eof_marker(const uint8_t* buf, size_t len) {
 
 #ifdef OWALKIE_CORE_HAS_SESSION
 
+namespace {
+
+struct ManagedBridge {
+    owalkie_managed_callbacks cbs{};
+    std::string eventScratch;
+};
+
+std::mutex g_managedBridgeMu;
+std::unordered_map<owalkie::SessionId, std::shared_ptr<ManagedBridge>> g_managedBridges;
+
+owalkie::SessionCallbacks makeManagedSessionCallbacks(const std::shared_ptr<ManagedBridge>& bridge) {
+    owalkie::SessionCallbacks sessionCbs{};
+    sessionCbs.onRxOpus = [bridge](std::span<const uint8_t> opus) {
+        if (!bridge->cbs.on_rx_opus || opus.empty()) {
+            return;
+        }
+        owalkie::SessionId sid = owalkie::kInvalidSessionId;
+        {
+            std::lock_guard<std::mutex> lock(g_managedBridgeMu);
+            for (const auto& entry : g_managedBridges) {
+                if (entry.second.get() == bridge.get()) {
+                    sid = entry.first;
+                    break;
+                }
+            }
+        }
+        if (sid == owalkie::kInvalidSessionId) {
+            return;
+        }
+        bridge->cbs.on_rx_opus(
+            bridge->cbs.user_data,
+            sid,
+            opus.data(),
+            opus.size());
+    };
+    sessionCbs.onSessionEvent = [bridge](const owalkie::Event& ev) {
+        if (!bridge->cbs.on_session_event) {
+            return;
+        }
+        owalkie::SessionId sid = owalkie::kInvalidSessionId;
+        {
+            std::lock_guard<std::mutex> lock(g_managedBridgeMu);
+            for (const auto& entry : g_managedBridges) {
+                if (entry.second.get() == bridge.get()) {
+                    sid = entry.first;
+                    break;
+                }
+            }
+        }
+        if (sid == owalkie::kInvalidSessionId) {
+            return;
+        }
+        owalkie_event cev{};
+        fillManagedEventC(ev, cev, bridge->eventScratch);
+        bridge->cbs.on_session_event(bridge->cbs.user_data, sid, &cev);
+        if (ev.type == owalkie::EventType::ConnectFailed ||
+            ev.type == owalkie::EventType::Disconnected ||
+            ev.type == owalkie::EventType::ProtocolError) {
+            std::lock_guard<std::mutex> lock(g_managedBridgeMu);
+            g_managedBridges.erase(sid);
+        }
+    };
+    return sessionCbs;
+}
+
+} // namespace
+
+owalkie_session_id owalkie_connect(
+    const owalkie_connect_params* params,
+    const owalkie_managed_callbacks* callbacks) {
+    if (!params || !params->host || !callbacks || !callbacks->on_session_event) {
+        return owalkie_invalid_session_id();
+    }
+
+    auto bridge = std::make_shared<ManagedBridge>();
+    bridge->cbs = *callbacks;
+
+    owalkie::ConnectParams cpp{};
+    cpp.host = params->host;
+    cpp.port = params->port;
+    cpp.channel = params->channel ? params->channel : "global";
+    cpp.useTls = params->use_tls != 0;
+    cpp.repeaterMode = params->repeater_mode != 0;
+
+    const owalkie::SessionId id = owalkie::SessionManager::instance().connect(
+        cpp,
+        makeManagedSessionCallbacks(bridge),
+        [bridge](owalkie::SessionId allocated) {
+            std::lock_guard<std::mutex> lock(g_managedBridgeMu);
+            g_managedBridges[allocated] = bridge;
+        });
+    if (id == owalkie::kInvalidSessionId) {
+        return owalkie_invalid_session_id();
+    }
+    return id;
+}
+
+void owalkie_disconnect(owalkie_session_id session_id) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_managedBridgeMu);
+        g_managedBridges.erase(session_id);
+    }
+    owalkie::SessionManager::instance().disconnect(session_id);
+}
+
+void owalkie_disconnect_all(void) {
+    owalkie::SessionManager::instance().disconnectAll();
+}
+
+void owalkie_disconnect_all_and_wait(int timeout_ms) {
+    owalkie::SessionManager::instance().disconnectAllAndWait(timeout_ms < 0 ? 3000 : timeout_ms);
+}
+
+int owalkie_session_id_valid(owalkie_session_id session_id) {
+    return owalkie::SessionManager::instance().isValid(session_id) ? 1 : 0;
+}
+
+int owalkie_session_id_ready(owalkie_session_id session_id) {
+    return owalkie::SessionManager::instance().isSessionReady(session_id) ? 1 : 0;
+}
+
+owalkie_result owalkie_send_tx_opus(
+    owalkie_session_id session_id,
+    const uint8_t* opus,
+    size_t opus_len,
+    int signal_strength) {
+    if (session_id == owalkie_invalid_session_id() || !opus || opus_len == 0) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return toC(owalkie::SessionManager::instance().sendTxOpus(
+        session_id,
+        std::span<const uint8_t>(opus, opus_len),
+        signal_strength));
+}
+
+owalkie_result owalkie_send_tx_eof_burst(owalkie_session_id session_id) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return toC(owalkie::SessionManager::instance().sendTxEofBurst(session_id));
+}
+
+owalkie_result owalkie_set_repeater_mode(owalkie_session_id session_id, int enabled) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return toC(owalkie::SessionManager::instance().setRepeaterMode(session_id, enabled != 0));
+}
+
+owalkie_result owalkie_set_tx_signal_strength(owalkie_session_id session_id, int strength_0_255) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return toC(owalkie::SessionManager::instance().setTxSignalStrength(session_id, strength_0_255));
+}
+
+int owalkie_get_tx_signal_strength(owalkie_session_id session_id) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return 255;
+    }
+    return owalkie::SessionManager::instance().txSignalStrength(session_id);
+}
+
+void owalkie_set_power_profile(owalkie_session_id session_id, owalkie_power_profile profile) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return;
+    }
+    owalkie::PowerProfile cpp = owalkie::PowerProfile::Foreground;
+    switch (profile) {
+        case OWALKIE_POWER_BACKGROUND:
+            cpp = owalkie::PowerProfile::Background;
+            break;
+        case OWALKIE_POWER_ACTIVE_TX:
+            cpp = owalkie::PowerProfile::ActiveTx;
+            break;
+        default:
+            break;
+    }
+    owalkie::SessionManager::instance().setPowerProfile(session_id, cpp);
+}
+
+void owalkie_notify_network_changed(owalkie_session_id session_id) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return;
+    }
+    owalkie::SessionManager::instance().notifyNetworkChanged(session_id);
+}
+
+owalkie_result owalkie_reset_udp_transport(owalkie_session_id session_id) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return toC(owalkie::SessionManager::instance().resetUdpTransport(session_id));
+}
+
 owalkie_result owalkie_session_create(owalkie_session_t** out_session) {
     if (!out_session) {
         return OWALKIE_ERR_INVALID_ARG;
@@ -561,6 +812,18 @@ owalkie_result owalkie_session_feed_tx_pcm(
     return toC(wrapper->session->feedTxPcm(std::span<const int16_t>(samples, sample_count)));
 }
 
+owalkie_result owalkie_session_send_tx_opus(
+    owalkie_session_t* session,
+    const uint8_t* opus,
+    size_t opus_len,
+    int signal_strength) {
+    auto* wrapper = asWrapper(session);
+    if (!wrapper || !wrapper->session || !opus || opus_len == 0) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return toC(wrapper->session->sendTxOpus(std::span<const uint8_t>(opus, opus_len), signal_strength));
+}
+
 owalkie_result owalkie_session_send_tx_eof_burst(owalkie_session_t* session) {
     auto* wrapper = asWrapper(session);
     if (!wrapper || !wrapper->session) {
@@ -699,6 +962,9 @@ int owalkie_session_is_connected(const owalkie_session_t*) { return 0; }
 void owalkie_session_set_auto_reconnect(owalkie_session_t*, int) {}
 int owalkie_session_auto_reconnect_enabled(const owalkie_session_t*) { return 0; }
 owalkie_result owalkie_session_feed_tx_pcm(owalkie_session_t*, const int16_t*, size_t) {
+    return OWALKIE_ERR_UNSUPPORTED;
+}
+owalkie_result owalkie_session_send_tx_opus(owalkie_session_t*, const uint8_t*, size_t, int) {
     return OWALKIE_ERR_UNSUPPORTED;
 }
 owalkie_result owalkie_session_send_tx_eof_burst(owalkie_session_t*) { return OWALKIE_ERR_UNSUPPORTED; }

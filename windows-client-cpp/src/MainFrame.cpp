@@ -1743,16 +1743,21 @@ MainFrame::MainFrame(const std::string& connectUri)
         });
     });
     relay_->SetWelcomeCallback([this](const WelcomeConfig& cfg) {
-        audio_->Reconfigure(cfg);
-        busyModeEnabled_ = cfg.busyMode;
-        serverRxBroadcastActive_ = false;
-        serverPttLocked_ = false;
-        pttLockDisplaySec_ = 0;
-        StopBusyTimeoutCountdown();
-        audio_->PlayConnectedSignal();
-        RefreshPttUi();
+        this->CallAfter([this, cfg] {
+            audio_->Reconfigure(cfg);
+            busyModeEnabled_ = cfg.busyMode;
+            serverRxBroadcastActive_ = false;
+            serverPttLocked_ = false;
+            pttLockDisplaySec_ = 0;
+            StopBusyTimeoutCountdown();
+            audio_->PlayConnectedSignal();
+            RefreshPttUi();
+        });
     });
     relay_->SetOpusFrameCallback([this](const std::vector<uint8_t>& opus) {
+        if (!audio_) {
+            return;
+        }
         audio_->OnIncomingOpusFrame(opus);
     });
     relay_->SetTxCountdownStartCallback([this] { this->CallAfter([this] { StartTxCountdownFromServer(); }); });
@@ -1826,14 +1831,25 @@ MainFrame::MainFrame(const std::string& connectUri)
 }
 
 MainFrame::~MainFrame() {
+    userWantsSession_ = false;
+    reconnectScheduleTicket_.fetch_add(1, std::memory_order_relaxed);
+    reconnectAttemptInFlight_.store(false);
+    if (audio_) {
+        audio_->PrepareForExit();
+        audio_->StopTransmit();
+    }
 #ifdef _WIN32
     UninstallGlobalPttHook();
 #endif
     StopReconnectTimer();
+    if (relay_) {
+        relay_->Disconnect(false);
+    }
     SaveAudioSettings();
     SaveProfilesToDisk();
-    audio_->Shutdown();
-    relay_->Disconnect();
+    if (audio_) {
+        audio_->Shutdown();
+    }
 }
 
 #ifdef _WIN32
@@ -2454,7 +2470,7 @@ void MainFrame::OnProfileChoice(wxCommandEvent&) {
     if (TryConnectWithCurrentFields()) {
         SaveProfilesToDisk();
         SaveAudioSettings();
-        SetStatus("Connected");
+        SetStatus("Connecting...");
     } else {
         userWantsSession_ = false;
         connectBtn_->SetLabel(_("Connect"));
@@ -3028,7 +3044,7 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
     if (TryConnectWithCurrentFields()) {
         SaveProfilesToDisk();
         SaveAudioSettings();
-        SetStatus("Connected");
+        SetStatus("Connecting...");
     } else {
         userWantsSession_ = false;
         connectBtn_->SetLabel(_("Connect"));
@@ -3123,7 +3139,7 @@ void MainFrame::OnPttButtonKeyDown(wxKeyEvent& event) {
         event.Skip();
         return;
     }
-    if (event.GetKeyCode() == WXK_SPACE && connected_) {
+    if (event.GetKeyCode() == WXK_SPACE && IsRelaySessionReady()) {
         if (suppressHoldPttUntilRelease_) {
             return;
         }
@@ -3138,7 +3154,7 @@ void MainFrame::OnPttButtonKeyUp(wxKeyEvent& event) {
         event.Skip();
         return;
     }
-    if (event.GetKeyCode() == WXK_SPACE && connected_) {
+    if (event.GetKeyCode() == WXK_SPACE && IsRelaySessionReady()) {
         suppressHoldPttUntilRelease_ = false;
         EndPttTx();
         return;
@@ -3154,7 +3170,7 @@ void MainFrame::OnPttButtonClicked(wxCommandEvent&) {
 }
 
 void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
-    if (!connected_ || audio_->IsTransmitting() || audio_->IsSignalStreaming()) {
+    if (!IsRelaySessionReady() || audio_->IsTransmitting() || audio_->IsSignalStreaming()) {
         return;
     }
     if (serverPttLocked_) {
@@ -3176,8 +3192,7 @@ void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
 }
 
 void MainFrame::BeginPttTx() {
-    if (!connected_ || audio_->IsSignalStreaming() || audio_->IsTransmitting()) {
-        RefreshPttUi();
+    if (!IsRelaySessionReady() || audio_->IsSignalStreaming() || audio_->IsTransmitting()) {
         return;
     }
     if (serverPttLocked_) {
@@ -3203,7 +3218,7 @@ void MainFrame::BeginPttTx() {
 }
 
 void MainFrame::EndPttTx() {
-    if (!connected_ || !audio_->IsTransmitting()) {
+    if (!IsRelaySessionReady() || !audio_->IsTransmitting()) {
         RefreshPttUi();
         return;
     }
@@ -3218,7 +3233,7 @@ void MainFrame::EndPttTx() {
 }
 
 void MainFrame::TogglePttTx() {
-    if (!connected_) {
+    if (!IsRelaySessionReady()) {
         return;
     }
     if (audio_->IsTransmitting()) {
@@ -3228,14 +3243,19 @@ void MainFrame::TogglePttTx() {
     }
 }
 
+bool MainFrame::IsRelaySessionReady() const {
+    return relay_ && relay_->IsConnected();
+}
+
 void MainFrame::RefreshPttUi() {
     if (!pttBtn_) {
         return;
     }
+    const bool relayReady = IsRelaySessionReady();
     const bool burstBlocked = pttReleaseBurstBlocked_.load(std::memory_order_relaxed);
     const bool blockedByServerPtt =
-        connected_ && serverPttLocked_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming();
-    const bool allowPtt = connected_ && !burstBlocked && !blockedByServerPtt;
+        relayReady && serverPttLocked_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming();
+    const bool allowPtt = relayReady && !burstBlocked && !blockedByServerPtt;
     pttBtn_->Enable(allowPtt);
     if (!allowPtt) {
         if (blockedByServerPtt && pttLockDisplaySec_ > 0) {
@@ -3249,7 +3269,7 @@ void MainFrame::RefreshPttUi() {
         pttBtn_->SetLabel(_("Hold to Talk"));
     }
     if (callBtn_) {
-        callBtn_->Enable(connected_ && !serverPttLocked_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming());
+        callBtn_->Enable(relayReady && !serverPttLocked_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming());
     }
 }
 
@@ -3273,7 +3293,7 @@ void MainFrame::ArmPttReleaseBurstDecay(const uint64_t scheduleTicket) {
             pttReleaseBurstCount_.store(0, std::memory_order_relaxed);
             pttReleaseBurstBlocked_.store(false, std::memory_order_relaxed);
             SyncPttButtonForBurstGuard();
-            if (connected_) {
+            if (IsRelaySessionReady()) {
                 SetStatus("Connected");
             }
         });
@@ -3302,7 +3322,7 @@ void MainFrame::RecordPttReleaseBurst() {
 
 void MainFrame::OnTxStop() {
     StopTxCountdownFromServer();
-    if (connected_ && audio_->IsTransmitting()) {
+    if (IsRelaySessionReady() && audio_->IsTransmitting()) {
         if (!pttToggleMode_) {
             // Hold mode: block immediate re-TX until user actually releases the key/button.
             suppressHoldPttUntilRelease_ = true;
@@ -3326,7 +3346,7 @@ void MainFrame::StartTxCountdownFromServer() {
                 if (ticket != txCountdownTicket_.load(std::memory_order_relaxed)) {
                     return;
                 }
-                if (!connected_ || !audio_ || !audio_->IsTransmitting()) {
+                if (!IsRelaySessionReady() || !audio_ || !audio_->IsTransmitting()) {
                     return;
                 }
                 audio_->PlayVibrationImitationPulse(35);
@@ -3392,7 +3412,7 @@ void MainFrame::OnRxBroadcastStartFromRelay(bool bm) {
 void MainFrame::OnRxBroadcastEndFromRelay() {
     serverRxBroadcastActive_ = false;
     RefreshPttUi();
-    if (connected_) {
+    if (IsRelaySessionReady()) {
         SetStatus("Connected");
     }
 }

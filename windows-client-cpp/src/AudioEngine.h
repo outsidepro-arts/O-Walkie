@@ -45,6 +45,8 @@ public:
 
     bool Initialize();
     void Shutdown();
+    /// Stop TX/RX processing before relay teardown (avoids mu_ deadlock on app exit).
+    void PrepareForExit();
     void Reconfigure(const WelcomeConfig& cfg);
 
     static std::vector<NamedAudioDevice> ListInputDevices();
@@ -154,6 +156,7 @@ private:
     std::vector<uint8_t> opusScratch_;
 
     std::atomic<bool> transmitting_{false};
+    std::atomic<bool> shuttingDown_{false};
     std::atomic<bool> signalStreaming_{false};
     std::atomic<bool> signalStreamAbortRequested_{false};
     /// After dropping inbound audio during local TX / signal stream, rebuild RX decoder before next decode.

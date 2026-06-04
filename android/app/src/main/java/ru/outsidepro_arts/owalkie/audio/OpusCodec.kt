@@ -1,8 +1,7 @@
 package ru.outsidepro_arts.owalkie.audio
 
-import eu.buney.kopus.OpusApplication
-import eu.buney.kopus.OpusDecoder
-import eu.buney.kopus.OpusEncoder
+import ru.outsidepro_arts.owalkie.BuildConfig
+import ru.outsidepro_arts.owalkie.OwalkieNative
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -17,19 +16,26 @@ data class OpusConfig(
     val fec: Boolean = true,
     val dtx: Boolean = false,
     val application: String = "voip",
+    val packetMs: Int = 20,
 )
+
+private fun OpusConfig.packetMsForCodec(): Int = packetMs.coerceIn(10, 60)
 
 class OpusCodecFactory {
     fun create(sampleRate: Int, channels: Int, config: OpusConfig = OpusConfig()): OpusCodec {
+        if (channels != 1) {
+            return PcmPassthroughCodec()
+        }
+        if (!BuildConfig.BUILD_NATIVE_RELAY) {
+            return PcmPassthroughCodec()
+        }
         return try {
-            val codec = KopusCodec(sampleRate, channels, config)
-            // Validate codec early to avoid runtime crash on first PTT.
+            val codec = NativeOpusCodec(sampleRate, config, config.packetMsForCodec())
             val probe = ShortArray((sampleRate / 50).coerceAtLeast(1))
             val encoded = codec.encode(probe)
             codec.decode(encoded, probe.size)
             codec
         } catch (_: Throwable) {
-            // Keep app usable on dev devices where JNI Opus binding is unavailable.
             PcmPassthroughCodec()
         }
     }
@@ -53,82 +59,41 @@ private class PcmPassthroughCodec : OpusCodec {
     }
 }
 
-private class KopusCodec(
-    private val sampleRate: Int,
-    private val channels: Int,
+private class NativeOpusCodec(
+    sampleRate: Int,
     private val config: OpusConfig,
+    private val packetMs: Int,
 ) : OpusCodec {
-    private val encoder = OpusEncoder(sampleRate, channels, resolveApplication(config.application))
-    private val decoder = OpusDecoder(sampleRate, channels)
+    private val handle: Long
 
     init {
-        // kopus API can differ by version, so apply optional tunables reflectively.
-        applyEncoderTunable("setBitrate", Int::class.javaPrimitiveType, config.bitrate)
-        applyEncoderTunable("setComplexity", Int::class.javaPrimitiveType, config.complexity)
-        applyEncoderTunable("setInbandFec", Boolean::class.javaPrimitiveType, config.fec)
-        applyEncoderTunable("setDtx", Boolean::class.javaPrimitiveType, config.dtx)
+        OwalkieNative.ensureLoaded()
+        handle = OwalkieNative.nativeCreateOpusCodec(
+            sampleRate,
+            packetMs,
+            config.bitrate,
+            config.complexity,
+            config.fec,
+            config.dtx,
+            config.application,
+        )
+        if (handle == 0L) {
+            throw IllegalStateException("native opus codec init failed")
+        }
     }
 
     override fun encode(pcm: ShortArray): ByteArray {
-        val maxOpusPacket = 1275
-        val out = ByteArray(maxOpusPacket)
-        val encodedBytes = encoder.encode(
-            pcm,
-            0,
-            pcm.size,
-            out,
-            0,
-            out.size,
-        )
-        if (encodedBytes <= 0) {
-            return ByteArray(0)
-        }
-        return out.copyOf(encodedBytes)
+        return OwalkieNative.nativeOpusEncode(handle, pcm) ?: ByteArray(0)
     }
 
     override fun decode(opus: ByteArray, frameSize: Int): ShortArray {
-        val out = ShortArray(frameSize * channels)
-        val decodedSamples = decoder.decode(
-            opus,
-            0,
-            opus.size,
-            out,
-            0,
-            frameSize,
-            false,
-        )
-        if (decodedSamples <= 0) {
-            return ShortArray(frameSize * channels)
-        }
-        val actual = (decodedSamples * channels).coerceAtMost(out.size)
-        return out.copyOf(actual)
+        return OwalkieNative.nativeOpusDecode(handle, opus, frameSize)
+            ?: ShortArray(frameSize)
     }
 
-    private fun applyEncoderTunable(methodName: String, argType: Class<*>?, value: Any) {
-        runCatching {
-            val method = encoder.javaClass.methods.firstOrNull {
-                it.name.equals(methodName, ignoreCase = true) &&
-                    it.parameterTypes.size == 1 &&
-                    (argType == null || it.parameterTypes[0] == argType || it.parameterTypes[0].isAssignableFrom(value.javaClass))
-            } ?: return
-            method.invoke(encoder, value)
-        }
-    }
-
-    private fun resolveApplication(value: String): OpusApplication {
-        val normalized = value.trim().lowercase()
-        val all = OpusApplication::class.java.enumConstants ?: return OpusApplication.Voip
-        val matched = all.firstOrNull {
-            it.name.lowercase().replace("_", "") == normalized.replace("_", "")
-        }
-        return matched ?: when (normalized) {
-            "audio" -> all.firstOrNull { it.name.lowercase().contains("audio") } ?: OpusApplication.Voip
-            "lowdelay" -> all.firstOrNull {
-                val n = it.name.lowercase()
-                n.contains("low") && n.contains("delay")
-            } ?: OpusApplication.Voip
-            else -> OpusApplication.Voip
+    fun close() {
+        if (handle != 0L) {
+            OwalkieNative.nativeDestroyOpusCodec(handle)
         }
     }
 }
-

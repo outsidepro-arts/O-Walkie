@@ -5,15 +5,10 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
-#include <thread>
 #include <vector>
 
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
-#include <boost/beast/websocket.hpp>
+#include "owalkie/session_manager.hpp"
 
 struct WelcomeConfig {
     uint32_t sessionId = 0;
@@ -25,9 +20,7 @@ struct WelcomeConfig {
     bool dtx = false;
     std::string application = "voip";
     bool busyMode = false;
-    /// Not sent in current `welcome` (PTT lock/unlock is WebSocket-driven). Kept for struct defaults / future use.
     int busyTimeoutSec = 0;
-    /// Server PTT time limit (seconds); 0 = none. Clients default to 60 if omitted in welcome.
     int transmitTimeoutSec = 60;
 };
 
@@ -49,16 +42,15 @@ public:
     ~RelayClient();
 
     bool Connect(const std::string& host, int serverPort, const std::string& channel, bool repeater);
-    void Disconnect();
+    void Disconnect(bool notifyCallbacks = true);
     void JoinWorkerThreads();
 
-    bool IsConnected() const { return connected_.load(); }
-    bool AutoReconnectDesired() const { return autoReconnectDesired_.load(); }
+    bool IsConnected() const;
+    bool AutoReconnectDesired() const;
     WelcomeConfig CurrentConfig() const;
 
     void SendOpusFrame(const uint8_t* data, size_t size, uint8_t signal);
     void SendTxEofBurst();
-    /// Updates server repeater flag when already connected (WS message).
     void SetRepeaterMode(bool enabled);
 
     void SetStatusCallback(StatusCallback cb) { onStatus_ = std::move(cb); }
@@ -74,42 +66,17 @@ public:
     void SetConnectionLostCallback(ConnectionLostCallback cb) { onConnectionLost_ = std::move(cb); }
 
 private:
-    void WsReadLoop();
-    void UdpReadLoop();
-    void KeepaliveLoop();
-    void HandleWsText(const std::string& text);
-    void SendWsJson(const std::string& json);
-    void SendUdpKeepalive();
-    void SendUdpTxEof();
-    void CloseSocketsUnblockReaders();
+    static WelcomeConfig MapWelcome(const owalkie::WelcomeConfig& src);
+    void HandleSessionEvent(const owalkie::Event& event);
     void PostConnectionLostOnce();
-    static int NormalizeSampleRate(int v);
-    static int NormalizePacketMs(int v);
+    void clearManagedSession();
 
-private:
+    owalkie::SessionId sessionId_ = owalkie::kInvalidSessionId;
     mutable std::mutex stateMu_;
-    boost::asio::io_context ioc_;
-    boost::asio::ip::tcp::resolver resolver_;
-    std::optional<boost::beast::websocket::stream<boost::asio::ip::tcp::socket>> ws_;
-    std::optional<boost::asio::ip::udp::socket> udp_;
-    boost::asio::ip::udp::endpoint udpRemote_;
-    std::atomic<bool> connected_{false};
-    std::atomic<bool> stopRequested_{false};
+    WelcomeConfig cfg_;
     std::atomic<bool> autoReconnectDesired_{false};
     std::atomic<bool> connectionLostPosted_{false};
-    std::atomic<int> seq_{0};
-    WelcomeConfig cfg_;
-    std::string host_;
-    int serverPort_ = 0;
-    std::string channel_;
-    bool repeater_ = false;
-    std::thread wsThread_;
-    std::thread udpThread_;
-    std::thread keepaliveThread_;
-    std::atomic<int64_t> lastInboundNs_{0};
-    std::atomic<int64_t> lastOutboundNs_{0};
-    std::atomic<int64_t> lastUdpKeepaliveSentNs_{0};
-    std::atomic<int64_t> udpKeepalivePendingSinceNs_{0};
+    std::atomic<bool> notifyUiCallbacks_{true};
 
     StatusCallback onStatus_;
     ConnectedCallback onConnected_;

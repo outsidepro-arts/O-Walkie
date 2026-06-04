@@ -18,7 +18,11 @@ typedef enum owalkie_result {
     OWALKIE_ERR_INTERNAL = 6,
     OWALKIE_ERR_UNSUPPORTED = 7,
     OWALKIE_ERR_BUFFER_TOO_SMALL = 8,
+    OWALKIE_ERR_NOT_READY = 9,
 } owalkie_result;
+
+typedef uint64_t owalkie_session_id;
+inline owalkie_session_id owalkie_invalid_session_id(void) { return 0; }
 
 typedef struct owalkie_session owalkie_session_t;
 
@@ -44,6 +48,9 @@ typedef enum owalkie_event_type {
 
     OWALKIE_EV_UDP_TRANSPORT_READY,
     OWALKIE_EV_UDP_TRANSPORT_LOST,
+
+    OWALKIE_EV_CONNECT_FAILED = 15,
+    OWALKIE_EV_SESSION_READY = 16,
 } owalkie_event_type;
 
 typedef struct owalkie_welcome_config {
@@ -121,6 +128,23 @@ typedef struct owalkie_session_callbacks {
     owalkie_on_session_event_fn on_session_event;
     void* user_data;
 } owalkie_session_callbacks;
+
+typedef void (*owalkie_managed_event_fn)(
+    void* user_data,
+    owalkie_session_id session_id,
+    const owalkie_event* event);
+
+typedef void (*owalkie_managed_rx_opus_fn)(
+    void* user_data,
+    owalkie_session_id session_id,
+    const uint8_t* opus,
+    size_t opus_len);
+
+typedef struct owalkie_managed_callbacks {
+    owalkie_managed_event_fn on_session_event;
+    owalkie_managed_rx_opus_fn on_rx_opus;
+    void* user_data;
+} owalkie_managed_callbacks;
 
 typedef struct owalkie_signal_point {
     double freq_hz;
@@ -216,7 +240,39 @@ int owalkie_udp_is_keepalive_signal(const uint8_t* buf, size_t len);
 int owalkie_udp_is_keepalive_ack(const uint8_t* buf, size_t len, uint32_t session_id);
 int owalkie_udp_is_tx_eof_marker(const uint8_t* buf, size_t len);
 
-/* --- session (requires OWALKIE_CORE_HAS_SESSION) --- */
+typedef enum owalkie_power_profile {
+    OWALKIE_POWER_FOREGROUND = 0,
+    OWALKIE_POWER_BACKGROUND,
+    OWALKIE_POWER_ACTIVE_TX,
+} owalkie_power_profile;
+
+/* --- managed sessions (requires OWALKIE_CORE_HAS_SESSION) --- */
+owalkie_session_id owalkie_connect(
+    const owalkie_connect_params* params,
+    const owalkie_managed_callbacks* callbacks);
+
+void owalkie_disconnect(owalkie_session_id session_id);
+void owalkie_disconnect_all(void);
+/** Halt all sessions and wait up to @p timeout_ms for background teardown (app exit). */
+void owalkie_disconnect_all_and_wait(int timeout_ms);
+int owalkie_session_id_valid(owalkie_session_id session_id);
+int owalkie_session_id_ready(owalkie_session_id session_id);
+
+owalkie_result owalkie_send_tx_opus(
+    owalkie_session_id session_id,
+    const uint8_t* opus,
+    size_t opus_len,
+    int signal_strength);
+
+owalkie_result owalkie_send_tx_eof_burst(owalkie_session_id session_id);
+owalkie_result owalkie_set_repeater_mode(owalkie_session_id session_id, int enabled);
+owalkie_result owalkie_set_tx_signal_strength(owalkie_session_id session_id, int strength_0_255);
+int owalkie_get_tx_signal_strength(owalkie_session_id session_id);
+void owalkie_set_power_profile(owalkie_session_id session_id, owalkie_power_profile profile);
+void owalkie_notify_network_changed(owalkie_session_id session_id);
+owalkie_result owalkie_reset_udp_transport(owalkie_session_id session_id);
+
+/* --- legacy session pointer API (deprecated; tests) --- */
 owalkie_result owalkie_session_create(owalkie_session_t** out_session);
 void owalkie_session_destroy(owalkie_session_t* session);
 
@@ -240,6 +296,12 @@ owalkie_result owalkie_session_feed_tx_pcm(
     const int16_t* samples,
     size_t sample_count);
 
+owalkie_result owalkie_session_send_tx_opus(
+    owalkie_session_t* session,
+    const uint8_t* opus,
+    size_t opus_len,
+    int signal_strength);
+
 owalkie_result owalkie_session_send_tx_eof_burst(owalkie_session_t* session);
 
 owalkie_result owalkie_session_set_repeater_mode(owalkie_session_t* session, int enabled);
@@ -249,12 +311,6 @@ owalkie_result owalkie_session_reset_udp_transport(owalkie_session_t* session);
 void owalkie_session_get_state(
     const owalkie_session_t* session,
     owalkie_session_state* out_state);
-
-typedef enum owalkie_power_profile {
-    OWALKIE_POWER_FOREGROUND = 0,
-    OWALKIE_POWER_BACKGROUND,
-    OWALKIE_POWER_ACTIVE_TX,
-} owalkie_power_profile;
 
 void owalkie_session_set_power_profile(owalkie_session_t* session, owalkie_power_profile profile);
 owalkie_power_profile owalkie_session_get_power_profile(const owalkie_session_t* session);

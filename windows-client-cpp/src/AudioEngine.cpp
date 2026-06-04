@@ -397,6 +397,7 @@ AudioEngine::AudioEngine() = default;
 AudioEngine::~AudioEngine() { Shutdown(); }
 
 bool AudioEngine::Initialize() {
+    shuttingDown_.store(false, std::memory_order_release);
     std::lock_guard<std::mutex> lg(mu_);
     if (!contextReady_) {
         if (ma_context_init(nullptr, 0, nullptr, &context_) != MA_SUCCESS) {
@@ -414,30 +415,53 @@ bool AudioEngine::Initialize() {
     return true;
 }
 
+void AudioEngine::PrepareForExit() {
+    shuttingDown_.store(true, std::memory_order_release);
+    transmitting_.store(false);
+    signalStreaming_.store(false);
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        std::unique_lock<std::mutex> lk(mu_, std::try_to_lock);
+        if (lk.owns_lock()) {
+            CloseCaptureDeviceLocked();
+            CloseOutputStreamLocked();
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
 void AudioEngine::Shutdown() {
+    shuttingDown_.store(true, std::memory_order_release);
     StopTransmit();
     if (parallelTxCollisionActive_.exchange(false) && onParallelTxCollision_) {
         onParallelTxCollision_(false);
     }
     lastRxDuringLocalTxNs_.store(0);
 
-    std::lock_guard<std::mutex> lg(mu_);
-    CloseOutputStreamLocked();
-    if (encoder_) {
-        opus_encoder_destroy(encoder_);
-        encoder_ = nullptr;
-    }
-    if (decoder_) {
-        opus_decoder_destroy(decoder_);
-        decoder_ = nullptr;
-    }
-    if (contextReady_) {
-        ma_context_uninit(&context_);
-        contextReady_ = false;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        std::unique_lock<std::mutex> lk(mu_, std::try_to_lock);
+        if (lk.owns_lock()) {
+            CloseOutputStreamLocked();
+            if (encoder_) {
+                opus_encoder_destroy(encoder_);
+                encoder_ = nullptr;
+            }
+            if (decoder_) {
+                opus_decoder_destroy(decoder_);
+                decoder_ = nullptr;
+            }
+            if (contextReady_) {
+                ma_context_uninit(&context_);
+                contextReady_ = false;
+            }
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
 
 void AudioEngine::Reconfigure(const WelcomeConfig& cfg) {
+    shuttingDown_.store(false, std::memory_order_release);
     std::lock_guard<std::mutex> lg(mu_);
     if (captureActive_) {
         transmitting_.store(false);
@@ -457,6 +481,7 @@ void AudioEngine::Reconfigure(const WelcomeConfig& cfg) {
         CloseOutputStreamLocked();
     }
     RecreateCodecUnlocked();
+    EnsurePlaybackDeviceLocked();
 }
 
 std::vector<NamedAudioDevice> AudioEngine::ListInputDevices() {
@@ -711,44 +736,51 @@ void AudioEngine::EnsurePlaybackDeviceLocked() {
 }
 
 bool AudioEngine::StartTransmit() {
-    std::lock_guard<std::mutex> lg(mu_);
-    if (captureActive_ || signalStreaming_.load() || !encoder_ || !contextReady_) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        if (captureActive_ || signalStreaming_.load() || !encoder_ || !contextReady_) {
+            return false;
+        }
+
+        ma_device_info* caps = nullptr;
+        ma_uint32 nCap = 0;
+        ma_context_get_devices(&context_, nullptr, nullptr, &caps, &nCap);
+        const ma_device_id* capId = nullptr;
+        const int wantIn = ResolveInputDeviceIndex();
+        if (wantIn >= 0 && (ma_uint32)wantIn < nCap) {
+            capId = &caps[wantIn].id;
+        }
+
+        ma_device_config cfg = ma_device_config_init(ma_device_type_capture);
+        cfg.capture.pDeviceID = capId;
+        cfg.capture.format = ma_format_s16;
+        cfg.capture.channels = 1;
+        cfg.sampleRate = static_cast<ma_uint32>(sampleRate_);
+        cfg.dataCallback = CaptureCallback;
+        cfg.pUserData = this;
+        cfg.periodSizeInFrames = static_cast<ma_uint32>(FrameSamples());
+
+        if (ma_device_init(&context_, &cfg, &captureDev_) != MA_SUCCESS) {
+            return false;
+        }
+
+        captureFifo_.clear();
+        opusScratch_.resize(1275);
+        lastRxDuringLocalTxNs_.store(0);
+        lastParallelCollisionPulseNs_.store(0);
+        transmitting_.store(true);
     }
 
-    ma_device_info* caps = nullptr;
-    ma_uint32 nCap = 0;
-    ma_context_get_devices(&context_, nullptr, nullptr, &caps, &nCap);
-    const ma_device_id* capId = nullptr;
-    const int wantIn = ResolveInputDeviceIndex();
-    if (wantIn >= 0 && (ma_uint32)wantIn < nCap) {
-        capId = &caps[wantIn].id;
-    }
-
-    ma_device_config cfg = ma_device_config_init(ma_device_type_capture);
-    cfg.capture.pDeviceID = capId;
-    cfg.capture.format = ma_format_s16;
-    cfg.capture.channels = 1;
-    cfg.sampleRate = static_cast<ma_uint32>(sampleRate_);
-    cfg.dataCallback = CaptureCallback;
-    cfg.pUserData = this;
-    cfg.periodSizeInFrames = static_cast<ma_uint32>(FrameSamples());
-
-    if (ma_device_init(&context_, &cfg, &captureDev_) != MA_SUCCESS) {
-        return false;
-    }
-
-    captureFifo_.clear();
-    opusScratch_.resize(1275);
-    lastRxDuringLocalTxNs_.store(0);
-    lastParallelCollisionPulseNs_.store(0);
-    transmitting_.store(true);
     if (ma_device_start(&captureDev_) != MA_SUCCESS) {
         transmitting_.store(false);
+        std::lock_guard<std::mutex> lg(mu_);
         ma_device_uninit(&captureDev_);
         return false;
     }
-    captureActive_ = true;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        captureActive_ = true;
+    }
     return true;
 }
 
@@ -756,6 +788,17 @@ void AudioEngine::StopTransmit() {
     transmitting_.store(false);
     refresh_rx_decoder_.store(true);
     PollParallelTxCollisionState(CurrentSteadyNs());
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        for (int attempt = 0; attempt < 50; ++attempt) {
+            std::unique_lock<std::mutex> lk(mu_, std::try_to_lock);
+            if (lk.owns_lock()) {
+                CloseCaptureDeviceLocked();
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return;
+    }
     std::lock_guard<std::mutex> lg(mu_);
     CloseCaptureDeviceLocked();
 }
@@ -1096,10 +1139,6 @@ void AudioEngine::OnCaptureFrames(const void* pInput, ma_uint32 frameCount) {
 }
 
 void AudioEngine::DrainCaptureFifoOpus() {
-    OpusEncoder* enc = encoder_;
-    if (!enc) {
-        return;
-    }
     const int frame = FrameSamples();
     if (frame <= 0) {
         return;
@@ -1117,7 +1156,19 @@ void AudioEngine::DrainCaptureFifoOpus() {
             PollParallelTxCollisionState(CurrentSteadyNs());
         }
 
-        const int bytes = opus_encode(enc, captureFifo_.data(), frame, opusScratch_.data(), static_cast<int>(opusScratch_.size()));
+        int bytes = 0;
+        {
+            std::lock_guard<std::mutex> lg(mu_);
+            if (!encoder_) {
+                return;
+            }
+            bytes = opus_encode(
+                encoder_,
+                captureFifo_.data(),
+                frame,
+                opusScratch_.data(),
+                static_cast<int>(opusScratch_.size()));
+        }
         captureFifo_.erase(captureFifo_.begin(), captureFifo_.begin() + frame);
         if (bytes > 0 && onEncodedFrame_) {
             onEncodedFrame_(opusScratch_.data(), static_cast<size_t>(bytes), 255);
@@ -1131,7 +1182,7 @@ void AudioEngine::SetRxVolumePercent(int percent) {
 }
 
 void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
-    if (opus.empty()) {
+    if (opus.empty() || shuttingDown_.load(std::memory_order_acquire)) {
         return;
     }
     const int64_t now = CurrentSteadyNs();
@@ -1148,7 +1199,13 @@ void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
         return;
     }
 
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     std::lock_guard<std::mutex> lg(mu_);
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     if (!decoder_) {
         return;
     }

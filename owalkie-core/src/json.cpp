@@ -93,7 +93,7 @@ Result parseServerMessage(std::string_view text, Event& out) {
             return Result::Ok;
         }
         if (type == "joined" || type == "pong" || type == "udp_registered" || type == "repeater_mode") {
-            return Result::InvalidArg;
+            return Result::NoEvent;
         }
         return Result::InvalidArg;
     } catch (...) {

@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -11,6 +12,16 @@
 #include <random>
 #include <thread>
 #include <vector>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#else
+#include <sys/socket.h>
+#include <sys/time.h>
+#endif
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -36,6 +47,47 @@ constexpr int64_t kNsPerMs = 1'000'000LL;
 constexpr int64_t kUdpKeepaliveRecoveryWindowNs = 90LL * kNsPerSec;
 constexpr int64_t kNetworkRecoveryMinIntervalNs = 3LL * kNsPerSec;
 constexpr int kKeepaliveJitterPercent = 15;
+constexpr int kSocketRecvTimeoutMs = 2000;
+
+void setSocketRecvTimeoutMs(boost::asio::ip::tcp::socket& socket, int timeoutMs) {
+    if (timeoutMs <= 0) {
+        return;
+    }
+    const auto handle = socket.native_handle();
+#if defined(_WIN32)
+    const DWORD tv = static_cast<DWORD>(timeoutMs);
+    ::setsockopt(handle, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
+#else
+    struct timeval tv {};
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+    ::setsockopt(handle, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+}
+
+void setSocketRecvTimeoutMs(AsioUdp::socket& socket, int timeoutMs) {
+    if (timeoutMs <= 0) {
+        return;
+    }
+    const auto handle = socket.native_handle();
+#if defined(_WIN32)
+    const DWORD tv = static_cast<DWORD>(timeoutMs);
+    ::setsockopt(handle, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
+#else
+    struct timeval tv {};
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+    ::setsockopt(handle, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+}
+
+bool isSocketRecvTimeout(const boost::system::error_code& ec) {
+#if defined(_WIN32)
+    return ec.value() == WSAETIMEDOUT;
+#else
+    return ec == boost::asio::error::timed_out;
+#endif
+}
 
 struct KeepaliveTimings {
     int64_t idleIntervalNs;
@@ -160,7 +212,18 @@ struct Session::Impl {
     std::optional<AsioUdp::socket> udpSocket;
     AsioUdp::endpoint udpRemote;
     std::mutex udpMu;
+    std::mutex wsIoMu;
+    std::mutex stopMu;
+    std::mutex teardownMu;
+    std::condition_variable stopCv;
     std::atomic<bool> udpResetRequested{false};
+    std::atomic<bool> wsThreadCompletesTeardown{false};
+    std::atomic<bool> disconnectEventEmitted{false};
+    std::atomic<bool> disconnectStarted{false};
+    std::atomic<bool> transportFullyStopped{true};
+
+    std::mutex teardownThreadMu_;
+    std::thread teardownThread_;
 
     std::atomic<PowerProfile> powerProfile{PowerProfile::Foreground};
     std::atomic<int64_t> udpRecoveryUntilNs{0};
@@ -190,9 +253,13 @@ struct Session::Impl {
     std::atomic<int64_t> lastUdpKeepalivePendingSinceNs{0};
 
     void emitEvent(const Event& event) {
-        std::lock_guard<std::mutex> lg(cbMu);
-        if (callbacks.onSessionEvent) {
-            callbacks.onSessionEvent(event);
+        std::function<void(const Event&)> eventCb;
+        {
+            std::lock_guard<std::mutex> lg(cbMu);
+            eventCb = callbacks.onSessionEvent;
+        }
+        if (eventCb) {
+            eventCb(event);
         }
         std::lock_guard<std::mutex> sl(stateMu);
         switch (event.type) {
@@ -207,6 +274,12 @@ struct Session::Impl {
             case EventType::Welcome:
                 sessionState.welcome = event.welcome;
                 sessionState.hasWelcome = true;
+                break;
+            case EventType::SessionReady:
+                sessionState.welcome = event.welcome;
+                sessionState.hasWelcome = true;
+                sessionState.connected = true;
+                sessionState.udpReady = true;
                 break;
             case EventType::RxBroadcastStart:
                 sessionState.receiving = true;
@@ -246,6 +319,53 @@ struct Session::Impl {
         }
     }
 
+    void signalStopWorkers() {
+        stopCv.notify_all();
+    }
+
+    void interruptibleSleepMs(int64_t ms) {
+        if (ms <= 0 || stopRequested.load()) {
+            return;
+        }
+        std::unique_lock<std::mutex> lk(stopMu);
+        stopCv.wait_for(lk, std::chrono::milliseconds(ms), [this] { return stopRequested.load(); });
+    }
+
+    void shutdownWsTcp() {
+        boost::system::error_code ec;
+        std::lock_guard<std::mutex> lg(wsIoMu);
+        if (!wsStream) {
+            return;
+        }
+        try {
+            auto& tcp = wsStream->next_layer();
+            tcp.cancel(ec);
+            ec.clear();
+            if (tcp.is_open()) {
+                tcp.shutdown(tcp::socket::shutdown_both, ec);
+                ec.clear();
+                tcp.close(ec);
+            }
+        } catch (...) {
+        }
+    }
+
+    void releaseWsStream() {
+        std::lock_guard<std::mutex> lg(wsIoMu);
+        if (!wsStream) {
+            return;
+        }
+        boost::system::error_code ec;
+        try {
+            auto& tcp = wsStream->next_layer();
+            if (tcp.is_open()) {
+                tcp.close(ec);
+            }
+        } catch (...) {
+        }
+        wsStream.reset();
+    }
+
     void closeSockets() {
         udpResetRequested.store(true);
         boost::system::error_code ec;
@@ -256,20 +376,8 @@ struct Session::Impl {
             }
         } catch (...) {
         }
-        ec.clear();
-        try {
-            if (wsStream) {
-                wsStream->next_layer().cancel(ec);
-            }
-        } catch (...) {
-        }
-        ec.clear();
-        try {
-            if (wsStream && wsStream->is_open()) {
-                wsStream->close(ws::close_code::going_away, ec);
-            }
-        } catch (...) {
-        }
+        // Never call wsStream->close() while wsReadLoop may be in read(); TCP shutdown unblocks read.
+        shutdownWsTcp();
         ec.clear();
         try {
             std::lock_guard<std::mutex> lg(udpMu);
@@ -280,22 +388,38 @@ struct Session::Impl {
         }
     }
 
-    void joinThreads() {
+    bool onWsThread() const {
+        return wsThread.joinable() && wsThread.get_id() == std::this_thread::get_id();
+    }
+
+    void joinWsThreadUnlessCaller() {
         const auto tid = std::this_thread::get_id();
         if (wsThread.joinable() && wsThread.get_id() != tid) {
             wsThread.join();
         }
+    }
+
+    void joinUdpKeepaliveThreadsUnlessCaller() {
+        const auto tid = std::this_thread::get_id();
         if (udpThread.joinable() && udpThread.get_id() != tid) {
             udpThread.join();
         }
         if (keepaliveThread.joinable() && keepaliveThread.get_id() != tid) {
             keepaliveThread.join();
         }
-        wsStream.reset();
+    }
+
+    void resetIoContextInternal() {
+        ioc.restart();
+    }
+
+    void clearTransportState() {
+        releaseWsStream();
         {
             std::lock_guard<std::mutex> lg(udpMu);
             udpSocket.reset();
         }
+        resetIoContextInternal();
         connected.store(false);
         lastUdpKeepaliveSentNs.store(0);
         lastUdpKeepalivePendingSinceNs.store(0);
@@ -306,13 +430,56 @@ struct Session::Impl {
         txSignalStrength.store(pkt::kDefaultTxSignalStrength);
     }
 
+    void joinThreads() {
+        joinWsThreadUnlessCaller();
+        joinUdpKeepaliveThreadsUnlessCaller();
+        clearTransportState();
+    }
+
+    void emitDisconnectedOnce() {
+        bool expected = false;
+        if (!disconnectEventEmitted.compare_exchange_strong(expected, true)) {
+            return;
+        }
+        Event ev{};
+        ev.type = EventType::Disconnected;
+        emitEvent(ev);
+    }
+
+    void finalizeTransportTeardown() {
+        joinWsThreadUnlessCaller();
+        joinUdpKeepaliveThreadsUnlessCaller();
+        std::lock_guard<std::mutex> lg(teardownMu);
+        clearTransportState();
+        welcome = WelcomeConfig{};
+        seq.store(0);
+        opus.reset();
+        txPcmBuffer.clear();
+        endLocalTxIfNeeded();
+        emitDisconnectedOnce();
+        transportFullyStopped.store(true);
+    }
+
+    void finishDisconnectFromWsThread() {
+        finalizeTransportTeardown();
+    }
+
+    void joinTeardownThreadLocked(std::unique_lock<std::mutex>& lock) {
+        if (!teardownThread_.joinable()) {
+            return;
+        }
+        lock.unlock();
+        teardownThread_.join();
+        lock.lock();
+    }
+
     void sendWsText(const std::string& text) {
-        if (!wsStream || !connected.load()) {
+        if (!wsStream || !connected.load() || stopRequested.load()) {
             return;
         }
         boost::system::error_code ec;
-        std::lock_guard<std::mutex> lg(stateMu);
-        if (!wsStream || !wsStream->is_open()) {
+        std::lock_guard<std::mutex> lg(wsIoMu);
+        if (!wsStream || stopRequested.load() || !wsStream->is_open()) {
             return;
         }
         wsStream->write(boost::asio::buffer(text), ec);
@@ -332,14 +499,14 @@ struct Session::Impl {
         }
     }
 
-    void sendOpusFrame(const uint8_t* data, size_t size) {
+    void sendOpusFrame(const uint8_t* data, size_t size, uint8_t signalStrength) {
         if (size == 0) {
             return;
         }
         UdpAudioPacket pkt{};
         pkt.sessionId = welcome.sessionId;
         pkt.sequence = static_cast<uint32_t>(seq.fetch_add(1) + 1);
-        pkt.signalStrength = txSignalStrength.load();
+        pkt.signalStrength = signalStrength;
         pkt.opus.assign(data, data + size);
         std::vector<uint8_t> payload;
         if (owalkie::pkt::pack(pkt, payload) != Result::Ok) {
@@ -444,10 +611,10 @@ struct Session::Impl {
         opus.configure(welcome);
         txPcmBuffer.clear();
 
-        Event ev{};
-        ev.type = EventType::Welcome;
-        ev.welcome = cfg;
-        emitEvent(ev);
+        Event welcomeEv{};
+        welcomeEv.type = EventType::Welcome;
+        welcomeEv.welcome = cfg;
+        emitEvent(welcomeEv);
 
         sendWsText(json::buildJoin(connectParams.channel));
         const int localPort = udpSocket ? static_cast<int>(udpSocket->local_endpoint().port()) : 0;
@@ -455,12 +622,32 @@ struct Session::Impl {
         sendWsText(json::buildRepeaterMode(repeaterMode));
         enterUdpRecoveryInternal();
         sendUdpKeepalive();
+
+        Event readyEv{};
+        readyEv.type = EventType::SessionReady;
+        readyEv.welcome = cfg;
+        emitEvent(readyEv);
+
+        Event udpReady{};
+        udpReady.type = EventType::UdpTransportReady;
+        emitEvent(udpReady);
     }
 
     void handleWsText(const std::string& text) {
         Event event{};
         const Result parsed = json::parseServerMessage(text, event);
+        if (parsed == Result::NoEvent) {
+            return;
+        }
         if (parsed != Result::Ok) {
+            Event err{};
+            err.type = parsed == Result::Protocol ? EventType::ProtocolError : EventType::Disconnected;
+            err.protocolError = parsed == Result::Protocol ? "protocol mismatch" : "invalid server message";
+            emitEvent(err);
+            if (parsed == Result::Protocol) {
+                connected.store(false);
+                closeSockets();
+            }
             return;
         }
         if (event.type == EventType::Welcome) {
@@ -472,21 +659,53 @@ struct Session::Impl {
 
     void wsReadLoop() {
         boost::system::error_code ec;
-        while (connected.load() && !stopRequested.load()) {
-            if (!wsStream || !wsStream->is_open()) {
+        while (!stopRequested.load()) {
+            if (!connected.load()) {
                 break;
+            }
+            {
+                std::lock_guard<std::mutex> lg(wsIoMu);
+                if (!wsStream || !wsStream->is_open() || stopRequested.load()) {
+                    break;
+                }
             }
             boost::beast::flat_buffer buffer;
             wsStream->read(buffer, ec);
             if (ec) {
+                if (!stopRequested.load() && isSocketRecvTimeout(ec)) {
+                    continue;
+                }
                 connected.store(false);
-                Event ev{};
-                ev.type = EventType::Disconnected;
-                ev.disconnectReason = ec.message();
-                emitEvent(ev);
+                // Intentional teardown: disconnectInternal() will emit Disconnected.
+                const bool intentional =
+                    stopRequested.load() || ec == boost::asio::error::operation_aborted;
+                if (!intentional) {
+                    Event ev{};
+                    ev.type = EventType::Disconnected;
+                    ev.disconnectReason = ec.message();
+                    emitEvent(ev);
+                }
                 break;
             }
-            handleWsText(boost::beast::buffers_to_string(buffer.data()));
+            const std::string payload = boost::beast::buffers_to_string(buffer.data());
+            bool peerClosed = false;
+            {
+                std::lock_guard<std::mutex> lg(wsIoMu);
+                if (!wsStream || !wsStream->is_open()) {
+                    peerClosed = true;
+                }
+            }
+            handleWsText(payload);
+            if (peerClosed || stopRequested.load()) {
+                connected.store(false);
+                break;
+            }
+        }
+        if (wsThreadCompletesTeardown.exchange(false)) {
+            finishDisconnectFromWsThread();
+        } else if (stopRequested.load() && onWsThread()) {
+            joinUdpKeepaliveThreadsUnlessCaller();
+            clearTransportState();
         }
     }
 
@@ -501,12 +720,16 @@ struct Session::Impl {
             const std::size_t n = udpSocket->receive_from(boost::asio::buffer(data), ep, 0, ec);
             if (ec) {
                 if (stopRequested.load() || udpResetRequested.load()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    interruptibleSleepMs(50);
+                    continue;
+                }
+                if (!stopRequested.load() && isSocketRecvTimeout(ec)) {
                     continue;
                 }
                 connected.store(false);
                 Event ev{};
                 ev.type = EventType::UdpTransportLost;
+                ev.disconnectReason = ec.message();
                 emitEvent(ev);
                 break;
             }
@@ -526,6 +749,18 @@ struct Session::Impl {
                 continue;
             }
 
+            {
+                std::function<void(std::span<const uint8_t>)> rxCb;
+                {
+                    std::lock_guard<std::mutex> lg(cbMu);
+                    rxCb = callbacks.onRxOpus;
+                }
+                if (rxCb) {
+                    rxCb(pkt.opus);
+                    continue;
+                }
+            }
+
             std::vector<int16_t> pcm;
             if (opus.decode(pkt.opus, opus.frameSamples(), pcm) != Result::Ok) {
                 continue;
@@ -538,7 +773,7 @@ struct Session::Impl {
         std::mt19937 rng(std::random_device{}());
         while (connected.load() && !stopRequested.load()) {
             if (welcome.sessionId == 0) {
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                interruptibleSleepMs(1000);
                 continue;
             }
 
@@ -564,14 +799,14 @@ struct Session::Impl {
                     lastUdpKeepalivePendingSinceNs.store(0);
                     (void)resetUdpInternal();
                     enterUdpRecoveryInternal();
-                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                    interruptibleSleepMs(250);
                     continue;
                 }
                 const int64_t lastSent = lastUdpKeepaliveSentNs.load();
                 if (lastSent == 0 || now - lastSent >= timings.rtxNs) {
                     sendUdpKeepalive();
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(timings.pendingPollMs));
+                interruptibleSleepMs(timings.pendingPollMs);
                 continue;
             }
 
@@ -583,7 +818,7 @@ struct Session::Impl {
             }
 
             const int64_t delayMs = jitteredKeepaliveDelayMs(intervalSec, rng);
-            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+            interruptibleSleepMs(delayMs);
         }
     }
 
@@ -644,12 +879,13 @@ struct Session::Impl {
     }
 
     Result connectInternal(const ConnectParams& params) {
-        if (connected.load()) {
-            return Result::AlreadyConnected;
+        if (connected.load() || disconnectStarted.load()) {
+            disconnectInternal();
+            waitUntilTransportStoppedInternal(-1);
         }
-
         closeSockets();
         joinThreads();
+        resetIoContextInternal();
 
         connectParams = params;
         const ParsedHost parsed = parseHostEndpoint(params.host, params.port);
@@ -663,6 +899,10 @@ struct Session::Impl {
         repeaterMode = params.repeaterMode;
         hostForWs = parsed.host;
         stopRequested.store(false);
+        wsThreadCompletesTeardown.store(false);
+        disconnectEventEmitted.store(false);
+        disconnectStarted.store(false);
+        transportFullyStopped.store(false);
         seq.store(0);
         welcome = WelcomeConfig{};
         txPcmBuffer.clear();
@@ -676,6 +916,7 @@ struct Session::Impl {
             auto results = resolver.resolve(hostForWs, std::to_string(params.port));
             wsStream.emplace(ioc);
             boost::asio::connect(wsStream->next_layer(), results.begin(), results.end());
+            setSocketRecvTimeoutMs(wsStream->next_layer(), kSocketRecvTimeoutMs);
             wsStream->handshake(hostForWs, "/ws");
 
             const tcp::endpoint tcpRemote = wsStream->next_layer().remote_endpoint();
@@ -685,15 +926,10 @@ struct Session::Impl {
             } else {
                 udpSocket.emplace(ioc, AsioUdp::endpoint(AsioUdp::v6(), 0));
             }
+            setSocketRecvTimeoutMs(*udpSocket, kSocketRecvTimeoutMs);
             udpRemote = AsioUdp::endpoint(peerAddr, static_cast<std::uint16_t>(params.port));
 
             connected.store(true);
-            Event connectedEv{};
-            connectedEv.type = EventType::Connected;
-            emitEvent(connectedEv);
-            Event udpReady{};
-            udpReady.type = EventType::UdpTransportReady;
-            emitEvent(udpReady);
             enterUdpRecoveryInternal();
 
             wsThread = std::thread([this] { wsReadLoop(); });
@@ -702,7 +938,7 @@ struct Session::Impl {
             return Result::Ok;
         } catch (const std::exception& ex) {
             Event err{};
-            err.type = EventType::Disconnected;
+            err.type = EventType::ConnectFailed;
             err.disconnectReason = ex.what();
             emitEvent(err);
             closeSockets();
@@ -711,16 +947,82 @@ struct Session::Impl {
         }
     }
 
-    void disconnectInternal() {
+    void haltTransportInternal() {
         stopRequested.store(true);
         connected.store(false);
+        signalStopWorkers();
         closeSockets();
-        joinThreads();
-        txPcmBuffer.clear();
-        endLocalTxIfNeeded();
-        Event ev{};
-        ev.type = EventType::Disconnected;
-        emitEvent(ev);
+    }
+
+    void waitUntilTransportStoppedInternal(int timeoutMs) {
+        const auto deadline = timeoutMs < 0
+            ? std::chrono::steady_clock::time_point::max()
+            : std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+
+        while (!transportFullyStopped.load()) {
+            if (timeoutMs >= 0 && std::chrono::steady_clock::now() >= deadline) {
+                haltTransportInternal();
+                break;
+            }
+            bool joinedTeardown = false;
+            {
+                std::unique_lock<std::mutex> lock(teardownThreadMu_);
+                if (teardownThread_.joinable()) {
+                    joinTeardownThreadLocked(lock);
+                    joinedTeardown = true;
+                }
+            }
+            if (transportFullyStopped.load()) {
+                break;
+            }
+            // haltTransport() without disconnectInternal() never sets transportFullyStopped
+            // and leaves no teardown worker — fall through to direct ws/udp joins below.
+            if (!joinedTeardown) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        {
+            std::unique_lock<std::mutex> lock(teardownThreadMu_);
+            if (teardownThread_.joinable()) {
+                if (timeoutMs < 0 || std::chrono::steady_clock::now() < deadline) {
+                    joinTeardownThreadLocked(lock);
+                } else {
+                    lock.unlock();
+                    teardownThread_.detach();
+                    lock.lock();
+                }
+            }
+        }
+
+        joinWsThreadUnlessCaller();
+        joinUdpKeepaliveThreadsUnlessCaller();
+        transportFullyStopped.store(true);
+    }
+
+    void disconnectInternal() {
+        bool expected = false;
+        if (!disconnectStarted.compare_exchange_strong(expected, true)) {
+            haltTransportInternal();
+            return;
+        }
+
+        transportFullyStopped.store(false);
+        haltTransportInternal();
+        emitDisconnectedOnce();
+
+        if (onWsThread()) {
+            wsThreadCompletesTeardown.store(true);
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(teardownThreadMu_);
+        if (teardownThread_.joinable()) {
+            // Never join on the UI/app thread; prior teardown continues in background.
+            teardownThread_.detach();
+        }
+        teardownThread_ = std::thread([this] { finalizeTransportTeardown(); });
     }
 
     Result feedTxPcmInternal(std::span<const int16_t> samples) {
@@ -739,9 +1041,26 @@ struct Session::Impl {
             if (opus.encode(frameSpan, encoded) != Result::Ok) {
                 return Result::Internal;
             }
-            sendOpusFrame(encoded.data(), encoded.size());
+            sendOpusFrame(encoded.data(), encoded.size(), txSignalStrength.load());
             txPcmBuffer.erase(txPcmBuffer.begin(), txPcmBuffer.begin() + frame);
         }
+        return Result::Ok;
+    }
+
+    Result sendTxOpusInternal(std::span<const uint8_t> opus, int signalStrength) {
+        if (!connected.load() || welcome.sessionId == 0) {
+            return Result::NotConnected;
+        }
+        if (opus.empty()) {
+            return Result::InvalidArg;
+        }
+        if (signalStrength < 0 || signalStrength > 255) {
+            return Result::InvalidArg;
+        }
+        if (signalStrength == static_cast<int>(pkt::kKeepaliveAckSignal)) {
+            return Result::InvalidArg;
+        }
+        sendOpusFrame(opus.data(), opus.size(), static_cast<uint8_t>(signalStrength));
         return Result::Ok;
     }
 
@@ -753,7 +1072,10 @@ struct Session::Impl {
         static constexpr int delays[] = {0, 20, 60};
         for (int d : delays) {
             if (d > 0) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(d));
+                interruptibleSleepMs(d);
+            }
+            if (stopRequested.load()) {
+                break;
             }
             sendUdpTxEof();
         }
@@ -785,6 +1107,7 @@ struct Session::Impl {
                 } else {
                     udpSocket.emplace(ioc, AsioUdp::endpoint(AsioUdp::v6(), 0));
                 }
+                setSocketRecvTimeoutMs(*udpSocket, kSocketRecvTimeoutMs);
                 udpRemote = AsioUdp::endpoint(peerAddr, static_cast<std::uint16_t>(connectParams.port));
                 localPort = static_cast<int>(udpSocket->local_endpoint().port());
             }
@@ -814,6 +1137,7 @@ Session::Session() : impl_(std::make_unique<Impl>()) {}
 
 Session::~Session() {
     impl_->disconnectInternal();
+    impl_->waitUntilTransportStoppedInternal(5000);
 }
 
 void Session::setCallbacks(SessionCallbacks callbacks) {
@@ -829,8 +1153,20 @@ void Session::disconnect() {
     impl_->disconnectInternal();
 }
 
+void Session::haltTransport() {
+    impl_->haltTransportInternal();
+}
+
+void Session::waitUntilTransportStopped(int timeoutMs) {
+    impl_->waitUntilTransportStoppedInternal(timeoutMs);
+}
+
 bool Session::isConnected() const {
     return impl_->connected.load();
+}
+
+bool Session::isSessionReady() const {
+    return impl_->connected.load() && impl_->welcome.sessionId != 0;
 }
 
 void Session::setAutoReconnect(bool enabled) {
@@ -843,6 +1179,10 @@ bool Session::autoReconnectEnabled() const {
 
 Result Session::feedTxPcm(std::span<const int16_t> samples) {
     return impl_->feedTxPcmInternal(samples);
+}
+
+Result Session::sendTxOpus(std::span<const uint8_t> opus, int signalStrength) {
+    return impl_->sendTxOpusInternal(opus, signalStrength);
 }
 
 Result Session::sendTxEofBurst() {

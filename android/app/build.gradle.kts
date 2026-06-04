@@ -55,6 +55,9 @@ val owalkieVersionName: String = run {
     val env = System.getenv("OWALKIE_VERSION_NAME")?.trim()?.takeIf { it.isNotEmpty() }
     prop ?: env ?: parseDescribeToVersionName(gitDescribeText)
 }
+val buildNativeRelay: Boolean =
+    (project.findProperty("owalkie.buildNativeRelay") as String?)?.trim()?.equals("true", ignoreCase = true) == true
+
 val owalkieVersionCode: Int = run {
     val prop = (project.findProperty("owalkie.versionCode") as String?)?.trim()?.toIntOrNull()
     val env = System.getenv("OWALKIE_VERSION_CODE")?.trim()?.toIntOrNull()
@@ -66,6 +69,8 @@ val owalkieVersionCode: Int = run {
 android {
     namespace = "ru.outsidepro_arts.owalkie"
     compileSdk = 35
+    // 16 KB page devices: aligned libc++_shared and flexible page sizes (NDK r27+).
+    ndkVersion = "27.2.12479018"
 
     val releaseKeystoreFile = rootProject.file("keystore/release-keystore.properties")
     val releaseKeystoreProps = Properties().apply {
@@ -80,6 +85,39 @@ android {
         targetSdk = 35
         versionCode = owalkieVersionCode
         versionName = owalkieVersionName
+
+        buildConfigField("boolean", "BUILD_NATIVE_RELAY", buildNativeRelay.toString())
+
+        if (buildNativeRelay) {
+            val vcpkgDir = (
+                System.getenv("VCPKG_ROOT")?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: "C:/dev/vcpkg"
+                ).replace('\\', '/')
+            val ndkDir = android.ndkDirectory.absolutePath.replace('\\', '/')
+            externalNativeBuild {
+                cmake {
+                    cppFlags += listOf("-std=c++20")
+                    arguments += listOf(
+                        "-DANDROID_STL=c++_shared",
+                        "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+                        "-DCMAKE_TOOLCHAIN_FILE=$vcpkgDir/scripts/buildsystems/vcpkg.cmake",
+                        "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$ndkDir/build/cmake/android.toolchain.cmake",
+                    )
+                }
+            }
+            ndk {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            }
+        }
+    }
+
+    if (buildNativeRelay) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
+        }
     }
 
     signingConfigs {
@@ -114,6 +152,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 
@@ -130,5 +169,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.13.1")
-    implementation("eu.buney.kopus:kopus:1.6")
+    // Opus encode/decode uses libowalkie_jni (owalkie-core); kopus pulls unaligned libopus_jni.so.
+    if (!buildNativeRelay) {
+        implementation("eu.buney.kopus:kopus:1.6")
+    }
 }

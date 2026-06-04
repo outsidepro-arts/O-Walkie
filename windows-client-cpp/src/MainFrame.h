@@ -115,6 +115,8 @@ private:
     void ForceAbortOutgoingForServerPttLock();
     void TogglePttTx();
     void RefreshPttUi();
+    /** Transport ready for PTT/RX (authoritative; UI connected_ may lag CallAfter). */
+    bool IsRelaySessionReady() const;
     void OnPttButtonClicked(wxCommandEvent& event);
     void RecordPttReleaseBurst();
     void ExtendPttReleaseBurstDecayTimer();

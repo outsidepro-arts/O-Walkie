@@ -20,11 +20,12 @@ execute_process(
 separate_arguments(WX_CXXFLAGS_LIST NATIVE_COMMAND "${WX_CXXFLAGS}")
 separate_arguments(WX_LIBS_LIST NATIVE_COMMAND "${WX_LIBS}")
 
-find_package(Boost REQUIRED COMPONENTS system)
 find_package(nlohmann_json REQUIRED)
 find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
+
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../owalkie-core" "${CMAKE_BINARY_DIR}/owalkie-core")
 
 add_executable(owalkie-desktop-cpp WIN32
     src/main.cpp
@@ -63,13 +64,14 @@ target_compile_definitions(owalkie-desktop-cpp PRIVATE
 target_include_directories(owalkie-desktop-cpp PRIVATE
     src
     "${MINIAUDIO_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../owalkie-core/include"
 )
 
 target_compile_options(owalkie-desktop-cpp PRIVATE ${WX_CXXFLAGS_LIST})
 
 target_link_libraries(owalkie-desktop-cpp PRIVATE
     ${WX_LIBS_LIST}
-    Boost::system
+    owalkie_core
     nlohmann_json::nlohmann_json
     PkgConfig::OPUS
     ws2_32

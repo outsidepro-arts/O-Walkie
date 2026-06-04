@@ -60,5 +60,13 @@ int run_json_tests() {
     EXPECT_EQ(owalkie_json_build_repeater_mode(1, buf, sizeof(buf), &written), OWALKIE_OK);
     EXPECT_TRUE(std::string(buf).find("\"enabled\":true") != std::string::npos);
 
+    const char* joined = R"({"type":"joined","channel":"teamA"})";
+    EXPECT_EQ(owalkie_json_parse_server_message(joined, 0, &ev, nullptr, 0), OWALKIE_OK);
+    EXPECT_EQ(ev.type, OWALKIE_EV_CONNECTING);
+
+    const char* pong = R"({"type":"pong"})";
+    EXPECT_EQ(owalkie_json_parse_server_message(pong, 0, &ev, nullptr, 0), OWALKIE_OK);
+    EXPECT_EQ(ev.type, OWALKIE_EV_CONNECTING);
+
     return 0;
 }

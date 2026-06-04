@@ -8,7 +8,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(OWALKIE_CORE_BUILD_TESTS "Build unit tests" ON)
 option(OWALKIE_CORE_BUILD_SESSION "Build session/transport (Boost.Asio + libopus)" ON)
 
-find_package(nlohmann_json REQUIRED)
+if(ANDROID)
+    set(OWALKIE_CORE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    include(FetchContent)
+    FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+    )
+    FetchContent_MakeAvailable(nlohmann_json)
+else()
+    find_package(nlohmann_json REQUIRED)
+endif()
 
 add_library(owalkie_core
     src/protocol.cpp
@@ -31,19 +42,33 @@ target_link_libraries(owalkie_core
 )
 
 if(OWALKIE_CORE_BUILD_SESSION)
-    find_package(Boost REQUIRED COMPONENTS system)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
+    if(ANDROID)
+        if(NOT Boost_NO_SYSTEM_PATHS)
+            if(DEFINED ENV{OWALKIE_BOOST_ROOT} AND NOT "$ENV{OWALKIE_BOOST_ROOT}" STREQUAL "")
+                set(BOOST_ROOT "$ENV{OWALKIE_BOOST_ROOT}")
+                set(Boost_NO_SYSTEM_PATHS ON)
+            endif()
+        endif()
+        find_package(Boost CONFIG REQUIRED COMPONENTS system)
+        find_package(Opus CONFIG REQUIRED)
+        set(OPUS_TARGET Opus::opus)
+    else()
+        find_package(Boost REQUIRED COMPONENTS system)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
+        set(OPUS_TARGET PkgConfig::OPUS)
+    endif()
 
     target_sources(owalkie_core PRIVATE
         src/opus_codec.cpp
         src/session.cpp
+        src/session_manager.cpp
     )
     target_compile_definitions(owalkie_core PUBLIC OWALKIE_CORE_HAS_SESSION=1)
     target_link_libraries(owalkie_core
         PUBLIC
             Boost::system
-            PkgConfig::OPUS
+            ${OPUS_TARGET}
     )
     if(WIN32)
         target_link_libraries(owalkie_core PUBLIC ws2_32)

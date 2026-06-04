@@ -9,6 +9,8 @@
 namespace owalkie {
 
 struct SessionCallbacks {
+    /// If set, inbound Opus payloads are delivered without decoding (desktop client path).
+    std::function<void(std::span<const uint8_t> opus)> onRxOpus;
     std::function<void(std::span<const int16_t> pcm, int sampleRate, int packetMs)> onRxPcm;
     std::function<void(const Event& event)> onSessionEvent;
 };
@@ -26,12 +28,18 @@ public:
     void setCallbacks(SessionCallbacks callbacks);
     Result connect(const ConnectParams& params);
     void disconnect();
+    /// Stop I/O without blocking the caller (safe during WS read/callback thread).
+    void haltTransport();
+    /// Block until teardown completes. Negative @p timeoutMs means no time limit.
+    void waitUntilTransportStopped(int timeoutMs = -1);
 
     bool isConnected() const;
+    bool isSessionReady() const;
     void setAutoReconnect(bool enabled);
     bool autoReconnectEnabled() const;
 
     Result feedTxPcm(std::span<const int16_t> samples);
+    Result sendTxOpus(std::span<const uint8_t> opus, int signalStrength);
     Result sendTxEofBurst();
     Result setRepeaterMode(bool enabled);
     Result resetUdpTransport();

@@ -1,0 +1,34 @@
+---
+description: Debug build and deploy workflow for Windows and Android targets
+alwaysApply: true
+---
+
+# Debug build workflow
+
+After **any code change** that touches a target (Windows, Android, owalkie-core used by those targets), build and verify that target’s **Debug** configuration before considering the task done.
+
+## Windows (`windows-client-cpp`)
+
+- Configure and build Debug into **`windows-client-cpp/build-debug/`** (use `-B build-debug`, not `build`).
+- Example:
+
+```powershell
+cmake -G Ninja -B build-debug -S . -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug
+```
+
+- Run or test from `build-debug/` (and `build-debug/dist/` if the bundling step runs).
+
+## Android (`android/`)
+
+1. Build debug: `./gradlew :app:assembleDebug` (or `:app:installDebug` when deploying).
+2. Run `adb devices`.
+3. If a device is listed as `device`, install and launch:
+   - `./gradlew :app:installDebug`
+   - `adb shell monkey -p ru.outsidepro_arts.owalkie -c android.intent.category.LAUNCHER 1`
+
+APK output: `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+## owalkie-core
+
+When core changes affect mobile/desktop JNI, rebuild the consuming target(s) above; optionally run `owalkie-core` tests (`cmake --build build --target owalkie_core_tests`).

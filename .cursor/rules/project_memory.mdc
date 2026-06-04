@@ -112,6 +112,8 @@ alwaysApply: true
 - Android: added TX single-run guard in `WalkieService` (`txLoopRunning` CAS) to prevent duplicate capture/transmit coroutine starts during reconnect/race conditions under heavy PTT activity.
 - Android: updated UI connection tones: manual connect start now plays `{932.33, 1174.66, 1396.91, 1864.66}` sequence, manual disconnect/reconnect step uses reverse sequence, and successful handshake/parameter init "connected" tone is now `{1400Hz 40ms, pause 50ms, 1700Hz 50ms}`.
 - Android: connection error tone now plays for protocol incompatibility, failed connect attempts, and unexpected link loss while user-requested connection remains active.
+- Android native relay (2026-06): SessionManager + async `disconnect()` (halt sync, join threads in background); UI disconnect on `Dispatchers.IO`; `disconnectAllAndWait` on service destroy — fixes UI freeze on disconnect (was blocking JNI `nativeDisconnect` + `thread::join` in core).
+- Android: `suppressTransientConnectionErrorTone` in `MainActivity` during `ACTION_SWITCH_SERVER` — intentional profile tear-down must not trigger link-loss / failed-connect error beeps (only real protocol errors still play).
 - Windows: switched desktop build to GUI subsystem (`WIN32`) so release executable runs without background console window.
 - Windows: legacy `windows-client` WPF project removed and committed as retired after migration to C++ desktop client.
 - Windows: finalized release-facing naming (window title `O-Walkie Desktop`, output `owalkie-desktop.exe`), added build/debug ignores in `.gitignore`, and treated desktop target as production release path.

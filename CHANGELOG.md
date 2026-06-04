@@ -13,7 +13,8 @@ This project follows a lightweight Keep a Changelog style and Semantic Versionin
 - _(add behavior/config changes here)_
 
 ### Fixed
-- _(add bug fixes here)_
+- Android native relay: disconnect no longer blocks the service main thread (async session teardown in owalkie-core; disconnect on a background thread).
+- Android: connection error tone no longer plays during intentional server profile switch (next/prev server while staying connected).
 
 ## [v0.1.5] - 2026-04-29
 
