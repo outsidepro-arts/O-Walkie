@@ -39,15 +39,14 @@ public:
 
     bool isValid(SessionId id) const;
     bool isSessionReady(SessionId id) const;
+    Result getSessionInfo(SessionId id, SessionState* out_state, bool* out_ready) const;
 
-    Result sendTxOpus(SessionId id, std::span<const uint8_t> opus, int signalStrength);
-    Result sendTxEofBurst(SessionId id);
+    Result txStart(SessionId id);
+    Result pushTxPcm(SessionId id, std::span<const int16_t> samples);
+    Result txEnd(SessionId id);
     Result setRepeaterMode(SessionId id, bool enabled);
-    Result setTxSignalStrength(SessionId id, int strength);
-    int txSignalStrength(SessionId id) const;
     void setPowerProfile(SessionId id, PowerProfile profile);
-    void notifyNetworkChanged(SessionId id);
-    Result resetUdpTransport(SessionId id);
+    Result punchNat(SessionId id);
 
 private:
     SessionManager() = default;

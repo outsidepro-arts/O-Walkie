@@ -1,5 +1,7 @@
 #include "RelayClient.h"
 
+#include "owalkie/client_events.hpp"
+
 #include <algorithm>
 #include <atomic>
 
@@ -42,15 +44,20 @@ void RelayClient::PostConnectionLostOnce() {
 }
 
 void RelayClient::HandleSessionEvent(const owalkie::Event& event) {
+    if (!owalkie::client_events::isVisible(event.type)) {
+        return;
+    }
     switch (event.type) {
-        case owalkie::EventType::Connecting:
-            if (onStatus_) {
-                onStatus_("Connecting");
-            }
-            break;
         case owalkie::EventType::SessionReady: {
             connectionLostPosted_.store(false);
             const WelcomeConfig cfg = MapWelcome(event.welcome);
+            {
+                std::lock_guard<std::mutex> lg(stateMu_);
+                cfg_ = cfg;
+            }
+            if (onWelcome_) {
+                onWelcome_(cfg);
+            }
             if (onConnected_) {
                 onConnected_(true);
             }
@@ -95,20 +102,6 @@ void RelayClient::HandleSessionEvent(const owalkie::Event& event) {
                 }
             }
             break;
-        case owalkie::EventType::Welcome: {
-            const WelcomeConfig local = MapWelcome(event.welcome);
-            {
-                std::lock_guard<std::mutex> lg(stateMu_);
-                cfg_ = local;
-            }
-            if (onWelcome_) {
-                onWelcome_(local);
-            }
-            if (onStatus_) {
-                onStatus_("Welcome received");
-            }
-            break;
-        }
         case owalkie::EventType::RxBroadcastStart:
             if (onRxBroadcastStart_) {
                 onRxBroadcastStart_(event.rxBusyMode);
@@ -139,15 +132,6 @@ void RelayClient::HandleSessionEvent(const owalkie::Event& event) {
                 onTxStop_();
             }
             break;
-        case owalkie::EventType::UdpTransportLost:
-            if (onStatus_) {
-                onStatus_(event.disconnectReason.empty()
-                    ? "UDP transport lost"
-                    : std::string("UDP transport lost: ") + event.disconnectReason);
-            }
-            break;
-        case owalkie::EventType::UdpTransportReady:
-            break;
         default:
             break;
     }
@@ -165,11 +149,13 @@ bool RelayClient::Connect(const std::string& host, int serverPort, const std::st
     connectionLostPosted_.store(false);
 
     owalkie::SessionCallbacks callbacks{};
-    callbacks.onRxOpus = [this](std::span<const uint8_t> opus) {
-        if (!onOpusFrame_ || opus.empty()) {
+    callbacks.onRxPcm = [this](std::span<const int16_t> pcm, int sampleRate, int packetMs) {
+        (void)sampleRate;
+        (void)packetMs;
+        if (!onPcmFrame_ || pcm.empty()) {
             return;
         }
-        onOpusFrame_(std::vector<uint8_t>(opus.begin(), opus.end()));
+        onPcmFrame_(pcm.data(), pcm.size());
     };
     callbacks.onSessionEvent = [this](const owalkie::Event& event) {
         HandleSessionEvent(event);
@@ -224,21 +210,27 @@ WelcomeConfig RelayClient::CurrentConfig() const {
     return cfg_;
 }
 
-void RelayClient::SendOpusFrame(const uint8_t* data, size_t size, uint8_t signal) {
-    if (!IsConnected() || !data || size == 0) {
-        return;
+bool RelayClient::TxStart() {
+    if (!IsConnected()) {
+        return false;
     }
-    (void)owalkie::SessionManager::instance().sendTxOpus(
-        sessionId_,
-        std::span<const uint8_t>(data, size),
-        static_cast<int>(signal));
+    return owalkie::SessionManager::instance().txStart(sessionId_) == owalkie::Result::Ok;
 }
 
-void RelayClient::SendTxEofBurst() {
+void RelayClient::PushTxPcm(const int16_t* samples, size_t count) {
+    if (!IsConnected() || !samples || count == 0) {
+        return;
+    }
+    (void)owalkie::SessionManager::instance().pushTxPcm(
+        sessionId_,
+        std::span<const int16_t>(samples, count));
+}
+
+void RelayClient::TxEnd() {
     if (sessionId_ == owalkie::kInvalidSessionId) {
         return;
     }
-    (void)owalkie::SessionManager::instance().sendTxEofBurst(sessionId_);
+    (void)owalkie::SessionManager::instance().txEnd(sessionId_);
 }
 
 void RelayClient::SetRepeaterMode(bool enabled) {

@@ -29,7 +29,7 @@ public:
     using StatusCallback = std::function<void(const std::string&)>;
     using ConnectedCallback = std::function<void(bool)>;
     using WelcomeCallback = std::function<void(const WelcomeConfig&)>;
-    using OpusFrameCallback = std::function<void(const std::vector<uint8_t>&)>;
+    using PcmFrameCallback = std::function<void(const int16_t* samples, size_t count)>;
     using TxCountdownStartCallback = std::function<void()>;
     using ServerPttLockCallback = std::function<void(int displaySec)>;
     using ServerPttUnlockCallback = std::function<void()>;
@@ -49,14 +49,15 @@ public:
     bool AutoReconnectDesired() const;
     WelcomeConfig CurrentConfig() const;
 
-    void SendOpusFrame(const uint8_t* data, size_t size, uint8_t signal);
-    void SendTxEofBurst();
+    bool TxStart();
+    void PushTxPcm(const int16_t* samples, size_t count);
+    void TxEnd();
     void SetRepeaterMode(bool enabled);
 
     void SetStatusCallback(StatusCallback cb) { onStatus_ = std::move(cb); }
     void SetConnectedCallback(ConnectedCallback cb) { onConnected_ = std::move(cb); }
     void SetWelcomeCallback(WelcomeCallback cb) { onWelcome_ = std::move(cb); }
-    void SetOpusFrameCallback(OpusFrameCallback cb) { onOpusFrame_ = std::move(cb); }
+    void SetPcmFrameCallback(PcmFrameCallback cb) { onPcmFrame_ = std::move(cb); }
     void SetTxCountdownStartCallback(TxCountdownStartCallback cb) { onTxCountdownStart_ = std::move(cb); }
     void SetServerPttLockCallback(ServerPttLockCallback cb) { onServerPttLock_ = std::move(cb); }
     void SetServerPttUnlockCallback(ServerPttUnlockCallback cb) { onServerPttUnlock_ = std::move(cb); }
@@ -81,7 +82,7 @@ private:
     StatusCallback onStatus_;
     ConnectedCallback onConnected_;
     WelcomeCallback onWelcome_;
-    OpusFrameCallback onOpusFrame_;
+    PcmFrameCallback onPcmFrame_;
     TxCountdownStartCallback onTxCountdownStart_;
     ServerPttLockCallback onServerPttLock_;
     ServerPttUnlockCallback onServerPttUnlock_;

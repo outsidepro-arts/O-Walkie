@@ -22,7 +22,6 @@ add_subdirectory("${OWALKIE_REPO_ROOT}/owalkie-core" "${CMAKE_BINARY_DIR}/owalki
 
 add_library(owalkie_jni SHARED
     owalkie_jni.cpp
-    owalkie_opus_jni.cpp
 )
 
 target_include_directories(owalkie_jni PRIVATE

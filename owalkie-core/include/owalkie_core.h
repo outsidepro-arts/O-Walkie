@@ -24,33 +24,18 @@ typedef enum owalkie_result {
 typedef uint64_t owalkie_session_id;
 inline owalkie_session_id owalkie_invalid_session_id(void) { return 0; }
 
-typedef struct owalkie_session owalkie_session_t;
-
+/** Client-visible session events (internal transport / welcome steps are not emitted). */
 typedef enum owalkie_event_type {
-    OWALKIE_EV_CONNECTING = 0,
-    OWALKIE_EV_CONNECTED,
+    OWALKIE_EV_READY = 0,
     OWALKIE_EV_DISCONNECTED,
     OWALKIE_EV_PROTOCOL_ERROR,
-
-    OWALKIE_EV_WELCOME,
-
+    OWALKIE_EV_CONNECT_FAILED,
     OWALKIE_EV_RX_BROADCAST_START,
     OWALKIE_EV_RX_BROADCAST_END,
-
-    OWALKIE_EV_LOCAL_TX_START,
-    OWALKIE_EV_LOCAL_TX_END,
-
     OWALKIE_EV_PTT_LOCKED,
     OWALKIE_EV_PTT_UNLOCKED,
-
     OWALKIE_EV_TX_COUNTDOWN_START,
     OWALKIE_EV_TX_STOP,
-
-    OWALKIE_EV_UDP_TRANSPORT_READY,
-    OWALKIE_EV_UDP_TRANSPORT_LOST,
-
-    OWALKIE_EV_CONNECT_FAILED = 15,
-    OWALKIE_EV_SESSION_READY = 16,
 } owalkie_event_type;
 
 typedef struct owalkie_welcome_config {
@@ -95,16 +80,18 @@ typedef struct owalkie_event {
     } u;
 } owalkie_event;
 
-typedef struct owalkie_session_state {
+/** Thread-safe snapshot of a managed session (welcome/transport/runtime flags). */
+typedef struct owalkie_session_info {
+    int ready;
     int connected;
     int udp_ready;
     int receiving;
     int local_tx_active;
     int ptt_server_locked;
     int ptt_lock_display_sec;
+    int has_config;
     owalkie_welcome_config config;
-    int has_welcome;
-} owalkie_session_state;
+} owalkie_session_info;
 
 typedef struct owalkie_connect_params {
     const char* host;
@@ -121,28 +108,22 @@ typedef void (*owalkie_on_rx_pcm_fn)(
     int sample_rate,
     int packet_ms);
 
-typedef void (*owalkie_on_session_event_fn)(void* user_data, const owalkie_event* event);
-
-typedef struct owalkie_session_callbacks {
-    owalkie_on_rx_pcm_fn on_rx_pcm;
-    owalkie_on_session_event_fn on_session_event;
-    void* user_data;
-} owalkie_session_callbacks;
-
 typedef void (*owalkie_managed_event_fn)(
     void* user_data,
     owalkie_session_id session_id,
     const owalkie_event* event);
 
-typedef void (*owalkie_managed_rx_opus_fn)(
+typedef void (*owalkie_managed_rx_pcm_fn)(
     void* user_data,
     owalkie_session_id session_id,
-    const uint8_t* opus,
-    size_t opus_len);
+    const int16_t* samples,
+    size_t sample_count,
+    int sample_rate,
+    int packet_ms);
 
 typedef struct owalkie_managed_callbacks {
     owalkie_managed_event_fn on_session_event;
-    owalkie_managed_rx_opus_fn on_rx_opus;
+    owalkie_managed_rx_pcm_fn on_rx_pcm;
     void* user_data;
 } owalkie_managed_callbacks;
 
@@ -192,29 +173,6 @@ owalkie_result owalkie_json_parse_server_message(
     char* string_buf,
     size_t string_buf_size);
 
-owalkie_result owalkie_json_build_join(
-    const char* channel,
-    char* out_buf,
-    size_t out_buf_size,
-    size_t* out_written);
-
-owalkie_result owalkie_json_build_udp_hello(
-    int local_udp_port,
-    char* out_buf,
-    size_t out_buf_size,
-    size_t* out_written);
-
-owalkie_result owalkie_json_build_repeater_mode(
-    int enabled,
-    char* out_buf,
-    size_t out_buf_size,
-    size_t* out_written);
-
-owalkie_result owalkie_json_build_heartbeat(
-    char* out_buf,
-    size_t out_buf_size,
-    size_t* out_written);
-
 /* --- signal utilities --- */
 owalkie_result owalkie_signal_generate_pcm(
     const owalkie_signal_pattern* pattern,
@@ -246,6 +204,11 @@ typedef enum owalkie_power_profile {
     OWALKIE_POWER_ACTIVE_TX,
 } owalkie_power_profile;
 
+typedef enum owalkie_signal_mode {
+    OWALKIE_SIGNAL_WIFI = 0,
+    OWALKIE_SIGNAL_CELL = 1,
+} owalkie_signal_mode;
+
 /* --- managed sessions (requires OWALKIE_CORE_HAS_SESSION) --- */
 owalkie_session_id owalkie_connect(
     const owalkie_connect_params* params,
@@ -258,72 +221,35 @@ void owalkie_disconnect_all_and_wait(int timeout_ms);
 int owalkie_session_id_valid(owalkie_session_id session_id);
 int owalkie_session_id_ready(owalkie_session_id session_id);
 
-owalkie_result owalkie_send_tx_opus(
+/**
+ * Fills @p out_info for an active managed session.
+ * @p opus_application_buf may be NULL; when set, copies negotiated Opus application string.
+ */
+owalkie_result owalkie_get_session_info(
     owalkie_session_id session_id,
-    const uint8_t* opus,
-    size_t opus_len,
-    int signal_strength);
+    owalkie_session_info* out_info,
+    char* opus_application_buf,
+    size_t opus_application_buf_size);
 
-owalkie_result owalkie_send_tx_eof_burst(owalkie_session_id session_id);
-owalkie_result owalkie_set_repeater_mode(owalkie_session_id session_id, int enabled);
-owalkie_result owalkie_set_tx_signal_strength(owalkie_session_id session_id, int strength_0_255);
-int owalkie_get_tx_signal_strength(owalkie_session_id session_id);
-void owalkie_set_power_profile(owalkie_session_id session_id, owalkie_power_profile profile);
-void owalkie_notify_network_changed(owalkie_session_id session_id);
-owalkie_result owalkie_reset_udp_transport(owalkie_session_id session_id);
+owalkie_result owalkie_tx_start(owalkie_session_id session_id);
 
-/* --- legacy session pointer API (deprecated; tests) --- */
-owalkie_result owalkie_session_create(owalkie_session_t** out_session);
-void owalkie_session_destroy(owalkie_session_t* session);
-
-void owalkie_session_set_callbacks(
-    owalkie_session_t* session,
-    const owalkie_session_callbacks* callbacks);
-
-owalkie_result owalkie_session_connect(
-    owalkie_session_t* session,
-    const owalkie_connect_params* params);
-
-void owalkie_session_disconnect(owalkie_session_t* session);
-
-int owalkie_session_is_connected(const owalkie_session_t* session);
-
-void owalkie_session_set_auto_reconnect(owalkie_session_t* session, int enabled);
-int owalkie_session_auto_reconnect_enabled(const owalkie_session_t* session);
-
-owalkie_result owalkie_session_feed_tx_pcm(
-    owalkie_session_t* session,
+owalkie_result owalkie_push_tx_pcm(
+    owalkie_session_id session_id,
     const int16_t* samples,
     size_t sample_count);
 
-owalkie_result owalkie_session_send_tx_opus(
-    owalkie_session_t* session,
-    const uint8_t* opus,
-    size_t opus_len,
-    int signal_strength);
+/** Ends local TX and sends UDP EOF burst. */
+owalkie_result owalkie_tx_end(owalkie_session_id session_id);
+owalkie_result owalkie_set_repeater_mode(owalkie_session_id session_id, int enabled);
+void owalkie_set_power_profile(owalkie_session_id session_id, owalkie_power_profile profile);
 
-owalkie_result owalkie_session_send_tx_eof_burst(owalkie_session_t* session);
+/** Optional one-shot UDP NAT punch (keepalive/recovery runs automatically). */
+owalkie_result owalkie_punch_nat(owalkie_session_id session_id);
 
-owalkie_result owalkie_session_set_repeater_mode(owalkie_session_t* session, int enabled);
-
-owalkie_result owalkie_session_reset_udp_transport(owalkie_session_t* session);
-
-void owalkie_session_get_state(
-    const owalkie_session_t* session,
-    owalkie_session_state* out_state);
-
-void owalkie_session_set_power_profile(owalkie_session_t* session, owalkie_power_profile profile);
-owalkie_power_profile owalkie_session_get_power_profile(const owalkie_session_t* session);
-
-void owalkie_session_enter_udp_recovery(owalkie_session_t* session);
-void owalkie_session_notify_network_changed(owalkie_session_t* session);
-owalkie_result owalkie_session_punch_udp_nat(owalkie_session_t* session);
-
-/* Uplink signal byte for outgoing audio UDP frames (0..255, except 254). Default: 255. */
-owalkie_result owalkie_session_set_tx_signal_strength(
-    owalkie_session_t* session,
-    int strength_0_255);
-int owalkie_session_get_tx_signal_strength(const owalkie_session_t* session);
+/** Report link metrics; core maps to uplink signal byte 0..255 for all sessions. */
+owalkie_result owalkie_report_signal(owalkie_signal_mode mode, int value);
+owalkie_result owalkie_clear_signal(owalkie_signal_mode mode);
+int owalkie_get_uplink_signal_byte(void);
 
 #ifdef __cplusplus
 }

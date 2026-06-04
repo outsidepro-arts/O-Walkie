@@ -21,10 +21,6 @@ separate_arguments(WX_CXXFLAGS_LIST NATIVE_COMMAND "${WX_CXXFLAGS}")
 separate_arguments(WX_LIBS_LIST NATIVE_COMMAND "${WX_LIBS}")
 
 find_package(nlohmann_json REQUIRED)
-find_package(PkgConfig REQUIRED)
-
-pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
-
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../owalkie-core" "${CMAKE_BINARY_DIR}/owalkie-core")
 
 add_executable(owalkie-desktop-cpp WIN32
@@ -73,7 +69,6 @@ target_link_libraries(owalkie-desktop-cpp PRIVATE
     ${WX_LIBS_LIST}
     owalkie_core
     nlohmann_json::nlohmann_json
-    PkgConfig::OPUS
     ws2_32
     iphlpapi
 )

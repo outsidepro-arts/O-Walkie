@@ -13,8 +13,6 @@
 #include <memory>
 #include <thread>
 
-#include <opus/opus.h>
-
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -408,7 +406,6 @@ bool AudioEngine::Initialize() {
         }
         contextReady_ = true;
     }
-    RecreateCodecUnlocked();
     if (onStatus_) {
         onStatus_("Audio initialized (miniaudio)");
     }
@@ -442,14 +439,6 @@ void AudioEngine::Shutdown() {
         std::unique_lock<std::mutex> lk(mu_, std::try_to_lock);
         if (lk.owns_lock()) {
             CloseOutputStreamLocked();
-            if (encoder_) {
-                opus_encoder_destroy(encoder_);
-                encoder_ = nullptr;
-            }
-            if (decoder_) {
-                opus_decoder_destroy(decoder_);
-                decoder_ = nullptr;
-            }
             if (contextReady_) {
                 ma_context_uninit(&context_);
                 contextReady_ = false;
@@ -473,14 +462,9 @@ void AudioEngine::Reconfigure(const WelcomeConfig& cfg) {
     const bool timingChanged = cfg.sampleRate != sampleRate_ || cfg.packetMs != packetMs_;
     sampleRate_ = cfg.sampleRate;
     packetMs_ = cfg.packetMs;
-    bitrate_ = cfg.bitrate;
-    complexity_ = cfg.complexity;
-    fec_ = cfg.fec;
-    dtx_ = cfg.dtx;
     if (timingChanged) {
         CloseOutputStreamLocked();
     }
-    RecreateCodecUnlocked();
     EnsurePlaybackDeviceLocked();
 }
 
@@ -656,37 +640,6 @@ std::vector<int16_t> AudioEngine::GenerateSignalPcm(int sampleRate, const Signal
     return out;
 }
 
-void AudioEngine::RecreateCodecUnlocked() {
-    if (encoder_) {
-        opus_encoder_destroy(encoder_);
-        encoder_ = nullptr;
-    }
-    if (decoder_) {
-        opus_decoder_destroy(decoder_);
-        decoder_ = nullptr;
-    }
-
-    int err = OPUS_OK;
-    encoder_ = opus_encoder_create(sampleRate_, 1, OPUS_APPLICATION_VOIP, &err);
-    if (err == OPUS_OK && encoder_) {
-        opus_encoder_ctl(encoder_, OPUS_SET_BITRATE(bitrate_));
-        opus_encoder_ctl(encoder_, OPUS_SET_COMPLEXITY(complexity_));
-        opus_encoder_ctl(encoder_, OPUS_SET_INBAND_FEC(fec_ ? 1 : 0));
-        opus_encoder_ctl(encoder_, OPUS_SET_DTX(dtx_ ? 1 : 0));
-    }
-    decoder_ = opus_decoder_create(sampleRate_, 1, &err);
-}
-
-void AudioEngine::RecreateRxDecoderUnlocked() {
-    if (decoder_) {
-        opus_decoder_destroy(decoder_);
-        decoder_ = nullptr;
-    }
-    int err = OPUS_OK;
-    decoder_ = opus_decoder_create(sampleRate_, 1, &err);
-    refresh_rx_decoder_.store(false);
-}
-
 int AudioEngine::FrameSamples() const {
     return (sampleRate_ * packetMs_) / 1000;
 }
@@ -738,7 +691,7 @@ void AudioEngine::EnsurePlaybackDeviceLocked() {
 bool AudioEngine::StartTransmit() {
     {
         std::lock_guard<std::mutex> lg(mu_);
-        if (captureActive_ || signalStreaming_.load() || !encoder_ || !contextReady_) {
+        if (captureActive_ || signalStreaming_.load() || !contextReady_) {
             return false;
         }
 
@@ -765,7 +718,6 @@ bool AudioEngine::StartTransmit() {
         }
 
         captureFifo_.clear();
-        opusScratch_.resize(1275);
         lastRxDuringLocalTxNs_.store(0);
         lastParallelCollisionPulseNs_.store(0);
         transmitting_.store(true);
@@ -786,7 +738,6 @@ bool AudioEngine::StartTransmit() {
 
 void AudioEngine::StopTransmit() {
     transmitting_.store(false);
-    refresh_rx_decoder_.store(true);
     PollParallelTxCollisionState(CurrentSteadyNs());
     if (shuttingDown_.load(std::memory_order_acquire)) {
         for (int attempt = 0; attempt < 50; ++attempt) {
@@ -807,11 +758,7 @@ void AudioEngine::RequestAbortOutgoingSignalStream() {
     signalStreamAbortRequested_.store(true, std::memory_order_release);
 }
 
-void AudioEngine::ScheduleRxResumeHoldoff(int /*multiplier*/) {
-    // No time-based RX mute after local TX/Roger/Call; next inbound frame may decode immediately.
-    // Flag RX decoder refresh after periods when inbound audio was dropped during local TX.
-    refresh_rx_decoder_.store(true);
-}
+void AudioEngine::ScheduleRxResumeHoldoff(int /*multiplier*/) {}
 
 bool AudioEngine::StreamRogerSignal() {
     if (transmitting_.load() || signalStreaming_.exchange(true)) {
@@ -1072,7 +1019,7 @@ bool AudioEngine::StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal) {
     int frameMs = 0;
     {
         std::lock_guard<std::mutex> lg(mu_);
-        if (!encoder_ || !contextReady_) {
+        if (!contextReady_) {
             return false;
         }
         frameSamples = FrameSamples();
@@ -1087,7 +1034,6 @@ bool AudioEngine::StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal) {
                                 std::chrono::steady_clock::now().time_since_epoch())
                                 .count();
 
-    std::vector<uint8_t> opusBuf(1275);
     std::vector<int16_t> frame(static_cast<size_t>(frameSamples), 0);
     size_t offset = 0;
     while (offset < pcmSignal.size()) {
@@ -1100,16 +1046,8 @@ bool AudioEngine::StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal) {
         std::memcpy(frame.data(), pcmSignal.data() + offset, copyN * sizeof(int16_t));
         offset += copyN;
 
-        int encoded = 0;
-        {
-            std::lock_guard<std::mutex> lg(mu_);
-            if (!encoder_) {
-                return false;
-            }
-            encoded = opus_encode(encoder_, frame.data(), frameSamples, opusBuf.data(), static_cast<int>(opusBuf.size()));
-        }
-        if (encoded > 0 && onEncodedFrame_) {
-            onEncodedFrame_(opusBuf.data(), static_cast<size_t>(encoded), 255);
+        if (onPcmFrame_) {
+            onPcmFrame_(frame.data(), frame.size());
         }
         if (offset < pcmSignal.size()) {
             nextFrameAtNs += frameNs;
@@ -1135,10 +1073,10 @@ void AudioEngine::OnCaptureFrames(const void* pInput, ma_uint32 frameCount) {
     }
     const auto* s = static_cast<const int16_t*>(pInput);
     captureFifo_.insert(captureFifo_.end(), s, s + frameCount);
-    DrainCaptureFifoOpus();
+    DrainCaptureFifo();
 }
 
-void AudioEngine::DrainCaptureFifoOpus() {
+void AudioEngine::DrainCaptureFifo() {
     const int frame = FrameSamples();
     if (frame <= 0) {
         return;
@@ -1156,23 +1094,10 @@ void AudioEngine::DrainCaptureFifoOpus() {
             PollParallelTxCollisionState(CurrentSteadyNs());
         }
 
-        int bytes = 0;
-        {
-            std::lock_guard<std::mutex> lg(mu_);
-            if (!encoder_) {
-                return;
-            }
-            bytes = opus_encode(
-                encoder_,
-                captureFifo_.data(),
-                frame,
-                opusScratch_.data(),
-                static_cast<int>(opusScratch_.size()));
+        if (onPcmFrame_) {
+            onPcmFrame_(captureFifo_.data(), static_cast<size_t>(frame));
         }
         captureFifo_.erase(captureFifo_.begin(), captureFifo_.begin() + frame);
-        if (bytes > 0 && onEncodedFrame_) {
-            onEncodedFrame_(opusScratch_.data(), static_cast<size_t>(bytes), 255);
-        }
     }
 }
 
@@ -1181,8 +1106,8 @@ void AudioEngine::SetRxVolumePercent(int percent) {
     rxVolumePercent_.store(p, std::memory_order_relaxed);
 }
 
-void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
-    if (opus.empty() || shuttingDown_.load(std::memory_order_acquire)) {
+void AudioEngine::OnIncomingPcmFrame(const int16_t* samples, size_t count) {
+    if (!samples || count == 0 || shuttingDown_.load(std::memory_order_acquire)) {
         return;
     }
     const int64_t now = CurrentSteadyNs();
@@ -1195,36 +1120,19 @@ void AudioEngine::OnIncomingOpusFrame(const std::vector<uint8_t>& opus) {
             PlayVibrationImitationPulse(kParallelCollisionPulseMs);
         }
         PollParallelTxCollisionState(now);
-        refresh_rx_decoder_.store(true);
         return;
     }
 
-    if (shuttingDown_.load(std::memory_order_acquire)) {
-        return;
-    }
     std::lock_guard<std::mutex> lg(mu_);
     if (shuttingDown_.load(std::memory_order_acquire)) {
         return;
     }
-    if (!decoder_) {
-        return;
-    }
-    if (refresh_rx_decoder_.exchange(false)) {
-        RecreateRxDecoderUnlocked();
-    }
-
     EnsurePlaybackDeviceLocked();
     if (!playbackRbReady_ || !playbackActive_) {
         return;
     }
 
-    const int frame = FrameSamples();
-    std::vector<int16_t> pcm(static_cast<size_t>(frame));
-    const int decoded = opus_decode(decoder_, opus.data(), static_cast<int>(opus.size()), pcm.data(), frame, 0);
-    if (decoded <= 0) {
-        return;
-    }
-
+    std::vector<int16_t> pcm(samples, samples + count);
     const int pct = rxVolumePercent_.load(std::memory_order_relaxed);
     if (pct != kRxVolumeDefaultPercent) {
         const double gain = static_cast<double>(pct) / 100.0;

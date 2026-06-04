@@ -35,9 +35,6 @@ import android.telephony.TelephonyManager
 import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import ru.outsidepro_arts.owalkie.audio.OpusCodec
-import ru.outsidepro_arts.owalkie.audio.OpusConfig
-import ru.outsidepro_arts.owalkie.audio.OpusCodecFactory
 import ru.outsidepro_arts.owalkie.model.CallingPatternStore
 import ru.outsidepro_arts.owalkie.model.expandedCallingPoints
 import ru.outsidepro_arts.owalkie.model.BluetoothHeadsetRouteStore
@@ -58,16 +55,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
-import org.json.JSONObject
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
-import java.net.UnknownHostException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
@@ -79,9 +66,6 @@ import kotlin.random.Random
 
 class WalkieService : Service(), NativeRelayBridge.Host {
     companion object {
-        /** Relay transport via owalkie-core JNI when [BuildConfig.BUILD_NATIVE_RELAY] is true. */
-        val USE_NATIVE_RELAY: Boolean = BuildConfig.BUILD_NATIVE_RELAY
-
         const val ACTION_START = "ru.outsidepro_arts.owalkie.action.START"
         /** Reconnect to another server profile while keeping [desiredConnection]. */
         const val ACTION_SWITCH_SERVER = "ru.outsidepro_arts.owalkie.action.SWITCH_SERVER"
@@ -153,7 +137,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
         private const val DEFAULT_SAMPLE_RATE = 8000
         private const val LOCAL_PLAYBACK_SAMPLE_RATE = 44100
-        private const val CHANNELS = 1
         private const val DEFAULT_PACKET_MS = 20
         private const val PROTOCOL_VERSION = 2
         private const val ROGER_TAIL_MS = 40
@@ -162,24 +145,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         private const val PTT_RELEASE_BURST_BLOCK_THRESHOLD = 3
         private const val CALL_LOCAL_GAIN_DB = -10.0
         private const val PLAYBACK_BUFFER_FRAMES = 2
-        private const val UDP_KEEPALIVE_IDLE_INTERVAL_SEC = 12L
-        private const val UDP_KEEPALIVE_RECOVERY_INTERVAL_SEC = 6L
-        // Softer keepalive in background: foreground call signal / TX already punches NAT often.
-        private const val UDP_BG_KEEPALIVE_IDLE_INTERVAL_SEC = 50L
-        private const val UDP_BG_KEEPALIVE_RECOVERY_INTERVAL_SEC = 12L
-        private const val UDP_KEEPALIVE_RECOVERY_WINDOW_SEC = 90L
-        private const val UDP_KEEPALIVE_JITTER_PERCENT = 15L
         private const val WS_RECONNECT_JITTER_PERCENT = 20L
         private const val NATIVE_RELAY_SHUTDOWN_WAIT_MS = 3000
-        private const val NETWORK_RECOVERY_MIN_INTERVAL_MS = 3000L
-        private const val UDP_RECV_TIMEOUT_FOREGROUND_MS = 300
-        private const val UDP_RECV_TIMEOUT_BACKGROUND_MS = 10000
-        private const val UDP_KEEPALIVE_SIGNAL = 255
-        private const val UDP_KEEPALIVE_ACK_SIGNAL = 254
-        private const val UDP_KEEPALIVE_RTX_FOREGROUND_MS = 1000L
-        private const val UDP_KEEPALIVE_RTX_BACKGROUND_MS = 2000L
-        private const val UDP_KEEPALIVE_LOST_FOREGROUND_MS = 8000L
-        private const val UDP_KEEPALIVE_LOST_BACKGROUND_MS = 10000L
         private const val SIGNAL_POLL_INTERVAL_FOREGROUND_MS = 1000L
         private const val SIGNAL_POLL_INTERVAL_BACKGROUND_MS = 5000L
         private const val SIGNAL_REFRESH_INTERVAL_FOREGROUND_MS = 1000L
@@ -196,18 +163,12 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private val binder = Binder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val okHttpClient = OkHttpClient.Builder().retryOnConnectionFailure(true).build()
-    private var webSocket: WebSocket? = null
     private var wsReconnectJob: Job? = null
     private var signalMonitorJob: Job? = null
-    private var udpKeepaliveJob: Job? = null
-    private val wsConnected = AtomicBoolean(false)
-    private val wsOpening = AtomicBoolean(false)
     private val wsRetryAttempt = AtomicInteger(0)
     private val desiredConnection = AtomicBoolean(false)
     private val relayPausedForCellularCall = AtomicBoolean(false)
     private val configLock = Any()
-    private val wsConnectLock = Any()
     private val connectivityManager by lazy {
         getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     }
@@ -215,7 +176,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     @Volatile
     private var activeCellularOrWifi: Network? = null
     private val pendingUdpNetworkRecreate = AtomicBoolean(false)
-    private val playbackLoopGeneration = AtomicInteger(0)
     private var lastWelcomeSessionId: Long = 0L
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -245,11 +205,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
     }
 
-    @Volatile
-    private var udpSocket: DatagramSocket? = null
-    private val udpSocketLock = Any()
-
-    private var udpReceiveJob: Job? = null
     private var txJob: Job? = null
     private var rogerJob: Job? = null
     private var callSignalJob: Job? = null
@@ -262,8 +217,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private val rogerStreaming = AtomicBoolean(false)
     private val callStreaming = AtomicBoolean(false)
     private val sessionId = AtomicLong(0L)
-    private val seq = AtomicInteger(0)
-    private val encodeLock = Any()
     private val serverRxBroadcastActive = AtomicBoolean(false)
     private val serverPttLocked = AtomicBoolean(false)
     private val pttLockDisplaySec = AtomicInteger(0)
@@ -273,23 +226,13 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private val parallelTxCollisionActive = AtomicBoolean(false)
     private val parallelCollisionVibrationRunning = AtomicBoolean(false)
 
-    /** After RX decode was suppressed (TX/holdoff), reinit RX Opus decoder before next play to avoid PLC tail on the first frame. */
-    private val pendingRxCodecReinit = AtomicBoolean(false)
-
     private val pttReleaseBurstCount = AtomicInteger(0)
     private val pttReleaseBurstPressBlocked = AtomicBoolean(false)
     private var pttReleaseBurstResetJob: Job? = null
-    private val lastOutboundUdpAtNs = AtomicLong(0L)
-    private val lastUdpKeepaliveSentAtNs = AtomicLong(0L)
-    private val udpKeepalivePendingSinceNs = AtomicLong(0L)
-    private val lastUdpKeepaliveAckAtNs = AtomicLong(0L)
-    private val udpKeepaliveRecoveryUntilNs = AtomicLong(0L)
     private val wsReconnectCount = AtomicLong(0L)
     private val udpRecoveryCount = AtomicLong(0L)
     private val lastObservedUdpGapMs = AtomicLong(0L)
-    private val lastNetworkRecoveryAtNs = AtomicLong(0L)
     private val lastNetworkFingerprint = AtomicLong(0L)
-    private val cachedSignalByte = AtomicInteger(0)
     private val lastSignalRefreshAtNs = AtomicLong(0L)
     private val lastRxPlaybackWriteNs = AtomicLong(0L)
     /** Last time decoded RX PCM was written to the stream [AudioTrack] (UI "receiving" indicator). */
@@ -304,9 +247,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     @Volatile
     private var channel: String = DEFAULT_CHANNEL
-
-    @Volatile
-    private var targetUdpAddress: InetAddress? = null
 
     @Volatile
     private var repeaterEnabled: Boolean = false
@@ -326,7 +266,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private var txCountdownJob: Job? = null
 
-    private lateinit var codec: OpusCodec
     private lateinit var audioManager: AudioManager
     private lateinit var rogerPatternStore: RogerPatternStore
     private lateinit var callingPatternStore: CallingPatternStore
@@ -341,8 +280,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private var legacyPhoneStateListener: PhoneStateListener? = null
     private var localPttPressPcm: ShortArray = shortArrayOf()
     private var localPttReleasePcm: ShortArray = shortArrayOf()
-    @Volatile
-    private var opusConfig: OpusConfig = OpusConfig()
     @Volatile
     private var voiceProfileActive: Boolean = false
     @Volatile
@@ -362,22 +299,15 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     @Volatile
     private var rxPlaybackTrack: AudioTrack? = null
 
-    private fun relay(): NativeRelayBridge? = if (USE_NATIVE_RELAY) nativeRelayLazy.value else null
+    private fun relay(): NativeRelayBridge = nativeRelayLazy.value
 
-    private fun relayTransportConnected(): Boolean {
-        return if (USE_NATIVE_RELAY) relay()?.isConnected == true else wsConnected.get()
-    }
+    private fun relayTransportConnected(): Boolean = relay().isConnected
 
-    private fun relayTransportConnecting(): Boolean {
-        return if (USE_NATIVE_RELAY) relay()?.isConnecting == true else wsOpening.get()
-    }
+    private fun relayTransportConnecting(): Boolean = relay().isConnecting
 
     private fun nativeRelayDisconnect() {
-        if (!USE_NATIVE_RELAY) {
-            return
-        }
         serviceScope.launch(Dispatchers.IO) {
-            relay()?.disconnect()
+            relay().disconnect()
         }
     }
 
@@ -389,14 +319,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
     }
 
-    private fun isRelayTransportUp(): Boolean {
-        return relayTransportConnected() && sessionId.get() != 0L
-    }
-
-
     override fun onCreate() {
         super.onCreate()
-        codec = OpusCodecFactory().create(DEFAULT_SAMPLE_RATE, CHANNELS, opusConfig)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         rogerPatternStore = RogerPatternStore(this)
         callingPatternStore = CallingPatternStore(this)
@@ -533,27 +457,19 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         localRogerPlaybackJob?.cancel()
         localCallPlaybackJob?.cancel()
         localPttPressPlaybackJob?.cancel()
-        udpReceiveJob?.cancel()
+        releaseRxPlaybackTrack()
         wsReconnectJob?.cancel()
         signalMonitorJob?.cancel()
-        udpKeepaliveJob?.cancel()
         unregisterNetworkCallback()
         unregisterTelephonyForRelayPause()
-        if (USE_NATIVE_RELAY && nativeRelayLazy.isInitialized()) {
+        if (nativeRelayLazy.isInitialized()) {
             Thread {
                 runBlocking(Dispatchers.IO) {
                     nativeRelayLazy.value.disconnectAllAndWait(NATIVE_RELAY_SHUTDOWN_WAIT_MS)
                 }
             }.start()
-        } else if (!USE_NATIVE_RELAY) {
-            webSocket?.close(1000, "service destroyed")
-            synchronized(udpSocketLock) {
-                udpSocket?.close()
-                udpSocket = null
-            }
         }
         restoreMediaAudioProfile()
-        okHttpClient.dispatcher.executorService.shutdown()
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -580,13 +496,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         val changed = applyConfigFromIntent(intent)
         enforceAudioRoutePolicy()
         startForegroundInternal()
-        if (!USE_NATIVE_RELAY) {
-            ensureUdpSocket()
-        }
         wsReconnectJob?.cancel()
         wsReconnectJob = null
         connectRelay(force = changed)
-        ensurePlaybackLoop()
         ensureSignalMonitorLoop()
     }
 
@@ -597,14 +509,10 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         resetRelayCodecState()
         tearDownTransport(clearUserIntent = false)
         startForegroundInternal()
-        if (!USE_NATIVE_RELAY) {
-            ensureUdpSocket()
-        }
         wsReconnectJob?.cancel()
         wsReconnectJob = null
         wsRetryAttempt.set(0)
         connectRelay(force = true)
-        ensurePlaybackLoop()
         ensureSignalMonitorLoop()
         broadcastStatus(currentSignalByte())
     }
@@ -619,9 +527,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private fun resetRelayCodecState() {
         sessionId.set(0)
         channelBound = false
-        synchronized(encodeLock) {
-            codec = OpusCodecFactory().create(currentCodecSampleRate(), CHANNELS, opusConfig)
-        }
+        releaseRxPlaybackTrack()
     }
 
     private fun startForegroundInternal() {
@@ -722,11 +628,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     private fun connectRelay(force: Boolean = false) {
-        if (USE_NATIVE_RELAY) {
-            connectNativeRelay(force)
-        } else {
-            connectWebSocket(force)
-        }
+        connectNativeRelay(force)
     }
 
     private fun connectNativeRelay(force: Boolean = false) {
@@ -744,8 +646,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 } else if (!desiredConnection.get() || relayPausedForCellularCall.get()) {
                     connectOk = false
                 } else {
-                    val bridge = relay() ?: return@launch
-                    bridge.syncTxSignal()
+                    val bridge = relay()
+                    currentSignalByte()
                     bridge.syncActivityFocus(activityFocused)
                     val selectedChannel = channel.trim().ifBlank { DEFAULT_CHANNEL }
                     connectOk = bridge.connect(
@@ -786,153 +688,13 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
     }
 
-    private fun connectWebSocket(force: Boolean = false) {
-        if (!desiredConnection.get()) return
-        if (relayPausedForCellularCall.get()) return
-        synchronized(wsConnectLock) {
-            if (!force && (webSocket != null || wsOpening.get())) return
-            if (force) {
-                // Force reconnect can otherwise overlap with stale callbacks
-                // and lead to double audio frames (server has two active sessions).
-                // Drop UDP immediately; keepalive is stopped inside hardDrop.
-                hardDropUdpTransportBecauseWsLost()
-                wsConnected.set(false)
-                channelBound = false
-                busyMode = false
-                clearServerSessionControlState()
-
-                runCatching { webSocket?.close(1001, "reconnect") }
-                runCatching { webSocket?.cancel() }
-                webSocket = null
-                wsOpening.set(false)
+    private fun releaseRxPlaybackTrack() {
+        synchronized(rxPlaybackLock) {
+            runCatching {
+                rxPlaybackTrack?.stop()
+                rxPlaybackTrack?.release()
             }
-            wsOpening.set(true)
-        }
-        val wsUrl = wsUrl()
-        if (wsUrl.isBlank()) {
-            wsConnected.set(false)
-            wsOpening.set(false)
-            broadcastStatus(currentSignalByte())
-            return
-        }
-        val request = runCatching { Request.Builder().url(wsUrl).build() }.getOrElse {
-            wsConnected.set(false)
-            wsOpening.set(false)
-            broadcastStatus(currentSignalByte())
-            return
-        }
-        webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                if (this@WalkieService.webSocket !== webSocket) return
-                wsOpening.set(false)
-                wsConnected.set(true)
-                wsRetryAttempt.set(0)
-                packetMs = DEFAULT_PACKET_MS
-                channelBound = false
-                protocolError = false
-                busyMode = false
-                clearServerSessionControlState()
-                broadcastStatus(currentSignalByte())
-                syncPttMediaSession()
-            }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                if (this@WalkieService.webSocket !== webSocket) return
-                handleWsMessage(webSocket, text)
-            }
-
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                if (this@WalkieService.webSocket !== webSocket) return
-                wsOpening.set(false)
-                wsConnected.set(false)
-                channelBound = false
-                busyMode = false
-                clearServerSessionControlState()
-                hardDropUdpTransportBecauseWsLost()
-                this@WalkieService.webSocket = null
-                if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
-                    scheduleWsReconnect()
-                } else {
-                    broadcastStatus(currentSignalByte())
-                }
-                syncPttMediaSession()
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                if (this@WalkieService.webSocket !== webSocket) return
-                wsOpening.set(false)
-                wsConnected.set(false)
-                channelBound = false
-                busyMode = false
-                clearServerSessionControlState()
-                hardDropUdpTransportBecauseWsLost()
-                this@WalkieService.webSocket = null
-                if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
-                    scheduleWsReconnect()
-                } else {
-                    broadcastStatus(currentSignalByte())
-                }
-                syncPttMediaSession()
-            }
-        })
-    }
-
-    private fun handleWsMessage(ws: WebSocket, text: String) {
-        runCatching {
-            if (this@WalkieService.webSocket !== ws) return@runCatching
-            val obj = JSONObject(text)
-            when (obj.optString("type")) {
-                "welcome" -> {
-                    applyWelcomeFromJSONObject(obj)
-                    if (!channelBound) {
-                        val selectedChannel = channel.trim()
-                        if (selectedChannel.isNotBlank()) {
-                            ws.send("""{"type":"join","channel":"$selectedChannel"}""")
-                            channelBound = true
-                            sendRepeaterModeCommand(ws)
-                            sendUdpHello()
-                            startUdpKeepaliveLoop()
-                            enterUdpKeepaliveRecoveryWindow()
-                            // Immediate UDP punch so server can start sending right away after reconnect.
-                            sendUdpKeepalivePacket()
-                            syncPttMediaSession()
-                        }
-                    }
-                    broadcastStatus(currentSignalByte())
-                }
-                "pong" -> Unit
-                "tx_countdown_start" -> {
-                    startTxCountdownFromServer()
-                }
-                "tx_stop" -> {
-                    forceStopTransmissionFromServer()
-                }
-                "rx_broadcast_start" -> {
-                    serverRxBroadcastActive.set(true)
-                    if (obj.has("busyMode")) {
-                        busyMode = obj.getBoolean("busyMode")
-                    }
-                    broadcastStatus(currentSignalByte())
-                }
-                "rx_broadcast_end" -> {
-                    serverRxBroadcastActive.set(false)
-                    broadcastStatus(currentSignalByte())
-                }
-                "ptt_lock" -> {
-                    forceAbortAllOutgoingForPttLock()
-                    serverPttLocked.set(true)
-                    pttLockDisplaySec.set(obj.optInt("displaySec", 0).coerceAtLeast(0))
-                    schedulePttLockDisplayTicks()
-                    broadcastStatus(currentSignalByte())
-                }
-                "ptt_unlock" -> {
-                    stopPttLockDisplayTicks()
-                    serverPttLocked.set(false)
-                    pttLockDisplaySec.set(0)
-                    pendingRxCodecReinit.set(true)
-                    broadcastStatus(currentSignalByte())
-                }
-            }
+            rxPlaybackTrack = null
         }
     }
 
@@ -954,206 +716,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         broadcastStatus(currentSignalByte())
     }
 
-    private fun ensureUdpSocket() {
-        synchronized(udpSocketLock) {
-            if (udpSocket?.isClosed == false) return
-            val socket = DatagramSocket().apply {
-                reuseAddress = true
-            }
-            tryBindDatagramToActiveNetwork(socket)
-            applyUdpReceiveTimeoutForActivity(socket)
-            udpSocket = socket
-        }
-    }
-
-    private fun tryBindDatagramToActiveNetwork(socket: DatagramSocket) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-        val net = activeCellularOrWifi
-            ?: connectivityManager.activeNetwork
-        net?.let { n ->
-            runCatching { n.bindSocket(socket) }
-        }
-    }
-
-    private fun applyUdpReceiveTimeoutForActivity(socket: DatagramSocket) {
-        val ms = if (activityFocused) {
-            UDP_RECV_TIMEOUT_FOREGROUND_MS
-        } else {
-            UDP_RECV_TIMEOUT_BACKGROUND_MS
-        }
-        runCatching { socket.soTimeout = ms }
-    }
-
-    private fun recreateUdpSocket() {
-        udpRecoveryCount.incrementAndGet()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val n = connectivityManager.activeNetwork
-            if (n != null) {
-                activeCellularOrWifi = n
-            }
-        }
-        synchronized(udpSocketLock) {
-            runCatching { udpSocket?.close() }
-            udpSocket = null
-        }
-        ensureUdpSocket()
-        sendUdpHello()
-        enterUdpKeepaliveRecoveryWindow()
-        // Also punch immediately to reduce "no UDP until next TX" on reconnects.
-        sendUdpKeepalivePacket(allowRecovery = false)
-    }
-
-    /**
-     * Tear down UDP immediately when the WebSocket session is gone so RX/TX cannot overlap a stale
-     * transport while WS reconnects. Best-effort synchronous UDP EOF before closing the socket.
-     */
-    private fun hardDropUdpTransportBecauseWsLost() {
-        stopUdpKeepaliveLoop()
-        stopTxCountdownFromServer()
-        if (transmitting.getAndSet(false)) {
-            txJob?.cancel()
-            txJob = null
-            txLoopRunning.set(false)
-            sendUdpEofPacket()
-        }
-        if (rogerStreaming.getAndSet(false)) {
-            rogerJob?.cancel()
-            rogerJob = null
-        }
-        if (callStreaming.getAndSet(false)) {
-            callSignalJob?.cancel()
-            callSignalJob = null
-        }
-        releaseVoiceProfileIfIdle()
-        sessionId.set(0L)
-        synchronized(udpSocketLock) {
-            runCatching { udpSocket?.close() }
-            udpSocket = null
-        }
-        targetUdpAddress = null
-        lastInboundUdpAtNs.set(0L)
-        restartPlaybackLoop()
-        broadcastStatus(currentSignalByte())
-    }
-
-    private fun ensurePlaybackLoop() {
-        if (udpReceiveJob?.isActive == true) return
-        val gen = playbackLoopGeneration.get()
-        udpReceiveJob = serviceScope.launch(Dispatchers.IO) {
-            val minBuffer = AudioTrack.getMinBufferSize(
-                currentCodecSampleRate(),
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-            )
-            val frameBytes = currentFrameSamples() * 2 // mono 16-bit PCM
-            val targetBuffer = (frameBytes * PLAYBACK_BUFFER_FRAMES).coerceAtLeast(frameBytes)
-            val playbackBufferBytes = if (minBuffer > 0) {
-                minBuffer.coerceAtLeast(targetBuffer)
-            } else {
-                targetBuffer
-            }
-            val track = AudioTrack(
-                AudioManager.STREAM_MUSIC,
-                currentCodecSampleRate(),
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                playbackBufferBytes,
-                AudioTrack.MODE_STREAM,
-            )
-            track.play()
-            try {
-                val recvBuffer = ByteArray(1500)
-                while (isActive) {
-                    if (gen != playbackLoopGeneration.get()) {
-                        break
-                    }
-                    if (!isRelayTransportUp()) {
-                        delay(200L)
-                        continue
-                    }
-                    synchronized(rxPlaybackLock) {
-                        rxPlaybackTrack = track
-                    }
-                    if (USE_NATIVE_RELAY) {
-                        delay(250L)
-                        continue
-                    }
-                    val socket = udpSocket ?: run {
-                        ensureUdpSocket()
-                        delay(120L)
-                        continue
-                    }
-                    applyUdpReceiveTimeoutForActivity(socket)
-                    val packet = DatagramPacket(recvBuffer, recvBuffer.size)
-                    try {
-                        socket.receive(packet)
-                    } catch (_: java.net.SocketTimeoutException) {
-                        continue
-                    } catch (_: Exception) {
-                        recreateUdpSocket()
-                        continue
-                    }
-                    val nowNs = System.nanoTime()
-                    if (packet.length >= 9) {
-                        val sid = ByteBuffer.wrap(packet.data, 0, 4).order(ByteOrder.BIG_ENDIAN).int
-                        val seqNum = ByteBuffer.wrap(packet.data, 4, 4).order(ByteOrder.BIG_ENDIAN).int
-                        val signal = packet.data[8].toInt() and 0xFF
-                        val currentSid = sessionId.get().toInt()
-                        if (sid == currentSid && seqNum == 0 && signal == UDP_KEEPALIVE_ACK_SIGNAL) {
-                            onUdpKeepaliveAck(nowNs)
-                            continue
-                        }
-                    }
-                    if (packet.length <= 9) continue
-                    onUdpKeepaliveAck(nowNs)
-                    val previousInboundNs = lastInboundUdpAtNs.getAndSet(nowNs)
-                    if (previousInboundNs > 0L && nowNs > previousInboundNs) {
-                        lastObservedUdpGapMs.set((nowNs - previousInboundNs) / 1_000_000L)
-                    }
-                    val txActive = transmitting.get() || rogerStreaming.get() || callStreaming.get()
-                    if (txActive) {
-                        lastRxDuringParallelTxNs.set(nowNs)
-                    }
-                    if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
-                        // During local TX we intentionally drop inbound audio
-                        // to avoid hearing server stream in parallel with speaking.
-                        pendingRxCodecReinit.set(true)
-                        continue
-                    }
-                    if (pendingRxCodecReinit.getAndSet(false)) {
-                        codec = OpusCodecFactory().create(currentCodecSampleRate(), CHANNELS, opusConfig)
-                    }
-                    val opus = packet.data.copyOfRange(9, packet.length)
-                    val pcm = applyRxVolume(codec.decode(opus, currentFrameSamples()))
-                    val prevWrite = lastRxPlaybackWriteNs.get()
-                    val gapMsSinceLastWrite = if (prevWrite == 0L) Long.MAX_VALUE else (nowNs - prevWrite) / 1_000_000L
-                    lastRxPlaybackWriteNs.set(nowNs)
-                    if (gapMsSinceLastWrite > RX_PLAYBACK_BURST_GAP_MS) {
-                        maybeAnchorMediaSessionOnRxPlaybackWrite(nowNs)
-                    }
-                    synchronized(rxPlaybackLock) {
-                        if (rxPlaybackTrack === track) {
-                            track.write(pcm, 0, pcm.size)
-                        }
-                    }
-                    lastRxAudiblePlaybackWriteNs.set(nowNs)
-                }
-            } finally {
-                synchronized(rxPlaybackLock) {
-                    if (rxPlaybackTrack === track) {
-                        rxPlaybackTrack = null
-                    }
-                    track.stop()
-                    track.release()
-                }
-            }
-        }
-    }
-
     private fun ensureNativeRxPlaybackTrack(): AudioTrack? {
-        if (!USE_NATIVE_RELAY) {
-            return null
-        }
         synchronized(rxPlaybackLock) {
             val existing = rxPlaybackTrack
             if (existing != null && existing.state == AudioTrack.STATE_INITIALIZED) {
@@ -1185,8 +748,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
     }
 
-    private fun processInboundRxOpus(opus: ByteArray) {
-        if (opus.isEmpty()) return
+    private fun processInboundRxPcm(pcm: ShortArray, sampleRate: Int, packetMs: Int) {
+        if (pcm.isEmpty()) return
         val nowNs = System.nanoTime()
         val previousInboundNs = lastInboundUdpAtNs.getAndSet(nowNs)
         if (previousInboundNs > 0L && nowNs > previousInboundNs) {
@@ -1197,41 +760,24 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             lastRxDuringParallelTxNs.set(nowNs)
         }
         if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
-            pendingRxCodecReinit.set(true)
             return
         }
-        if (pendingRxCodecReinit.getAndSet(false)) {
-            synchronized(encodeLock) {
-                codec = OpusCodecFactory().create(currentCodecSampleRate(), CHANNELS, opusConfig)
-            }
-        }
-        val pcm = applyRxVolume(codec.decode(opus, currentFrameSamples()))
-        if (pcm.isEmpty()) return
+        val scaled = applyRxVolume(pcm)
+        if (scaled.isEmpty()) return
         val prevWrite = lastRxPlaybackWriteNs.get()
         val gapMsSinceLastWrite = if (prevWrite == 0L) Long.MAX_VALUE else (nowNs - prevWrite) / 1_000_000L
         lastRxPlaybackWriteNs.set(nowNs)
         if (gapMsSinceLastWrite > RX_PLAYBACK_BURST_GAP_MS) {
             maybeAnchorMediaSessionOnRxPlaybackWrite(nowNs)
         }
-        val track = if (USE_NATIVE_RELAY) {
-            ensureNativeRxPlaybackTrack()
-        } else {
-            synchronized(rxPlaybackLock) { rxPlaybackTrack }
-        } ?: return
+        val track = ensureNativeRxPlaybackTrack() ?: return
         synchronized(rxPlaybackLock) {
             if (rxPlaybackTrack !== track) {
                 rxPlaybackTrack = track
             }
-            track.write(pcm, 0, pcm.size)
+            track.write(scaled, 0, scaled.size)
         }
         lastRxAudiblePlaybackWriteNs.set(nowNs)
-    }
-
-    private fun restartPlaybackLoop() {
-        playbackLoopGeneration.incrementAndGet()
-        udpReceiveJob?.cancel()
-        udpReceiveJob = null
-        ensurePlaybackLoop()
     }
 
     private fun resetPttReleaseBurstGuard() {
@@ -1366,9 +912,15 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         lastRxDuringParallelTxNs.set(0L)
         stopTxCountdownFromServer()
         if (transmitting.getAndSet(true)) return
-        relay()?.setPowerActiveTx()
+        relay().setPowerActiveTx()
+        if (!relay().txStart()) {
+            transmitting.set(false)
+            broadcastStatus(currentSignalByte())
+            return
+        }
         if (pttReleaseBurstPressBlocked.get()) {
             transmitting.set(false)
+            relay().txEnd()
             schedulePttReleaseBurstDecay()
             broadcastStatus(currentSignalByte())
             return
@@ -1381,12 +933,14 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
         if (!txLoopRunning.compareAndSet(false, true)) {
             transmitting.set(false)
+            relay().txEnd()
             broadcastStatus(currentSignalByte())
             return
         }
         if (txJob?.isActive == true) {
             txLoopRunning.set(false)
             transmitting.set(false)
+            relay().txEnd()
             broadcastStatus(currentSignalByte())
             return
         }
@@ -1415,7 +969,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                     playLocalRogerPcm(localPlaybackPcm, LOCAL_PLAYBACK_SAMPLE_RATE)
                 }
                 streamRogerBeep(rogerPcm)
-                sendTxEof()
+                relay().txEnd()
             } finally {
                 rogerStreaming.set(false)
                 releaseVoiceProfileIfIdle()
@@ -1438,8 +992,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 localCallPlaybackJob = serviceScope.launch(Dispatchers.IO) {
                     playLocalSignalPcm(localCallPcm, LOCAL_PLAYBACK_SAMPLE_RATE, CALL_LOCAL_GAIN_DB)
                 }
+                relay().txStart()
                 streamGeneratedSignal(callPcm)
-                sendTxEof()
+                relay().txEnd()
             } finally {
                 callStreaming.set(false)
                 releaseVoiceProfileIfIdle()
@@ -1555,9 +1110,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                         } else if (sleepNs < -frameNs * 2) {
                             nextFrameAtNs = System.nanoTime()
                         }
-                        val opus = encodePcm(txBuffer)
-                        val signal = currentSignalByte()
-                        sendUdpFrame(opus, signal)
+                        currentSignalByte()
+                        relay().pushTxPcm(txBuffer)
                         txFill = 0
                         nextFrameAtNs += frameNs
                     }
@@ -1586,8 +1140,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             if (count > 0) {
                 System.arraycopy(pcmSignal, offset, frame, 0, count)
             }
-            val opus = encodePcm(frame)
-            sendUdpFrame(opus, currentSignalByte())
+            currentSignalByte()
+            relay().pushTxPcm(frame)
             offset = end
             nextFrameAtNs += frameNs
             val sleepNs = nextFrameAtNs - System.nanoTime()
@@ -1773,50 +1327,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
 
-    private fun sendUdpFrame(opusBytes: ByteArray, signalByte: Int) {
-        if (opusBytes.isEmpty()) {
-            return
-        }
-        if (USE_NATIVE_RELAY) {
-            if (relay()?.sendTxOpus(opusBytes, signalByte) == true) {
-                lastOutboundUdpAtNs.set(System.nanoTime())
-            }
-            return
-        }
-        if (sessionId.get() == 0L) {
-            return
-        }
-        val socket = udpSocket ?: run {
-            ensureUdpSocket()
-            udpSocket ?: return
-        }
-        val address = targetUdpAddress ?: run {
-            targetUdpAddress = resolveHost(serverHost)
-            targetUdpAddress ?: return
-        }
-        val sid = sessionId.get().toInt()
-        val seqNum = seq.incrementAndGet()
-        val payload = ByteArray(9 + opusBytes.size)
-        val bb = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
-        bb.putInt(sid)
-        bb.putInt(seqNum)
-        bb.put(signalByte.toByte())
-        bb.put(opusBytes)
-
-        val packet = DatagramPacket(payload, payload.size, address, serverPort)
-        runCatching { socket.send(packet) }
-            .onSuccess { lastOutboundUdpAtNs.set(System.nanoTime()) }
-            .onFailure {
-                recreateUdpSocket()
-            }
-    }
-
-    private fun encodePcm(pcm: ShortArray): ByteArray {
-        synchronized(encodeLock) {
-            return codec.encode(pcm)
-        }
-    }
-
     private fun disableRecordPreprocessing(audioSessionId: Int) {
         runCatching {
             if (NoiseSuppressor.isAvailable()) {
@@ -1848,21 +1358,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         if (signalMonitorJob?.isActive == true) return
         signalMonitorJob = serviceScope.launch {
             while (isActive) {
-                if (!USE_NATIVE_RELAY && wsConnected.get()) {
-                    ensureUdpSocket()
-                }
-                if (USE_NATIVE_RELAY) {
-                    if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
-                        relay()?.syncTxSignal()
-                    }
-                } else if (
-                    desiredConnection.get() &&
-                    !relayPausedForCellularCall.get() &&
-                    !wsConnected.get() &&
-                    webSocket == null
-                ) {
-                    scheduleWsReconnect()
-                }
                 // Re-evaluate headset availability continuously so checked mode
                 // auto-applies when headset connects and auto-falls back when disconnected.
                 enforceAudioRoutePolicy()
@@ -1905,56 +1400,21 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private fun onNetworkChangedForRecovery() {
         if (!desiredConnection.get()) return
-        if (USE_NATIVE_RELAY) {
-            if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
-                pendingUdpNetworkRecreate.set(true)
-                return
-            }
-            relay()?.notifyNetworkChanged()
-            return
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val n = connectivityManager.activeNetwork
-            if (n != null) {
-                activeCellularOrWifi = n
-            }
-        }
-        // Do not rotate UDP socket during active TX/call/roger generation: NAT stays on the old
-        // interface; we rebind right after the burst ends to avoid two-way glitches.
         if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
             pendingUdpNetworkRecreate.set(true)
             return
         }
-        val nowNs = System.nanoTime()
-        val lastNs = lastNetworkRecoveryAtNs.get()
-        if (lastNs != 0L && (nowNs - lastNs) < (NETWORK_RECOVERY_MIN_INTERVAL_MS * 1_000_000L)) {
-            return
-        }
-        lastNetworkRecoveryAtNs.set(nowNs)
-        serviceScope.launch(Dispatchers.IO) {
-            if (!desiredConnection.get()) return@launch
-            if (!wsConnected.get()) return@launch
-            recreateUdpSocket()
-        }
+        relay().punchNat()
     }
 
     private fun drainPendingUdpNetworkRecreate() {
         if (!pendingUdpNetworkRecreate.getAndSet(false)) return
         if (!desiredConnection.get()) return
-        if (USE_NATIVE_RELAY) {
-            relay()?.notifyNetworkChanged()
+        if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
+            pendingUdpNetworkRecreate.set(true)
             return
         }
-        serviceScope.launch(Dispatchers.IO) {
-            if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
-                pendingUdpNetworkRecreate.set(true)
-                return@launch
-            }
-            if (!desiredConnection.get()) return@launch
-            if (!wsConnected.get()) return@launch
-            lastNetworkRecoveryAtNs.set(0L)
-            recreateUdpSocket()
-        }
+        relay().punchNat()
     }
 
     private fun clearServerSessionControlState() {
@@ -2027,10 +1487,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                     (desiredConnection.get() && !relayTransportConnected() && !relayPausedForCellularCall.get()),
             )
             putExtra(EXTRA_RELAY_PAUSED_PHONE_CALL, relayPausedForCellularCall.get())
-            putExtra(
-                EXTRA_UDP_READY,
-                if (USE_NATIVE_RELAY) relay()?.isUdpReady == true else udpSocket?.isClosed == false,
-            )
+            putExtra(EXTRA_UDP_READY, relay().isUdpReady)
             putExtra(EXTRA_PROTOCOL_ERROR, protocolError)
             putExtra(EXTRA_BUSY_MODE, busyMode)
             putExtra(EXTRA_PTT_SERVER_LOCKED, serverPttLocked.get())
@@ -2066,198 +1523,22 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
     }
 
-    private fun sendUdpHello() {
-        ensureUdpSocket()
-        val localPort = udpSocket?.localPort ?: return
-        webSocket?.send("""{"type":"udp_hello","udpPort":$localPort}""")
-    }
-
     private fun setRepeaterMode(enabled: Boolean) {
         repeaterEnabled = enabled
-        if (USE_NATIVE_RELAY) {
-            relay()?.setRepeater(enabled)
-        } else {
-            webSocket?.let { sendRepeaterModeCommand(it) }
-        }
-    }
-
-    private fun sendRepeaterModeCommand(ws: WebSocket) {
-        ws.send("""{"type":"repeater_mode","enabled":$repeaterEnabled}""")
+        relay().setRepeater(enabled)
     }
 
     private fun sendTxEof() {
-        if (USE_NATIVE_RELAY) {
-            relay()?.sendTxEof()
-            syncRelayPowerAfterTx()
-            return
-        }
-        sendUdpEofBurst()
+        relay().txEnd()
+        syncRelayPowerAfterTx()
     }
 
     private fun syncRelayPowerAfterTx() {
-        if (!USE_NATIVE_RELAY) return
         if (activityFocused) {
-            relay()?.setPowerForeground()
+            relay().setPowerForeground()
         } else {
-            relay()?.setPowerBackground()
+            relay().setPowerBackground()
         }
-    }
-
-    private fun sendUdpEofBurst() {
-        serviceScope.launch(Dispatchers.IO) {
-            val scheduleMs = intArrayOf(0, 20, 60)
-            for (waitMs in scheduleMs) {
-                if (waitMs > 0) {
-                    delay(waitMs.toLong())
-                }
-                sendUdpEofPacket()
-            }
-        }
-    }
-
-    private fun sendUdpEofPacket() {
-        val socket = udpSocket ?: run {
-            ensureUdpSocket()
-            udpSocket ?: return
-        }
-        val address = targetUdpAddress ?: run {
-            targetUdpAddress = resolveHost(serverHost)
-            targetUdpAddress ?: return
-        }
-        val sid = sessionId.get().toInt()
-        if (sid == 0) return
-
-        val seqNum = seq.incrementAndGet()
-        val payload = ByteArray(9)
-        val bb = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
-        bb.putInt(sid)
-        bb.putInt(seqNum)
-        bb.put(0) // signal=0 with empty payload marks UDP TX EOF on relay
-        val packet = DatagramPacket(payload, payload.size, address, serverPort)
-        runCatching { socket.send(packet) }
-            .onSuccess { lastOutboundUdpAtNs.set(System.nanoTime()) }
-            .onFailure { recreateUdpSocket() }
-    }
-
-    private fun sendUdpKeepalivePacket(allowRecovery: Boolean = true) {
-        val socket = udpSocket ?: run {
-            ensureUdpSocket()
-            udpSocket ?: return
-        }
-        val address = targetUdpAddress ?: run {
-            targetUdpAddress = resolveHost(serverHost)
-            targetUdpAddress ?: return
-        }
-        val sid = sessionId.get().toInt()
-        if (sid == 0) return
-
-        val payload = ByteArray(9)
-        val bb = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
-        bb.putInt(sid)
-        bb.putInt(0)
-        bb.put(UDP_KEEPALIVE_SIGNAL.toByte())
-
-        val packet = DatagramPacket(payload, payload.size, address, serverPort)
-        runCatching { socket.send(packet) }
-            .onSuccess {
-                val nowNs = System.nanoTime()
-                lastOutboundUdpAtNs.set(nowNs)
-                lastUdpKeepaliveSentAtNs.set(nowNs)
-                udpKeepalivePendingSinceNs.compareAndSet(0L, nowNs)
-            }
-            .onFailure {
-                if (allowRecovery) {
-                    recreateUdpSocket()
-                }
-            }
-    }
-
-    private fun startUdpKeepaliveLoop() {
-        if (udpKeepaliveJob?.isActive == true) return
-        udpKeepaliveJob = serviceScope.launch(Dispatchers.IO) {
-            while (isActive) {
-                if (!desiredConnection.get() || !wsConnected.get() || sessionId.get() == 0L) {
-                    delay(1000L)
-                    continue
-                }
-                val nowNs = System.nanoTime()
-                val inRecovery = nowNs < udpKeepaliveRecoveryUntilNs.get()
-                val idleSec = if (activityFocused) {
-                    UDP_KEEPALIVE_IDLE_INTERVAL_SEC
-                } else {
-                    UDP_BG_KEEPALIVE_IDLE_INTERVAL_SEC
-                }
-                val recoverySec = if (activityFocused) {
-                    UDP_KEEPALIVE_RECOVERY_INTERVAL_SEC
-                } else {
-                    UDP_BG_KEEPALIVE_RECOVERY_INTERVAL_SEC
-                }
-                val intervalSec = if (inRecovery) recoverySec else idleSec
-                val pendingSinceNs = udpKeepalivePendingSinceNs.get()
-                val rtxNs = (if (activityFocused) {
-                    UDP_KEEPALIVE_RTX_FOREGROUND_MS
-                } else {
-                    UDP_KEEPALIVE_RTX_BACKGROUND_MS
-                }) * 1_000_000L
-                val lostNs = (if (activityFocused) {
-                    UDP_KEEPALIVE_LOST_FOREGROUND_MS
-                } else {
-                    UDP_KEEPALIVE_LOST_BACKGROUND_MS
-                }) * 1_000_000L
-                val lastKeepaliveSentNs = lastUdpKeepaliveSentAtNs.get()
-                if (pendingSinceNs != 0L) {
-                    if ((nowNs - pendingSinceNs) >= lostNs) {
-                        udpKeepalivePendingSinceNs.set(0L)
-                        recreateUdpSocket()
-                        delay(250L)
-                        continue
-                    }
-                    if (lastKeepaliveSentNs == 0L || (nowNs - lastKeepaliveSentNs) >= rtxNs) {
-                        sendUdpKeepalivePacket()
-                    }
-                    val waitMs = if (activityFocused) 300L else 700L
-                    delay(waitMs)
-                    continue
-                }
-                val intervalNs = intervalSec * 1_000_000_000L
-                if (lastKeepaliveSentNs == 0L || (nowNs - lastKeepaliveSentNs) >= intervalNs) {
-                    sendUdpKeepalivePacket()
-                }
-                delay(jitteredKeepaliveDelayMs(intervalSec))
-            }
-        }
-    }
-
-    private fun stopUdpKeepaliveLoop() {
-        udpKeepaliveJob?.cancel()
-        udpKeepaliveJob = null
-    }
-
-    private fun enterUdpKeepaliveRecoveryWindow() {
-        udpKeepaliveRecoveryUntilNs.set(
-            System.nanoTime() + UDP_KEEPALIVE_RECOVERY_WINDOW_SEC * 1_000_000_000L,
-        )
-    }
-
-    private fun jitteredKeepaliveDelayMs(baseIntervalSec: Long): Long {
-        val baseMs = baseIntervalSec * 1000L
-        val deltaMs = (baseMs * UDP_KEEPALIVE_JITTER_PERCENT) / 100L
-        val minMs = (baseMs - deltaMs).coerceAtLeast(1000L)
-        val maxMs = baseMs + deltaMs
-        return if (maxMs <= minMs) minMs else Random.nextLong(minMs, maxMs + 1L)
-    }
-
-    private fun onUdpKeepaliveAck(nowNs: Long) {
-        lastUdpKeepaliveAckAtNs.set(nowNs)
-        udpKeepalivePendingSinceNs.set(0L)
-    }
-
-    private fun wsUrl(): String {
-        val host = serverHost.trim()
-        if (host.isBlank()) return ""
-        val hostPart = if (host.contains(':') && !host.startsWith("[")) "[$host]" else host
-        val scheme = if (wsSecure) "wss" else "ws"
-        return "$scheme://$hostPart:$serverPort/ws"
     }
 
     private fun normalizePacketMs(value: Int): Int {
@@ -2274,108 +1555,52 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
     }
 
-    private fun applyWelcomeFromJSONObject(obj: JSONObject) {
-        val serverProtocol = obj.optInt("protocolVersion", -1)
-        if (serverProtocol != PROTOCOL_VERSION) {
+    private fun applyWelcomeFields(
+        protocolVersion: Int,
+        serverSessionId: Long,
+        rawSampleRate: Int,
+        packetMsInput: Int,
+        busyModeInput: Boolean,
+    ) {
+        if (protocolVersion != PROTOCOL_VERSION) {
             protocolError = true
             relayPausedForCellularCall.set(false)
             desiredConnection.set(false)
-            wsConnected.set(false)
-            if (USE_NATIVE_RELAY) {
-                nativeRelayDisconnect()
-            }
+            nativeRelayDisconnect()
             broadcastStatus(currentSignalByte())
             return
         }
-        if (!obj.has("sampleRate")) {
+        if (rawSampleRate < 0 || rawSampleRate != normalizeSampleRate(rawSampleRate)) {
             protocolError = true
             relayPausedForCellularCall.set(false)
             desiredConnection.set(false)
-            wsConnected.set(false)
-            if (USE_NATIVE_RELAY) {
-                nativeRelayDisconnect()
-            }
-            broadcastStatus(currentSignalByte())
-            return
-        }
-        val rawSampleRate = obj.optInt("sampleRate", -1)
-        if (rawSampleRate != normalizeSampleRate(rawSampleRate)) {
-            protocolError = true
-            relayPausedForCellularCall.set(false)
-            desiredConnection.set(false)
-            wsConnected.set(false)
-            if (USE_NATIVE_RELAY) {
-                nativeRelayDisconnect()
-            }
+            nativeRelayDisconnect()
             broadcastStatus(currentSignalByte())
             return
         }
         val previousSampleRate = serverSampleRate
         val previousPacketMs = packetMs
-        val previousOpusConfig = opusConfig
-        val newSessionId = obj.optLong("sessionId", 0L)
-        val newSession = (newSessionId != 0L && newSessionId != lastWelcomeSessionId)
-        sessionId.set(newSessionId)
-        packetMs = normalizePacketMs(obj.optInt("packetMs", DEFAULT_PACKET_MS))
-        val negotiatedSampleRate = rawSampleRate
-        opusConfig = parseOpusConfig(obj)
-        if (newSessionId != 0L) {
-            lastWelcomeSessionId = newSessionId
+        val newSession = (serverSessionId != 0L && serverSessionId != lastWelcomeSessionId)
+        sessionId.set(serverSessionId)
+        packetMs = normalizePacketMs(packetMsInput)
+        if (serverSessionId != 0L) {
+            lastWelcomeSessionId = serverSessionId
         }
-        if (negotiatedSampleRate != serverSampleRate) {
-            serverSampleRate = negotiatedSampleRate
-            synchronized(encodeLock) {
-                codec = OpusCodecFactory().create(serverSampleRate, CHANNELS, opusConfig)
-            }
-        } else if (previousOpusConfig != opusConfig) {
-            synchronized(encodeLock) {
-                codec = OpusCodecFactory().create(serverSampleRate, CHANNELS, opusConfig)
-            }
-        } else if (newSession) {
-            synchronized(encodeLock) {
-                codec = OpusCodecFactory().create(serverSampleRate, CHANNELS, opusConfig)
-            }
+        if (rawSampleRate != serverSampleRate) {
+            serverSampleRate = rawSampleRate
         }
         if (previousSampleRate != serverSampleRate || previousPacketMs != packetMs || newSession) {
-            restartPlaybackLoop()
+            releaseRxPlaybackTrack()
         }
-        busyMode = obj.optBoolean("busyMode", false)
+        busyMode = busyModeInput
         clearServerSessionControlState()
-        if (USE_NATIVE_RELAY) {
-            channelBound = true
-            if (!desiredConnection.get()) {
-                nativeRelayDisconnect()
-                return
-            }
-            if (relay()?.isConnected != true) {
-                relay()?.notifySessionReady(newSessionId)
-            }
-            syncPttMediaSession()
+        channelBound = true
+        if (!desiredConnection.get()) {
+            nativeRelayDisconnect()
+            return
         }
+        syncPttMediaSession()
         broadcastStatus(currentSignalByte())
-    }
-
-    private fun parseOpusConfig(obj: JSONObject): OpusConfig {
-        val opusObj = obj.optJSONObject("opus") ?: return OpusConfig()
-        return OpusConfig(
-            bitrate = normalizeOpusBitrate(opusObj.optInt("bitrate", 12000)),
-            complexity = normalizeOpusComplexity(opusObj.optInt("complexity", 5)),
-            fec = opusObj.optBoolean("fec", true),
-            dtx = opusObj.optBoolean("dtx", false),
-            application = normalizeOpusApplication(opusObj.optString("application", "voip")),
-            packetMs = normalizePacketMs(obj.optInt("packetMs", DEFAULT_PACKET_MS)),
-        )
-    }
-
-    private fun normalizeOpusBitrate(value: Int): Int = value.coerceIn(6000, 510000)
-
-    private fun normalizeOpusComplexity(value: Int): Int = value.coerceIn(0, 10)
-
-    private fun normalizeOpusApplication(value: String): String {
-        return when (value.trim().lowercase()) {
-            "voip", "audio", "lowdelay" -> value.trim().lowercase()
-            else -> "voip"
-        }
     }
 
     private fun currentCodecSampleRate(): Int = normalizeSampleRate(serverSampleRate)
@@ -2383,14 +1608,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private fun currentPacketMs(): Int = normalizePacketMs(packetMs)
 
     private fun currentFrameSamples(): Int = (currentCodecSampleRate() * currentPacketMs()) / 1000
-
-    private fun resolveHost(host: String): InetAddress? {
-        return try {
-            InetAddress.getByName(host.removePrefix("[").removeSuffix("]"))
-        } catch (_: UnknownHostException) {
-            null
-        }
-    }
 
     private fun readServerPortFromIntent(intent: Intent): Int {
         var p = intent.getIntExtra(EXTRA_SERVER_PORT, -1)
@@ -2432,10 +1649,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             channel = newChannel
             repeaterEnabled = newRepeaterEnabled
             wsSecure = parsedEndpoint.wsSecure
-            targetUdpAddress = null
             sessionId.set(0)
-            seq.set(0)
-            wsConnected.set(false)
             return true
         }
     }
@@ -2456,19 +1670,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         activityFocused = focused
         lastSignalRefreshAtNs.set(0L)
         enforceAudioRoutePolicy()
-        if (USE_NATIVE_RELAY) {
-            relay()?.syncActivityFocus(focused)
-        } else {
-            serviceScope.launch(Dispatchers.IO) {
-                synchronized(udpSocketLock) {
-                    udpSocket?.let { applyUdpReceiveTimeoutForActivity(it) }
-                }
-            }
-            if (desiredConnection.get() && wsConnected.get() && sessionId.get() != 0L) {
-                stopUdpKeepaliveLoop()
-                startUdpKeepaliveLoop()
-            }
-        }
+        relay().syncActivityFocus(focused)
         syncPttMediaSession()
     }
 
@@ -2516,13 +1718,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         mainHandler.post { ctrl.refreshPlaybackStateAnchor() }
     }
 
-    private fun isRelaySessionReady(): Boolean {
-        return if (USE_NATIVE_RELAY) {
-            relay()?.isConnected == true
-        } else {
-            wsConnected.get() && sessionId.get() != 0L
-        }
-    }
+    private fun isRelaySessionReady(): Boolean = relay().isConnected
 
     private fun shouldHoldBluetoothCommunicationProfile(): Boolean {
         return useBluetoothHeadset &&
@@ -2621,8 +1817,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         if (clearUserIntent) {
             desiredConnection.set(false)
         }
-        wsConnected.set(false)
-        wsOpening.set(false)
         channelBound = false
         protocolError = false
         busyMode = false
@@ -2632,34 +1826,17 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         parallelTxCollisionActive.set(false)
         syncParallelCollisionVibration(false)
         lastRxAudiblePlaybackWriteNs.set(0L)
-        lastOutboundUdpAtNs.set(0L)
-        lastUdpKeepaliveSentAtNs.set(0L)
-        udpKeepalivePendingSinceNs.set(0L)
-        lastUdpKeepaliveAckAtNs.set(0L)
         lastObservedUdpGapMs.set(0L)
-        lastNetworkRecoveryAtNs.set(0L)
         lastWelcomeSessionId = 0L
         sessionId.set(0)
         resetRelayCodecState()
         pendingUdpNetworkRecreate.set(false)
-        udpKeepaliveRecoveryUntilNs.set(0L)
         wsReconnectCount.set(0L)
         udpRecoveryCount.set(0L)
         wsReconnectJob?.cancel()
         wsReconnectJob = null
-        stopUdpKeepaliveLoop()
-        if (USE_NATIVE_RELAY) {
-            resetNativeRelayUiTransportState()
-            nativeRelayDisconnect()
-        } else {
-            runCatching { webSocket?.close(1000, if (clearUserIntent) "cancel requested" else "paused for phone call") }
-            runCatching { webSocket?.cancel() }
-            webSocket = null
-            synchronized(udpSocketLock) {
-                runCatching { udpSocket?.close() }
-                udpSocket = null
-            }
-        }
+        resetNativeRelayUiTransportState()
+        nativeRelayDisconnect()
         restoreMediaAudioProfile()
     }
 
@@ -2843,7 +2020,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     @Suppress("DEPRECATION")
-    override fun currentSignalByte(): Int {
+    private fun currentSignalByte(): Int {
         val nowNs = System.nanoTime()
         val refreshIntervalNs = if (activityFocused) {
             SIGNAL_REFRESH_INTERVAL_FOREGROUND_MS * 1_000_000L
@@ -2852,70 +2029,55 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
         val lastNs = lastSignalRefreshAtNs.get()
         if (lastNs != 0L && (nowNs - lastNs) < refreshIntervalNs) {
-            return cachedSignalByte.get()
+            return OwalkieNative.nativeGetUplinkSignalByte()
         }
 
-        var wifiStrength = 0
+        OwalkieNative.ensureLoaded()
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         if (wifiManager != null && wifiManager.isWifiEnabled) {
             val rssi = wifiManager.connectionInfo?.rssi ?: -100
-            wifiStrength = WifiManager.calculateSignalLevel(rssi, 256)
+            OwalkieNative.nativeReportSignal(OwalkieNative.SIGNAL_WIFI, rssi)
+        } else {
+            OwalkieNative.nativeClearSignal(OwalkieNative.SIGNAL_WIFI)
         }
-
-        var cellularStrength = 0
         val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-        if (telephonyManager != null) {
-            runCatching {
-                val level0to4 = telephonyManager.signalStrength?.level ?: 0
-                cellularStrength = ((level0to4 / 4.0) * 255.0).toInt().coerceIn(0, 255)
-            }
+        val cellLevel = runCatching { telephonyManager?.signalStrength?.level }.getOrNull()
+        if (cellLevel != null) {
+            OwalkieNative.nativeReportSignal(OwalkieNative.SIGNAL_CELL, cellLevel)
+        } else {
+            OwalkieNative.nativeClearSignal(OwalkieNative.SIGNAL_CELL)
         }
-
-        val signal = maxOf(wifiStrength, cellularStrength).coerceIn(0, 255)
-        cachedSignalByte.set(signal)
+        val signal = OwalkieNative.nativeGetUplinkSignalByte()
         lastSignalRefreshAtNs.set(nowNs)
         return signal
     }
 
     // --- NativeRelayBridge.Host ---
 
-    override fun applyWelcomeMessage(text: String) {
+    override fun applyWelcomeFromSessionInfo(info: OwalkieNative.SessionInfo) {
         serviceScope.launch(Dispatchers.Default) {
-            runCatching {
-                applyWelcomeFromJSONObject(JSONObject(text))
-            }
+            applyWelcomeFields(
+                protocolVersion = info.protocolVersion,
+                serverSessionId = info.serverSessionId,
+                rawSampleRate = info.sampleRate,
+                packetMsInput = info.packetMs,
+                busyModeInput = info.busyMode,
+            )
         }
     }
 
-    override fun onRelaySessionReady(serverSessionId: Long) {
+    override fun onRelayReady(serverSessionId: Long, udpReady: Boolean) {
         runOnMain {
             sessionId.set(serverSessionId)
             wsRetryAttempt.set(0)
             protocolError = false
-            broadcastStatus(currentSignalByte())
-            syncPttMediaSession()
-        }
-    }
-
-    override fun onRelayTransportLost() {
-        runOnMain {
-            channelBound = false
-            busyMode = false
-            clearServerSessionControlState()
-            broadcastStatus(currentSignalByte())
-            syncPttMediaSession()
-        }
-    }
-
-    override fun onRelayUdpReady(ready: Boolean) {
-        runOnMain {
-            if (USE_NATIVE_RELAY && ready && !relayTransportConnected()) {
-                return@runOnMain
-            }
-            if (ready) {
+            if (udpReady) {
                 udpRecoveryCount.incrementAndGet()
             }
+            currentSignalByte()
+            relay().punchNat()
             broadcastStatus(currentSignalByte())
+            syncPttMediaSession()
         }
     }
 
@@ -2933,6 +2095,11 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     override fun onRelayDisconnected() {
         runOnMain {
+            channelBound = false
+            busyMode = false
+            clearServerSessionControlState()
+            broadcastStatus(currentSignalByte())
+            syncPttMediaSession()
             if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
                 scheduleWsReconnect()
             }
@@ -2947,10 +2114,10 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         runOnMain { forceStopTransmissionFromServer() }
     }
 
-    override fun onRelayRxBroadcastStart(busyModeFlag: Boolean) {
+    override fun onRelayRxBroadcastStart(busyMode: Boolean) {
         runOnMain {
             serverRxBroadcastActive.set(true)
-            busyMode = busyModeFlag
+            this.busyMode = busyMode
             broadcastStatus(currentSignalByte())
         }
     }
@@ -2977,14 +2144,13 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             stopPttLockDisplayTicks()
             serverPttLocked.set(false)
             pttLockDisplaySec.set(0)
-            pendingRxCodecReinit.set(true)
             broadcastStatus(currentSignalByte())
         }
     }
 
-    override fun onRelayRxOpus(opus: ByteArray) {
+    override fun onRelayRxPcm(pcm: ShortArray, sampleRate: Int, packetMs: Int) {
         serviceScope.launch(Dispatchers.IO) {
-            processInboundRxOpus(opus)
+            processInboundRxPcm(pcm, sampleRate, packetMs)
         }
     }
 

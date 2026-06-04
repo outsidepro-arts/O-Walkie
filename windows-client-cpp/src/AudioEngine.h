@@ -10,8 +10,6 @@
 
 #include "miniaudio.h"
 
-struct OpusEncoder;
-struct OpusDecoder;
 struct WelcomeConfig;
 
 struct NamedAudioDevice {
@@ -35,7 +33,7 @@ struct SignalPattern {
 
 class AudioEngine {
 public:
-    using EncodedFrameCallback = std::function<void(const uint8_t* data, size_t size, uint8_t signal)>;
+    using PcmFrameCallback = std::function<void(const int16_t* samples, size_t count)>;
     using StatusCallback = std::function<void(const std::string&)>;
     using LevelCallback = std::function<void(int)>;
     using ParallelTxCollisionCallback = std::function<void(bool)>;
@@ -93,9 +91,9 @@ public:
     void PlaySignalPatternPreview(const SignalPattern& pattern);
     void SetCustomSignalPatterns(std::vector<SignalPattern> roger, std::vector<SignalPattern> call);
 
-    void OnIncomingOpusFrame(const std::vector<uint8_t>& opus);
+    void OnIncomingPcmFrame(const int16_t* samples, size_t count);
 
-    void SetEncodedFrameCallback(EncodedFrameCallback cb) { onEncodedFrame_ = std::move(cb); }
+    void SetPcmFrameCallback(PcmFrameCallback cb) { onPcmFrame_ = std::move(cb); }
     void SetStatusCallback(StatusCallback cb) { onStatus_ = std::move(cb); }
     void SetLevelCallback(LevelCallback cb) { onLevel_ = std::move(cb); }
     void SetParallelTxCollisionCallback(ParallelTxCollisionCallback cb) { onParallelTxCollision_ = std::move(cb); }
@@ -107,8 +105,6 @@ private:
     void QueuePcmForPlaybackLocked(const std::vector<int16_t>& pcm);
     bool StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal);
     void PlayVibrationImitationPattern(const std::vector<int>& patternMs);
-    void RecreateCodecUnlocked();
-    void RecreateRxDecoderUnlocked();
     int FrameSamples() const;
     int ResolveInputDeviceIndex() const;
     int ResolveOutputDeviceIndex() const;
@@ -119,7 +115,7 @@ private:
     static void CaptureCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
     static void PlaybackCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
     void OnCaptureFrames(const void* pInput, ma_uint32 frameCount);
-    void DrainCaptureFifoOpus();
+    void DrainCaptureFifo();
 
 private:
     mutable std::mutex mu_;
@@ -135,15 +131,8 @@ private:
     ma_pcm_rb playbackRb_{};
     bool playbackRbReady_ = false;
 
-    OpusEncoder* encoder_ = nullptr;
-    OpusDecoder* decoder_ = nullptr;
-
     int sampleRate_ = 8000;
     int packetMs_ = 20;
-    int bitrate_ = 12000;
-    int complexity_ = 5;
-    bool fec_ = true;
-    bool dtx_ = false;
 
     int preferredInputDevice_ = -1;
     int preferredOutputDevice_ = -1;
@@ -153,14 +142,10 @@ private:
     std::vector<SignalPattern> customCallPatterns_;
 
     std::vector<int16_t> captureFifo_;
-    std::vector<uint8_t> opusScratch_;
-
     std::atomic<bool> transmitting_{false};
     std::atomic<bool> shuttingDown_{false};
     std::atomic<bool> signalStreaming_{false};
     std::atomic<bool> signalStreamAbortRequested_{false};
-    /// After dropping inbound audio during local TX / signal stream, rebuild RX decoder before next decode.
-    std::atomic<bool> refresh_rx_decoder_{false};
     std::atomic<int64_t> lastInboundNs_{0};
     /// Inbound audio while local TX / signal stream is active (another station doubling).
     std::atomic<int64_t> lastRxDuringLocalTxNs_{0};
@@ -174,7 +159,7 @@ private:
     double vibrationImitationHz_{100.0};
     int vibrationImitationVolumePercent_{40};
 
-    EncodedFrameCallback onEncodedFrame_;
+    PcmFrameCallback onPcmFrame_;
     StatusCallback onStatus_;
     LevelCallback onLevel_;
     ParallelTxCollisionCallback onParallelTxCollision_;

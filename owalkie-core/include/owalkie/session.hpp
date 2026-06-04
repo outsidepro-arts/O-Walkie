@@ -38,8 +38,13 @@ public:
     void setAutoReconnect(bool enabled);
     bool autoReconnectEnabled() const;
 
-    Result feedTxPcm(std::span<const int16_t> samples);
-    Result sendTxOpus(std::span<const uint8_t> opus, int signalStrength);
+    /** Client-driven local TX window (encode/send PCM inside core). */
+    Result txStart();
+    Result pushTxPcm(std::span<const int16_t> samples);
+    Result txEnd();
+
+    /** Legacy / tests: raw Opus without tx_start. */
+    Result sendTxOpus(std::span<const uint8_t> opus);
     Result sendTxEofBurst();
     Result setRepeaterMode(bool enabled);
     Result resetUdpTransport();
@@ -48,8 +53,6 @@ public:
     void enterUdpRecovery();
     void notifyNetworkChanged();
     Result punchUdpNat();
-    Result setTxSignalStrength(int strength);
-    int txSignalStrength() const;
 
     SessionState state() const;
 

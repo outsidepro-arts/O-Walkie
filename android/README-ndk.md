@@ -1,6 +1,6 @@
 # Android NDK (owalkie-core)
 
-Native relay links `owalkie_jni` → `owalkie-core` (Boost.Beast + libopus).
+Relay transport is **always** native: `libowalkie_jni.so` → `owalkie-core` (Boost.Beast + libopus inside core).
 
 ## vcpkg (system install)
 
@@ -29,18 +29,11 @@ cd android
 
 The app uses **NDK r27** (`ndkVersion` in `app/build.gradle.kts`) with
 `-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON` and 16 KB ELF link flags on `libowalkie_jni.so`.
-Opus encode/decode runs in that library (not the kopus AAR) when `owalkie.buildNativeRelay=true`.
 
 Install NDK 27 if needed: Android Studio SDK Manager → NDK (Side by side) → 27.2.x, or let Gradle
 download it on the first native build.
 
 ## Build APK
-
-In `android/gradle.properties`:
-
-```properties
-owalkie.buildNativeRelay=true
-```
 
 ```bash
 cd android
@@ -54,7 +47,3 @@ cd android
 | x86_64 | x64-android |
 
 Override vcpkg path: set **`VCPKG_ROOT`** before building.
-
-## Fallback
-
-`owalkie.buildNativeRelay=false` — legacy OkHttp/Datagram (no NDK deps).

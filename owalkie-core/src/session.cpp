@@ -1,5 +1,7 @@
 #include "owalkie/session.hpp"
 
+#include "owalkie/link_signal.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -229,8 +231,8 @@ struct Session::Impl {
     std::atomic<int64_t> udpRecoveryUntilNs{0};
     std::atomic<bool> pendingNetworkRecreate{false};
     std::atomic<int64_t> lastNetworkRecoveryAtNs{0};
-    std::atomic<uint8_t> txSignalStrength{pkt::kDefaultTxSignalStrength};
 
+    std::atomic<bool> clientTxOpen{false};
     std::atomic<bool> connected{false};
     std::atomic<bool> stopRequested{false};
     std::atomic<bool> autoReconnect{true};
@@ -427,7 +429,7 @@ struct Session::Impl {
         pendingNetworkRecreate.store(false);
         lastNetworkRecoveryAtNs.store(0);
         udpResetRequested.store(false);
-        txSignalStrength.store(pkt::kDefaultTxSignalStrength);
+        clientTxOpen.store(false);
     }
 
     void joinThreads() {
@@ -863,19 +865,8 @@ struct Session::Impl {
         return Result::Ok;
     }
 
-    Result setTxSignalStrengthInternal(int strength) {
-        if (strength < 0 || strength > 255) {
-            return Result::InvalidArg;
-        }
-        if (strength == static_cast<int>(pkt::kKeepaliveAckSignal)) {
-            return Result::InvalidArg;
-        }
-        txSignalStrength.store(static_cast<uint8_t>(strength));
-        return Result::Ok;
-    }
-
-    int txSignalStrengthInternal() const {
-        return static_cast<int>(txSignalStrength.load());
+    uint8_t uplinkSignalByte() const {
+        return static_cast<uint8_t>(link_signal::Registry::instance().combinedByte());
     }
 
     Result connectInternal(const ConnectParams& params) {
@@ -1025,11 +1016,59 @@ struct Session::Impl {
         teardownThread_ = std::thread([this] { finalizeTransportTeardown(); });
     }
 
+    void flushTxPcmBuffer() {
+        const int frame = opus.frameSamples();
+        if (frame <= 0) {
+            return;
+        }
+        if (!txPcmBuffer.empty() && static_cast<int>(txPcmBuffer.size()) < frame) {
+            txPcmBuffer.resize(static_cast<size_t>(frame), 0);
+        }
+        std::vector<uint8_t> encoded;
+        while (static_cast<int>(txPcmBuffer.size()) >= frame) {
+            const auto frameSpan = std::span<const int16_t>(txPcmBuffer.data(), static_cast<size_t>(frame));
+            if (opus.encode(frameSpan, encoded) != Result::Ok) {
+                txPcmBuffer.clear();
+                return;
+            }
+            sendOpusFrame(encoded.data(), encoded.size(), uplinkSignalByte());
+            txPcmBuffer.erase(txPcmBuffer.begin(), txPcmBuffer.begin() + frame);
+        }
+    }
+
+    Result txStartInternal() {
+        if (!connected.load() || welcome.sessionId == 0) {
+            return Result::NotConnected;
+        }
+        txPcmBuffer.clear();
+        clientTxOpen.store(true);
+        beginLocalTxIfNeeded();
+        return Result::Ok;
+    }
+
+    Result txEndInternal() {
+        if (!connected.load()) {
+            return Result::NotConnected;
+        }
+        if (!clientTxOpen.load()) {
+            return Result::NotReady;
+        }
+        flushTxPcmBuffer();
+        txPcmBuffer.clear();
+        clientTxOpen.store(false);
+        return sendTxEofBurstInternal();
+    }
+
     Result feedTxPcmInternal(std::span<const int16_t> samples) {
         if (!connected.load() || welcome.sessionId == 0) {
             return Result::NotConnected;
         }
-        beginLocalTxIfNeeded();
+        if (!clientTxOpen.load()) {
+            return Result::NotReady;
+        }
+        if (samples.empty()) {
+            return Result::InvalidArg;
+        }
         txPcmBuffer.insert(txPcmBuffer.end(), samples.begin(), samples.end());
         const int frame = opus.frameSamples();
         if (frame <= 0) {
@@ -1041,26 +1080,20 @@ struct Session::Impl {
             if (opus.encode(frameSpan, encoded) != Result::Ok) {
                 return Result::Internal;
             }
-            sendOpusFrame(encoded.data(), encoded.size(), txSignalStrength.load());
+            sendOpusFrame(encoded.data(), encoded.size(), uplinkSignalByte());
             txPcmBuffer.erase(txPcmBuffer.begin(), txPcmBuffer.begin() + frame);
         }
         return Result::Ok;
     }
 
-    Result sendTxOpusInternal(std::span<const uint8_t> opus, int signalStrength) {
+    Result sendTxOpusInternal(std::span<const uint8_t> opus) {
         if (!connected.load() || welcome.sessionId == 0) {
             return Result::NotConnected;
         }
         if (opus.empty()) {
             return Result::InvalidArg;
         }
-        if (signalStrength < 0 || signalStrength > 255) {
-            return Result::InvalidArg;
-        }
-        if (signalStrength == static_cast<int>(pkt::kKeepaliveAckSignal)) {
-            return Result::InvalidArg;
-        }
-        sendOpusFrame(opus.data(), opus.size(), static_cast<uint8_t>(signalStrength));
+        sendOpusFrame(opus.data(), opus.size(), uplinkSignalByte());
         return Result::Ok;
     }
 
@@ -1177,12 +1210,20 @@ bool Session::autoReconnectEnabled() const {
     return impl_->autoReconnect.load();
 }
 
-Result Session::feedTxPcm(std::span<const int16_t> samples) {
+Result Session::txStart() {
+    return impl_->txStartInternal();
+}
+
+Result Session::pushTxPcm(std::span<const int16_t> samples) {
     return impl_->feedTxPcmInternal(samples);
 }
 
-Result Session::sendTxOpus(std::span<const uint8_t> opus, int signalStrength) {
-    return impl_->sendTxOpusInternal(opus, signalStrength);
+Result Session::txEnd() {
+    return impl_->txEndInternal();
+}
+
+Result Session::sendTxOpus(std::span<const uint8_t> opus) {
+    return impl_->sendTxOpusInternal(opus);
 }
 
 Result Session::sendTxEofBurst() {
@@ -1220,14 +1261,6 @@ void Session::notifyNetworkChanged() {
 
 Result Session::punchUdpNat() {
     return impl_->punchUdpNatInternal();
-}
-
-Result Session::setTxSignalStrength(int strength) {
-    return impl_->setTxSignalStrengthInternal(strength);
-}
-
-int Session::txSignalStrength() const {
-    return impl_->txSignalStrengthInternal();
 }
 
 SessionState Session::state() const {

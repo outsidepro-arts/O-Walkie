@@ -25,6 +25,7 @@ add_library(owalkie_core
     src/protocol.cpp
     src/json.cpp
     src/signal.cpp
+    src/link_signal.cpp
     src/udp.cpp
     src/version.cpp
     src/c_api.cpp
@@ -80,9 +81,11 @@ if(OWALKIE_CORE_BUILD_TESTS)
     add_executable(owalkie_core_tests
         tests/test_protocol.cpp
         tests/test_json.cpp
+        tests/test_json_wire.cpp
         tests/test_signal.cpp
+        tests/test_link_signal.cpp
+        tests/test_session_info.cpp
         tests/test_udp.cpp
-        tests/test_tx_signal.cpp
         tests/test_main.cpp
     )
     target_link_libraries(owalkie_core_tests PRIVATE owalkie_core)

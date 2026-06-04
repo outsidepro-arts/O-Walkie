@@ -1754,11 +1754,11 @@ MainFrame::MainFrame(const std::string& connectUri)
             RefreshPttUi();
         });
     });
-    relay_->SetOpusFrameCallback([this](const std::vector<uint8_t>& opus) {
+    relay_->SetPcmFrameCallback([this](const int16_t* samples, size_t count) {
         if (!audio_) {
             return;
         }
-        audio_->OnIncomingOpusFrame(opus);
+        audio_->OnIncomingPcmFrame(samples, count);
     });
     relay_->SetTxCountdownStartCallback([this] { this->CallAfter([this] { StartTxCountdownFromServer(); }); });
     relay_->SetRxBroadcastStartCallback([this](bool bm) {
@@ -1772,8 +1772,8 @@ MainFrame::MainFrame(const std::string& connectUri)
     relay_->SetTxStopCallback([this] { this->CallAfter([this] { OnTxStop(); }); });
     relay_->SetConnectionLostCallback([this] { this->CallAfter([this] { OnRelayConnectionLost(); }); });
 
-    audio_->SetEncodedFrameCallback([this](const uint8_t* data, size_t size, uint8_t signal) {
-        relay_->SendOpusFrame(data, size, signal);
+    audio_->SetPcmFrameCallback([this](const int16_t* samples, size_t count) {
+        relay_->PushTxPcm(samples, count);
     });
     audio_->SetStatusCallback([this](const std::string& msg) {
         this->CallAfter([this, msg] {
@@ -3180,9 +3180,10 @@ void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
         callBtn_->Enable(false);
     }
     SetStatus("Sending call signal");
-    const bool ok = audio_->StreamCallSignal();
+    const bool txOpened = relay_->TxStart();
+    const bool ok = txOpened && audio_->StreamCallSignal();
     if (ok) {
-        relay_->SendTxEofBurst();
+        relay_->TxEnd();
         audio_->ScheduleRxResumeHoldoff();
         SetStatus("Connected");
     } else {
@@ -3206,7 +3207,16 @@ void MainFrame::BeginPttTx() {
         return;
     }
     audio_->PlayPttPressSignal();
-    if (audio_->StartTransmit()) {
+    if (!relay_->TxStart()) {
+        RefreshPttUi();
+        return;
+    }
+    if (!audio_->StartTransmit()) {
+        relay_->TxEnd();
+        RefreshPttUi();
+        return;
+    }
+    {
         StopTxCountdownFromServer();
         if (audio_->IsParallelTxCollisionActive()) {
             SetStatus("parallel_tx_collision");
@@ -3227,7 +3237,7 @@ void MainFrame::EndPttTx() {
     audio_->StopTransmit();
     audio_->ScheduleRxResumeHoldoff();
     audio_->StreamRogerSignal();
-    relay_->SendTxEofBurst();
+    relay_->TxEnd();
     SetStatus("Connected");
     RefreshPttUi();
 }
@@ -3397,7 +3407,7 @@ void MainFrame::ForceAbortOutgoingForServerPttLock() {
         audio_->StopTransmit();
     }
     if (had) {
-        relay_->SendTxEofBurst();
+        relay_->TxEnd();
     }
     audio_->ScheduleRxResumeHoldoff();
 }

@@ -7,14 +7,24 @@ This project follows a lightweight Keep a Changelog style and Semantic Versionin
 ## [Unreleased]
 
 ### Added
-- _(add new features here)_
+- `owalkie_get_session_info` — thread-safe session snapshot (welcome/transport/runtime flags) without JSON parsing on clients.
 
 ### Changed
-- _(add behavior/config changes here)_
+- Removed public `owalkie_json_build_*` from C API (join/udp_hello/repeater/heartbeat); wire JSON stays internal to session.
+- Removed legacy Kotlin WebSocket/UDP relay, JNI Opus codec, and `BUILD_NATIVE_RELAY` flag — Android always uses owalkie-core JNI.
+- Removed public `owalkie_session_*` pointer API from `owalkie_core.h`.
+- Windows `AudioEngine`: PCM-only path (no local Opus); relay Opus stays in owalkie-core.
+- owalkie-core: client-visible session events reduced to 10 types (`Ready` replaces Welcome/SessionReady/UDP-ready; connecting/connected/local-TX/UDP-lost are internal only).
 
 ### Fixed
 - Android native relay: disconnect no longer blocks the service main thread (async session teardown in owalkie-core; disconnect on a background thread).
 - Android: connection error tone no longer plays during intentional server profile switch (next/prev server while staying connected).
+
+### Changed
+- owalkie-core: global link signal API (`owalkie_report_signal` / `clear` / `get_uplink_signal_byte`); TX Opus no longer takes per-frame signal byte.
+- owalkie-core: keepalive/recovery internalized; public `owalkie_punch_nat(session)` only; removed `notify_network_changed` and `reset_udp_transport` from managed API.
+- owalkie-core: managed audio TX/RX uses PCM (`owalkie_tx_start` / `push_tx_pcm` / `tx_end`, `on_rx_pcm`); Opus encode/decode inside core.
+- Android/Windows clients updated for simplified core API.
 
 ## [v0.1.5] - 2026-04-29
 

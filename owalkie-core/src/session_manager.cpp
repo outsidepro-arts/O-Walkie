@@ -273,7 +273,33 @@ bool SessionManager::isSessionReady(SessionId id) const {
     return session != nullptr && session->isSessionReady();
 }
 
-Result SessionManager::sendTxOpus(SessionId id, std::span<const uint8_t> opus, int signalStrength) {
+Result SessionManager::getSessionInfo(SessionId id, SessionState* out_state, bool* out_ready) const {
+    if (!out_state || !out_ready) {
+        return Result::InvalidArg;
+    }
+    std::lock_guard<std::mutex> lock(mu_);
+    const Session* session = sessionLocked(id);
+    if (!session) {
+        return Result::InvalidArg;
+    }
+    *out_state = session->state();
+    *out_ready = session->isSessionReady();
+    return Result::Ok;
+}
+
+Result SessionManager::txStart(SessionId id) {
+    std::lock_guard<std::mutex> lock(mu_);
+    Session* session = sessionLocked(id);
+    if (!session) {
+        return Result::InvalidArg;
+    }
+    if (!session->isSessionReady()) {
+        return Result::NotReady;
+    }
+    return session->txStart();
+}
+
+Result SessionManager::pushTxPcm(SessionId id, std::span<const int16_t> samples) {
     Session* session = nullptr;
     {
         std::lock_guard<std::mutex> lock(mu_);
@@ -285,19 +311,16 @@ Result SessionManager::sendTxOpus(SessionId id, std::span<const uint8_t> opus, i
     if (!session->isSessionReady()) {
         return Result::NotReady;
     }
-    return session->sendTxOpus(opus, signalStrength);
+    return session->pushTxPcm(samples);
 }
 
-Result SessionManager::sendTxEofBurst(SessionId id) {
-    Session* session = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        session = sessionLocked(id);
-        if (!session) {
-            return Result::InvalidArg;
-        }
+Result SessionManager::txEnd(SessionId id) {
+    std::lock_guard<std::mutex> lock(mu_);
+    Session* session = sessionLocked(id);
+    if (!session) {
+        return Result::InvalidArg;
     }
-    return session->sendTxEofBurst();
+    return session->txEnd();
 }
 
 Result SessionManager::setRepeaterMode(SessionId id, bool enabled) {
@@ -309,24 +332,6 @@ Result SessionManager::setRepeaterMode(SessionId id, bool enabled) {
     return session->setRepeaterMode(enabled);
 }
 
-Result SessionManager::setTxSignalStrength(SessionId id, int strength) {
-    std::lock_guard<std::mutex> lock(mu_);
-    Session* session = sessionLocked(id);
-    if (!session) {
-        return Result::InvalidArg;
-    }
-    return session->setTxSignalStrength(strength);
-}
-
-int SessionManager::txSignalStrength(SessionId id) const {
-    std::lock_guard<std::mutex> lock(mu_);
-    const Session* session = sessionLocked(id);
-    if (!session) {
-        return static_cast<int>(owalkie::pkt::kDefaultTxSignalStrength);
-    }
-    return session->txSignalStrength();
-}
-
 void SessionManager::setPowerProfile(SessionId id, PowerProfile profile) {
     std::lock_guard<std::mutex> lock(mu_);
     Session* session = sessionLocked(id);
@@ -336,22 +341,13 @@ void SessionManager::setPowerProfile(SessionId id, PowerProfile profile) {
     session->setPowerProfile(profile);
 }
 
-void SessionManager::notifyNetworkChanged(SessionId id) {
-    std::lock_guard<std::mutex> lock(mu_);
-    Session* session = sessionLocked(id);
-    if (!session) {
-        return;
-    }
-    session->notifyNetworkChanged();
-}
-
-Result SessionManager::resetUdpTransport(SessionId id) {
+Result SessionManager::punchNat(SessionId id) {
     std::lock_guard<std::mutex> lock(mu_);
     Session* session = sessionLocked(id);
     if (!session) {
         return Result::InvalidArg;
     }
-    return session->resetUdpTransport();
+    return session->punchUdpNat();
 }
 
 } // namespace owalkie
