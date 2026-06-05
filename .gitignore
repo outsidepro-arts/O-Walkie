@@ -1,3 +1,7 @@
+# Local quick-build CMD helpers (machine-specific paths)
+build-android-debug.cmd
+build-windows-debug.cmd
+
 .idea/
 .gradle/
 local.properties
