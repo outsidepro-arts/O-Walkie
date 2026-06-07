@@ -2769,7 +2769,8 @@ wxString MainFrame::HumanizeStatus(const wxString& status) const {
     if (s.Contains("welcome received") || s == "connected" || s == "reconnected") {
         return _("Connected");
     }
-    if (s.StartsWith("reconnecting in") || s.StartsWith("reconnect attempt") || s.Contains("retry")) {
+    if (s == "reconnecting" || s.StartsWith("reconnecting in") || s.StartsWith("reconnect attempt") ||
+        s.Contains("retry")) {
         return _("Reconnecting...");
     }
     if (s == "parallel_tx_collision") {
@@ -2787,13 +2788,20 @@ wxString MainFrame::HumanizeStatus(const wxString& status) const {
     if (s.Contains("connect failed")) {
         return _("Unable to connect");
     }
+    if (s == "connecting...") {
+        return _("Connecting...");
+    }
+    if (s == "switching connection...") {
+        return _("Switching connection...");
+    }
     if (s.Contains("protocol mismatch") || s.Contains("missing samplerate")) {
         return _("Incompatible server protocol");
     }
     if (s.Contains("connection lost") && s.Contains("retrying")) {
         return _("Connection lost — retrying");
     }
-    if (s.Contains("ws ended") || s.Contains("udp ended") || s.Contains("keepalive timeout") || s.Contains("connection lost")) {
+    if (s.Contains("ws ended") || s.Contains("udp ended") || s.Contains("keepalive timeout") ||
+        s.Contains("keepalive_lost") || s.StartsWith("udp:") || s.Contains("connection lost")) {
         return _("Connection lost");
     }
     if (s.Contains("audio initialized")) {
@@ -2823,8 +2831,20 @@ wxString MainFrame::HumanizeStatus(const wxString& status) const {
     if (s.Contains("ptt paused")) {
         return _("PTT paused — too many quick releases");
     }
-    if (s == "invalid ports") {
+    if (s == "invalid ports" || s == "invalid port") {
         return _("Invalid ports");
+    }
+    if (s == "invalid deep link") {
+        return _("Invalid deep link");
+    }
+    if (s == "clipboard unavailable") {
+        return _("Clipboard unavailable");
+    }
+    if (s == "connection link copied") {
+        return _("Connection link copied");
+    }
+    if (s == "deep link applied") {
+        return _("Deep link applied");
     }
     return status;
 }

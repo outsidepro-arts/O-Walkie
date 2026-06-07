@@ -308,6 +308,9 @@ msgstr "Отключен"
 msgid "Connected"
 msgstr "Подключен"
 
+msgid "Receiving"
+msgstr "Приём"
+
 msgid "Reconnecting..."
 msgstr "Переподключение..."
 
@@ -331,6 +334,21 @@ msgstr "Достигнут лимит времени передачи"
 
 msgid "Unable to connect"
 msgstr "Не удалось подключиться"
+
+msgid "Switching connection..."
+msgstr "Переключение подключения..."
+
+msgid "Connecting..."
+msgstr "Подключение..."
+
+msgid "Invalid deep link"
+msgstr "Некорректная ссылка"
+
+msgid "Clipboard unavailable"
+msgstr "Буфер обмена недоступен"
+
+msgid "Deep link applied"
+msgstr "Ссылка применена"
 
 msgid "Incompatible server protocol"
 msgstr "Несовместимая версия протокола"
