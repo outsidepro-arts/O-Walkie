@@ -145,7 +145,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         private const val PTT_RELEASE_BURST_TIMER_MS = 1000L
         private const val PTT_RELEASE_BURST_BLOCK_THRESHOLD = 3
         private const val CALL_LOCAL_GAIN_DB = -10.0
-        private const val PLAYBACK_BUFFER_FRAMES = 2
         private const val NATIVE_RELAY_SHUTDOWN_WAIT_MS = 3000
         private const val SIGNAL_POLL_INTERVAL_FOREGROUND_MS = 1000L
         private const val SIGNAL_POLL_INTERVAL_BACKGROUND_MS = 5000L
@@ -306,9 +305,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private var pttMediaSessionController: PttMediaSessionController? = null
 
     private val nativeRelayLazy = lazy { NativeRelayBridge(this) }
-    private val rxPlaybackLock = Any()
-    @Volatile
-    private var rxPlaybackTrack: AudioTrack? = null
+    private lateinit var rxJitterBuffer: RxPcmJitterBuffer
 
     private fun relay(): NativeRelayBridge = nativeRelayLazy.value
 
@@ -389,6 +386,18 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         localPttPressPcm = resampleLinear(pttPressWav.samples, pttPressWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
         val pttReleaseWav = loadWavPcmFromRaw(R.raw.selfttdown_002)
         localPttReleasePcm = resampleLinear(pttReleaseWav.samples, pttReleaseWav.sampleRate, LOCAL_PLAYBACK_SAMPLE_RATE)
+        rxJitterBuffer = RxPcmJitterBuffer(
+            sampleRateProvider = { currentCodecSampleRate() },
+            frameSamplesProvider = { currentFrameSamples() },
+        ).also { buffer ->
+            buffer.setListener { nowNs, gapMsSinceLastWrite ->
+                lastRxPlaybackWriteNs.set(nowNs)
+                lastRxAudiblePlaybackWriteNs.set(nowNs)
+                if (gapMsSinceLastWrite > RX_PLAYBACK_BURST_GAP_MS) {
+                    maybeAnchorMediaSessionOnRxPlaybackWrite(nowNs)
+                }
+            }
+        }
         registerNetworkCallback()
         registerTelephonyForRelayPause()
     }
@@ -803,7 +812,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                     bindProcessToActiveNetwork()
                     val bridge = relay()
                     currentSignalByte()
-                    bridge.syncActivityFocus(activityFocused)
+                    applyRelayPowerProfile()
                     val selectedChannel = channel.trim().ifBlank { DEFAULT_CHANNEL }
                     if (bridge.activeSessionId == 0L) {
                         OwalkieNative.nativeDisconnectAll()
@@ -843,12 +852,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     private fun releaseRxPlaybackTrack() {
-        synchronized(rxPlaybackLock) {
-            runCatching {
-                rxPlaybackTrack?.stop()
-                rxPlaybackTrack?.release()
-            }
-            rxPlaybackTrack = null
+        if (::rxJitterBuffer.isInitialized) {
+            rxJitterBuffer.release()
         }
     }
 
@@ -870,38 +875,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         broadcastStatus(currentSignalByte())
     }
 
-    private fun ensureNativeRxPlaybackTrack(): AudioTrack? {
-        synchronized(rxPlaybackLock) {
-            val existing = rxPlaybackTrack
-            if (existing != null && existing.state == AudioTrack.STATE_INITIALIZED) {
-                return existing
-            }
-            val minBuffer = AudioTrack.getMinBufferSize(
-                currentCodecSampleRate(),
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-            )
-            val frameBytes = currentFrameSamples() * 2
-            val targetBuffer = (frameBytes * PLAYBACK_BUFFER_FRAMES).coerceAtLeast(frameBytes)
-            val playbackBufferBytes = if (minBuffer > 0) {
-                minBuffer.coerceAtLeast(targetBuffer)
-            } else {
-                targetBuffer
-            }
-            val track = AudioTrack(
-                AudioManager.STREAM_MUSIC,
-                currentCodecSampleRate(),
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                playbackBufferBytes,
-                AudioTrack.MODE_STREAM,
-            )
-            track.play()
-            rxPlaybackTrack = track
-            return track
-        }
-    }
-
     private fun processInboundRxPcm(pcm: ShortArray, sampleRate: Int, packetMs: Int) {
         if (pcm.isEmpty()) return
         val nowNs = System.nanoTime()
@@ -918,20 +891,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
         val scaled = applyRxVolume(pcm)
         if (scaled.isEmpty()) return
-        val prevWrite = lastRxPlaybackWriteNs.get()
-        val gapMsSinceLastWrite = if (prevWrite == 0L) Long.MAX_VALUE else (nowNs - prevWrite) / 1_000_000L
-        lastRxPlaybackWriteNs.set(nowNs)
-        if (gapMsSinceLastWrite > RX_PLAYBACK_BURST_GAP_MS) {
-            maybeAnchorMediaSessionOnRxPlaybackWrite(nowNs)
-        }
-        val track = ensureNativeRxPlaybackTrack() ?: return
-        synchronized(rxPlaybackLock) {
-            if (rxPlaybackTrack !== track) {
-                rxPlaybackTrack = track
-            }
-            track.write(scaled, 0, scaled.size)
-        }
-        lastRxAudiblePlaybackWriteNs.set(nowNs)
+        rxJitterBuffer.offer(scaled)
     }
 
     private fun resetPttReleaseBurstGuard() {
@@ -1734,10 +1694,16 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     private fun syncRelayPowerAfterTx() {
-        if (activityFocused) {
-            relay().setPowerForeground()
-        } else {
-            relay().setPowerBackground()
+        applyRelayPowerProfile()
+    }
+
+    /** Keep foreground keepalive while user wants a live session, even if Activity is hidden. */
+    private fun applyRelayPowerProfile() {
+        val relay = relay()
+        when {
+            transmitting.get() || rogerStreaming.get() || callStreaming.get() -> relay.setPowerActiveTx()
+            desiredConnection.get() -> relay.setPowerForeground()
+            else -> relay.setPowerBackground()
         }
     }
 
@@ -1790,7 +1756,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             serverSampleRate = rawSampleRate
         }
         if (previousSampleRate != serverSampleRate || previousPacketMs != packetMs || newSession) {
-            releaseRxPlaybackTrack()
+            if (::rxJitterBuffer.isInitialized) {
+                rxJitterBuffer.resetCodec()
+            }
         }
         busyMode = busyModeInput
         clearServerSessionControlState()
@@ -1870,7 +1838,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         activityFocused = focused
         lastSignalRefreshAtNs.set(0L)
         enforceAudioRoutePolicy()
-        relay().syncActivityFocus(focused)
+        applyRelayPowerProfile()
         syncPttMediaSession()
     }
 
@@ -2312,6 +2280,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             }
             currentSignalByte()
             relay().punchNat()
+            applyRelayPowerProfile()
             broadcastStatus(currentSignalByte())
             syncPttMediaSession()
         }
@@ -2382,9 +2351,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     override fun onRelayRxPcm(pcm: ShortArray, sampleRate: Int, packetMs: Int) {
-        serviceScope.launch(Dispatchers.IO) {
-            processInboundRxPcm(pcm, sampleRate, packetMs)
-        }
+        processInboundRxPcm(pcm, sampleRate, packetMs)
     }
 
     override fun isActivityFocused(): Boolean = activityFocused
