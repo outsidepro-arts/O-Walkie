@@ -8,6 +8,7 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <pthread.h>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -55,6 +56,37 @@ void ensurePreConnectHook() {
     });
 }
 
+pthread_once_t g_workerJniOnce = PTHREAD_ONCE_INIT;
+pthread_key_t g_workerJniKey;
+
+void workerJniThreadDetach(void* value) {
+    if (!value) {
+        return;
+    }
+    static_cast<JavaVM*>(value)->DetachCurrentThread();
+}
+
+void workerJniKeyInit() {
+    (void)pthread_key_create(&g_workerJniKey, workerJniThreadDetach);
+}
+
+// Long-lived owalkie worker threads (WS/UDP) must stay attached; do not detach per callback.
+JNIEnv* getWorkerEnv(JavaVM* vm) {
+    if (!vm) {
+        return nullptr;
+    }
+    pthread_once(&g_workerJniOnce, workerJniKeyInit);
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) {
+        return env;
+    }
+    if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+        return nullptr;
+    }
+    (void)pthread_setspecific(g_workerJniKey, vm);
+    return env;
+}
+
 class JniEnv {
 public:
     explicit JniEnv(JavaVM* vm) : vm_(vm) {
@@ -87,6 +119,13 @@ private:
     JNIEnv* env_ = nullptr;
     bool attached_ = false;
 };
+
+void clearPendingJniException(JNIEnv* jni) {
+    if (jni && jni->ExceptionCheck()) {
+        jni->ExceptionDescribe();
+        jni->ExceptionClear();
+    }
+}
 
 void releaseBindingRefs(JNIEnv* env, JniSessionBinding* binding) {
     if (!binding || !env) {
@@ -128,12 +167,11 @@ void dispatchEvent(JniSessionBinding* binding, int eventType, const char* info) 
     if (!binding || !binding->jvm || !binding->listener || !binding->onEvent) {
         return;
     }
-    JniEnv env(binding->jvm);
-    if (!env) {
+    JNIEnv* jni = getWorkerEnv(binding->jvm);
+    if (!jni) {
         return;
     }
-    JNIEnv* jni = env.get();
-    binding->jniCallbackDepth.fetch_add(1);
+    binding->jniCallbackDepth.fetch_add(1, std::memory_order_acq_rel);
     jstring jInfo = info ? jni->NewStringUTF(info) : nullptr;
     jni->CallVoidMethod(
         binding->listener,
@@ -141,10 +179,11 @@ void dispatchEvent(JniSessionBinding* binding, int eventType, const char* info) 
         static_cast<jlong>(binding->id),
         eventType,
         jInfo);
+    clearPendingJniException(jni);
     if (jInfo) {
         jni->DeleteLocalRef(jInfo);
     }
-    binding->jniCallbackDepth.fetch_sub(1);
+    binding->jniCallbackDepth.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 void dispatchRxPcm(
@@ -155,15 +194,14 @@ void dispatchRxPcm(
     if (!binding || !binding->jvm || !binding->listener || !binding->onRxPcm || pcm.empty()) {
         return;
     }
-    JniEnv env(binding->jvm);
-    if (!env) {
+    JNIEnv* jni = getWorkerEnv(binding->jvm);
+    if (!jni) {
         return;
     }
-    JNIEnv* jni = env.get();
-    binding->jniCallbackDepth.fetch_add(1);
+    binding->jniCallbackDepth.fetch_add(1, std::memory_order_acq_rel);
     jshortArray arr = jni->NewShortArray(static_cast<jsize>(pcm.size()));
     if (!arr) {
-        binding->jniCallbackDepth.fetch_sub(1);
+        binding->jniCallbackDepth.fetch_sub(1, std::memory_order_acq_rel);
         return;
     }
     jni->SetShortArrayRegion(
@@ -178,8 +216,9 @@ void dispatchRxPcm(
         arr,
         sampleRate,
         packetMs);
+    clearPendingJniException(jni);
     jni->DeleteLocalRef(arr);
-    binding->jniCallbackDepth.fetch_sub(1);
+    binding->jniCallbackDepth.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 void dispatchSessionEvent(const std::shared_ptr<JniSessionBinding>& binding, const owalkie::Event& ev) {

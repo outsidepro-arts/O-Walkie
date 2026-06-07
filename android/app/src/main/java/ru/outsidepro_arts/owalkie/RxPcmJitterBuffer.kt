@@ -124,50 +124,70 @@ class RxPcmJitterBuffer(
     private fun playbackLoop() {
         var lastWriteNs = 0L
         var nextFrameAtNs = 0L
-        while (running.get()) {
-            val frameSamples = frameSamplesProvider().coerceAtLeast(1)
-            val frameNs = (frameSamples * 1_000_000_000L) /
-                sampleRateProvider().coerceAtLeast(1).toLong()
-            val frame = ShortArray(frameSamples)
-            val got = synchronized(lock) {
-                if (size < frameSamples) {
-                    0
-                } else {
-                    for (i in 0 until frameSamples) {
-                        frame[i] = ring[readPos]
-                        readPos = (readPos + 1) % ringCapacity
+        try {
+            while (running.get()) {
+                val frameSamples = frameSamplesProvider().coerceAtLeast(1)
+                val frameNs = (frameSamples * 1_000_000_000L) /
+                    sampleRateProvider().coerceAtLeast(1).toLong()
+                val frame = ShortArray(frameSamples)
+                val got = synchronized(lock) {
+                    if (size < frameSamples) {
+                        0
+                    } else {
+                        for (i in 0 until frameSamples) {
+                            frame[i] = ring[readPos]
+                            readPos = (readPos + 1) % ringCapacity
+                        }
+                        size -= frameSamples
+                        frameSamples
                     }
-                    size -= frameSamples
-                    frameSamples
                 }
-            }
-            if (got <= 0) {
-                nextFrameAtNs = 0L
-                Thread.sleep(5)
-                continue
-            }
+                if (got <= 0) {
+                    nextFrameAtNs = 0L
+                    if (!sleepUnlessStopped(5L)) {
+                        break
+                    }
+                    continue
+                }
 
-            val nowBeforeWrite = System.nanoTime()
-            if (nextFrameAtNs == 0L) {
-                nextFrameAtNs = nowBeforeWrite
-            }
-            val sleepNs = nextFrameAtNs - nowBeforeWrite
-            if (sleepNs > 0L) {
-                Thread.sleep((sleepNs / 1_000_000L).coerceAtLeast(1L))
-            } else if (sleepNs < -frameNs * 2) {
-                nextFrameAtNs = System.nanoTime()
-            }
+                val nowBeforeWrite = System.nanoTime()
+                if (nextFrameAtNs == 0L) {
+                    nextFrameAtNs = nowBeforeWrite
+                }
+                val sleepNs = nextFrameAtNs - nowBeforeWrite
+                if (sleepNs > 0L) {
+                    if (!sleepUnlessStopped((sleepNs / 1_000_000L).coerceAtLeast(1L))) {
+                        break
+                    }
+                } else if (sleepNs < -frameNs * 2) {
+                    nextFrameAtNs = System.nanoTime()
+                }
 
-            synchronized(lock) {
-                val trackRef = ensureTrackLocked() ?: return@synchronized
-                trackRef.write(frame, 0, got)
-            }
+                synchronized(lock) {
+                    val trackRef = ensureTrackLocked() ?: return@synchronized
+                    trackRef.write(frame, 0, got)
+                }
 
-            nextFrameAtNs += frameNs
-            val nowNs = System.nanoTime()
-            val gapMs = if (lastWriteNs == 0L) Long.MAX_VALUE else (nowNs - lastWriteNs) / 1_000_000L
-            lastWriteNs = nowNs
-            listener?.onPlaybackWrite(nowNs, gapMs)
+                nextFrameAtNs += frameNs
+                val nowNs = System.nanoTime()
+                val gapMs = if (lastWriteNs == 0L) Long.MAX_VALUE else (nowNs - lastWriteNs) / 1_000_000L
+                lastWriteNs = nowNs
+                listener?.onPlaybackWrite(nowNs, gapMs)
+            }
+        } catch (_: InterruptedException) {
+            // release() interrupts this thread while sleeping; normal shutdown path.
+        }
+    }
+
+    private fun sleepUnlessStopped(ms: Long): Boolean {
+        if (!running.get()) {
+            return false
+        }
+        return try {
+            Thread.sleep(ms)
+            running.get()
+        } catch (_: InterruptedException) {
+            false
         }
     }
 

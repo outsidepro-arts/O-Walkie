@@ -1,6 +1,9 @@
 package ru.outsidepro_arts.owalkie
 
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -13,6 +16,10 @@ class NativeRelayBridge(
 
     companion object {
         private const val TAG = "OwalkieRelay"
+        private val nativeEventHandler = Handler(Looper.getMainLooper())
+        private val nativeRxPcmExecutor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "owalkie-rx-pcm").apply { priority = Thread.NORM_PRIORITY + 1 }
+        }
     }
 
     interface Host {
@@ -207,6 +214,10 @@ class NativeRelayBridge(
     }
 
     override fun onNativeEvent(sessionId: Long, type: Int, info: String?) {
+        nativeEventHandler.post { dispatchNativeEvent(sessionId, type, info) }
+    }
+
+    private fun dispatchNativeEvent(sessionId: Long, type: Int, info: String?) {
         if (sessionId != managedSessionId) {
             Log.w(TAG, "stale event session=$sessionId current=$managedSessionId type=$type")
             return
@@ -270,7 +281,13 @@ class NativeRelayBridge(
         if (sessionId != managedSessionId || pcm.isEmpty()) {
             return
         }
-        host.onRelayRxPcm(pcm, sampleRate, packetMs)
+        val copy = pcm.copyOf()
+        nativeRxPcmExecutor.execute {
+            if (sessionId != managedSessionId) {
+                return@execute
+            }
+            host.onRelayRxPcm(copy, sampleRate, packetMs)
+        }
     }
 
     private fun notifyRelayConnected(serverSessionId: Long, udpReady: Boolean) {

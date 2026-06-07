@@ -27,8 +27,10 @@
 #endif
 
 #include <boost/asio/connect.hpp>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/beast/core/buffers_to_string.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/system/error_code.hpp>
@@ -232,6 +234,7 @@ struct Session::Impl {
     std::mutex wsIoMu;
     std::mutex wsOutboundMu;
     std::deque<std::string> wsOutboundQueue;
+    bool wsWriteInProgress = false;
     std::mutex stopMu;
     std::mutex teardownMu;
     std::condition_variable stopCv;
@@ -262,6 +265,7 @@ struct Session::Impl {
     bool repeaterMode = false;
 
     codec::OpusCodec opus{};
+    std::mutex opusMu;
     std::vector<int16_t> txPcmBuffer;
 
     std::thread wsThread;
@@ -377,7 +381,7 @@ struct Session::Impl {
         }
         connected.store(false);
         haltTransportInternal();
-        // Do not releaseWsStream here: often called from wsReadLoop while status is open.
+        // Do not releaseWsStream here: often called from wsIoLoop while status is open.
         // Client connect()/disconnect paths join workers then clear transport.
 
         bool expected = false;
@@ -585,7 +589,7 @@ struct Session::Impl {
         }
         boost::system::error_code ec;
         try {
-            // Safe only after wsReadLoop has exited (joinWsThreadUnlessCaller).
+            // Safe only after wsIoLoop has exited (joinWsThreadUnlessCaller).
             if (wsStream->is_open()) {
                 wsStream->close(ws::close_code::going_away, ec);
             }
@@ -610,7 +614,7 @@ struct Session::Impl {
             }
         } catch (...) {
         }
-        // Never call wsStream->close() while wsReadLoop may be in read(); TCP shutdown unblocks read.
+        // Never call wsStream->close() while async WS I/O may be pending; TCP shutdown aborts it.
         shutdownWsTcp();
         ec.clear();
         try {
@@ -657,6 +661,7 @@ struct Session::Impl {
     }
 
     void resetIoContextInternal() {
+        ioc.stop();
         ioc.restart();
     }
 
@@ -680,6 +685,7 @@ struct Session::Impl {
             std::lock_guard<std::mutex> lg(wsOutboundMu);
             wsOutboundQueue.clear();
         }
+        wsWriteInProgress = false;
     }
 
     void joinThreads() {
@@ -705,8 +711,11 @@ struct Session::Impl {
         clearTransportState();
         welcome = WelcomeConfig{};
         seq.store(0);
-        opus.reset();
-        txPcmBuffer.clear();
+        {
+            std::lock_guard<std::mutex> lg(opusMu);
+            opus.reset();
+            txPcmBuffer.clear();
+        }
         endLocalTxIfNeeded();
         emitDisconnectedOnce();
         transportFullyStopped.store(true);
@@ -725,6 +734,44 @@ struct Session::Impl {
         lock.lock();
     }
 
+    void pumpWsAsyncWrites() {
+        if (wsWriteInProgress || stopRequested.load() || !connected.load() || !wsStream ||
+            !wsStream->is_open()) {
+            return;
+        }
+        std::shared_ptr<std::string> text;
+        {
+            std::lock_guard<std::mutex> lg(wsOutboundMu);
+            if (wsOutboundQueue.empty()) {
+                return;
+            }
+            text = std::make_shared<std::string>(std::move(wsOutboundQueue.front()));
+            wsOutboundQueue.pop_front();
+        }
+        wsWriteInProgress = true;
+        wsStream->text(true);
+        wsStream->async_write(
+            boost::asio::buffer(*text),
+            [this, text](const boost::system::error_code& ec, std::size_t /*bytes*/) {
+                wsWriteInProgress = false;
+                if (ec) {
+                    {
+                        std::lock_guard<std::mutex> lg(wsOutboundMu);
+                        wsOutboundQueue.clear();
+                    }
+                    if (!stopRequested.load()) {
+                        connected.store(false);
+                        const bool intentional = ec == boost::asio::error::operation_aborted;
+                        if (!intentional) {
+                            signalRecoverableLoss(ec.message());
+                        }
+                    }
+                    return;
+                }
+                pumpWsAsyncWrites();
+            });
+    }
+
     void sendWsText(const std::string& text) {
         if (!connected.load() || stopRequested.load() || text.empty()) {
             return;
@@ -733,34 +780,39 @@ struct Session::Impl {
             std::lock_guard<std::mutex> lg(wsOutboundMu);
             wsOutboundQueue.push_back(text);
         }
-        // Wake blocking ws read so queued outbound is flushed quickly on same WS thread.
-        // Do not cancel blocking read here: on Windows this surfaces as
-        // WSAEINTR/WSACancelBlockingCall and can flap the WS transport.
+        boost::asio::dispatch(ioc, [this]() { pumpWsAsyncWrites(); });
     }
 
-    void flushWsOutboundFromQueue() {
-        if (!wsStream || !wsStream->is_open() || stopRequested.load()) {
+    void onWsAsyncRead(
+        const boost::system::error_code& ec,
+        const std::shared_ptr<boost::beast::flat_buffer>& buffer) {
+        if (ec) {
+            if (!stopRequested.load() && ec != boost::asio::error::operation_aborted &&
+                ec != boost::asio::error::interrupted) {
+                connected.store(false);
+                signalRecoverableLoss(ec.message());
+            }
             return;
         }
-        boost::system::error_code ec;
-        for (;;) {
-            std::string text;
-            {
-                std::lock_guard<std::mutex> lg(wsOutboundMu);
-                if (wsOutboundQueue.empty()) {
-                    break;
-                }
-                text = std::move(wsOutboundQueue.front());
-                wsOutboundQueue.pop_front();
-            }
-            wsStream->text(true);
-            wsStream->write(boost::asio::buffer(text), ec);
-            if (ec) {
-                std::lock_guard<std::mutex> lg(wsOutboundMu);
-                wsOutboundQueue.clear();
-                break;
-            }
+        const std::string payload = boost::beast::buffers_to_string(buffer->data());
+        buffer->consume(buffer->size());
+        handleWsText(payload);
+        if (stopRequested.load() || !connected.load()) {
+            return;
         }
+        startWsAsyncRead();
+    }
+
+    void startWsAsyncRead() {
+        if (stopRequested.load() || !connected.load() || !wsStream || !wsStream->is_open()) {
+            return;
+        }
+        auto buffer = std::make_shared<boost::beast::flat_buffer>();
+        wsStream->async_read(
+            *buffer,
+            [this, buffer](const boost::system::error_code& readEc, std::size_t /*bytes*/) {
+                onWsAsyncRead(readEc, buffer);
+            });
     }
 
     void sendUdpPayload(const uint8_t* data, size_t size) {
@@ -886,8 +938,11 @@ struct Session::Impl {
 
     void handleWelcome(const WelcomeConfig& cfg) {
         welcome = cfg;
-        opus.configure(welcome);
-        txPcmBuffer.clear();
+        {
+            std::lock_guard<std::mutex> lg(opusMu);
+            opus.configure(welcome);
+            txPcmBuffer.clear();
+        }
 
         Event welcomeEv{};
         welcomeEv.type = EventType::Welcome;
@@ -937,59 +992,22 @@ struct Session::Impl {
         emitEvent(event);
     }
 
-    void wsReadLoop() {
-        auto hasQueuedWsOutbound = [this]() -> bool {
-            std::lock_guard<std::mutex> lg(wsOutboundMu);
-            return !wsOutboundQueue.empty();
-        };
-        boost::system::error_code ec;
+    void wsIoLoop() {
+        boost::asio::post(ioc, [this]() { startWsAsyncRead(); });
         while (!stopRequested.load()) {
-            if (!connected.load()) {
+            ioc.restart();
+            try {
+                ioc.run();
+            } catch (...) {
                 break;
             }
-            if (!wsStream || !wsStream->is_open() || stopRequested.load()) {
-                if (!stopRequested.load() && connected.load()) {
-                    connected.store(false);
-                }
-                break;
-            }
-            flushWsOutboundFromQueue();
-            if (hasQueuedWsOutbound()) {
-                // Keep draining outbound without entering blocking read yet.
-                continue;
-            }
-            boost::beast::flat_buffer buffer;
-            wsStream->read(buffer, ec);
-            if (ec) {
-                if (!stopRequested.load() &&
-                    (ec == boost::asio::error::operation_aborted ||
-                        ec == boost::asio::error::interrupted)) {
-                    continue;
-                }
-                if (!stopRequested.load() && isSocketRecvTimeout(ec)) {
-                    continue;
-                }
-                connected.store(false);
-                const bool intentional =
-                    stopRequested.load() || ec == boost::asio::error::operation_aborted;
-                if (!intentional) {
-                    signalRecoverableLoss(ec.message());
-                }
-                break;
-            }
-            const std::string payload = boost::beast::buffers_to_string(buffer.data());
-            handleWsText(payload);
-            // If handleWsText enqueued protocol messages (join/udp_hello/repeater), send them immediately.
-            flushWsOutboundFromQueue();
-            if (!wsStream || !wsStream->is_open() || stopRequested.load()) {
-                connected.store(false);
+            if (stopRequested.load() || !connected.load()) {
                 break;
             }
         }
         if (wsThreadCompletesTeardown.exchange(false)) {
             finishDisconnectFromWsThread();
         }
-        // Recoverable loss: sibling workers are joined from reconnect/disconnect thread.
     }
 
     void udpReadLoop() {
@@ -1046,8 +1064,11 @@ struct Session::Impl {
             }
 
             std::vector<int16_t> pcm;
-            if (opus.decode(pkt.opus, opus.frameSamples(), pcm) != Result::Ok) {
-                continue;
+            {
+                std::lock_guard<std::mutex> lg(opusMu);
+                if (opus.decode(pkt.opus, opus.frameSamples(), pcm) != Result::Ok) {
+                    continue;
+                }
             }
             emitRxPcm(pcm);
         }
@@ -1187,8 +1208,11 @@ struct Session::Impl {
         transportFullyStopped.store(false);
         seq.store(0);
         welcome = WelcomeConfig{};
-        txPcmBuffer.clear();
-        opus.reset();
+        {
+            std::lock_guard<std::mutex> lg(opusMu);
+            txPcmBuffer.clear();
+            opus.reset();
+        }
 
         Event connecting{};
         connecting.type = EventType::Connecting;
@@ -1214,7 +1238,7 @@ struct Session::Impl {
             if (handshakeWithTimeout(*wsStream, hostForWs, connectTimeoutMs) != Result::Ok) {
                 throw std::runtime_error("websocket handshake timed out");
             }
-            // Use blocking websocket reads; sendWsText wakes read loop via tcp cancel.
+            // WebSocket session I/O uses async read/write on wsIoLoop's io_context.
             setSocketRecvTimeoutMs(wsStream->next_layer(), 0);
 
             const tcp::endpoint tcpRemote = wsStream->next_layer().remote_endpoint();
@@ -1231,7 +1255,7 @@ struct Session::Impl {
             enterUdpRecoveryInternal();
 
             connectionLostSignaled.store(false);
-            wsThread = std::thread([this] { wsReadLoop(); });
+            wsThread = std::thread([this] { wsIoLoop(); });
             udpThread = std::thread([this] { udpReadLoop(); });
             keepaliveThread = std::thread([this] { keepaliveLoop(); });
             return Result::Ok;
@@ -1255,9 +1279,12 @@ struct Session::Impl {
         clearTransportState();
         welcome = WelcomeConfig{};
         seq.store(0);
-        opus.reset();
-        txPcmBuffer.clear();
         clientTxOpen.store(false);
+        {
+            std::lock_guard<std::mutex> lg(opusMu);
+            opus.reset();
+            txPcmBuffer.clear();
+        }
         endLocalTxIfNeeded();
         lastWsHeartbeatSentNs.store(0);
 
@@ -1292,6 +1319,7 @@ struct Session::Impl {
         connected.store(false);
         signalStopWorkers();
         closeSockets();
+        ioc.stop();
     }
 
     void waitUntilTransportStoppedInternal(int timeoutMs) {
@@ -1373,6 +1401,7 @@ struct Session::Impl {
     }
 
     void flushTxPcmBuffer() {
+        std::lock_guard<std::mutex> lg(opusMu);
         const int frame = opus.frameSamples();
         if (frame <= 0) {
             return;
@@ -1396,7 +1425,10 @@ struct Session::Impl {
         if (!connected.load() || welcome.sessionId == 0) {
             return Result::NotConnected;
         }
-        txPcmBuffer.clear();
+        {
+            std::lock_guard<std::mutex> lg(opusMu);
+            txPcmBuffer.clear();
+        }
         clientTxOpen.store(true);
         beginLocalTxIfNeeded();
         return Result::Ok;
@@ -1410,7 +1442,10 @@ struct Session::Impl {
             return Result::NotReady;
         }
         flushTxPcmBuffer();
-        txPcmBuffer.clear();
+        {
+            std::lock_guard<std::mutex> lg(opusMu);
+            txPcmBuffer.clear();
+        }
         clientTxOpen.store(false);
         return sendTxEofBurstInternal();
     }
@@ -1425,16 +1460,18 @@ struct Session::Impl {
         if (samples.empty()) {
             return Result::InvalidArg;
         }
-        txPcmBuffer.insert(txPcmBuffer.end(), samples.begin(), samples.end());
+        std::lock_guard<std::mutex> lg(opusMu);
         const int frame = opus.frameSamples();
         if (frame <= 0) {
-            return Result::Internal;
+            return Result::NotReady;
         }
+        txPcmBuffer.insert(txPcmBuffer.end(), samples.begin(), samples.end());
         std::vector<uint8_t> encoded;
         while (static_cast<int>(txPcmBuffer.size()) >= frame) {
             const auto frameSpan = std::span<const int16_t>(txPcmBuffer.data(), static_cast<size_t>(frame));
             if (opus.encode(frameSpan, encoded) != Result::Ok) {
-                return Result::Internal;
+                txPcmBuffer.clear();
+                return Result::NotReady;
             }
             sendOpusFrame(encoded.data(), encoded.size(), uplinkSignalByte());
             txPcmBuffer.erase(txPcmBuffer.begin(), txPcmBuffer.begin() + frame);
@@ -1457,7 +1494,10 @@ struct Session::Impl {
         if (!connected.load()) {
             return Result::NotConnected;
         }
-        txPcmBuffer.clear();
+        {
+            std::lock_guard<std::mutex> lg(opusMu);
+            txPcmBuffer.clear();
+        }
         static constexpr int delays[] = {0, 20, 60};
         for (int d : delays) {
             if (d > 0) {
