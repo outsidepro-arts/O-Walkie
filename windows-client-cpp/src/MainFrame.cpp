@@ -19,6 +19,7 @@
 #include <wx/gauge.h>
 #include <wx/intl.h>
 #include <wx/slider.h>
+#include <wx/weakref.h>
 #include <wx/dialog.h>
 #include <wx/listbox.h>
 #include <wx/msgdlg.h>
@@ -1693,65 +1694,82 @@ MainFrame::MainFrame(const std::string& connectUri)
           wxDefaultPosition,
           wxSize(680, 560)),
       relay_(std::make_unique<RelayClient>()),
-      audio_(std::make_unique<AudioEngine>()),
-      reconnectTimer_(this) {
+      audio_(std::make_unique<AudioEngine>()) {
     BuildUi();
     CreateStatusBar(1);
     SetStatusBarPane(0);
     SetStatus("Disconnected");
     BindUi();
 
-    reconnectTimer_.Bind(wxEVT_TIMER, &MainFrame::OnReconnectTimer, this);
+    const wxWeakRef<MainFrame> weakSelf(this);
 
-    relay_->SetStatusCallback([this](const std::string& msg) {
-        this->CallAfter([this, msg] {
+    relay_->SetStatusCallback([weakSelf](const std::string& msg) {
+        if (!weakSelf) {
+            return;
+        }
+        weakSelf->CallAfter([weakSelf, msg] {
+            if (!weakSelf) {
+                return;
+            }
             wxString text = ToWxStatusText(msg);
             if (!text.empty()) {
-                SetStatus(text);
+                weakSelf->SetStatus(text);
+            }
+            if (msg == "reconnecting") {
+                weakSelf->RefreshPttUi();
             }
         });
     });
-    relay_->SetConnectedCallback([this](bool connected) {
-        this->CallAfter([this, connected] {
-            connected_ = connected;
-            if (connected) {
-                reconnectBackoffMs_ = 1500;
-                StopReconnectTimer();
-            } else {
-                busyModeEnabled_ = false;
-                serverRxBroadcastActive_ = false;
-                serverPttLocked_ = false;
-                pttLockDisplaySec_ = 0;
-                StopBusyTimeoutCountdown();
+    relay_->SetConnectedCallback([weakSelf](bool connected) {
+        if (!weakSelf) {
+            return;
+        }
+        weakSelf->CallAfter([weakSelf, connected] {
+            if (!weakSelf) {
+                return;
+            }
+            const bool wasConnected = weakSelf->connected_;
+            weakSelf->connected_ = connected;
+            if (!connected) {
+                weakSelf->busyModeEnabled_ = false;
+                weakSelf->serverRxBroadcastActive_ = false;
+                weakSelf->serverPttLocked_ = false;
+                weakSelf->pttLockDisplaySec_ = 0;
+                weakSelf->StopBusyTimeoutCountdown();
+                if (weakSelf->userWantsSession_ && wasConnected) {
+                    weakSelf->audio_->PlayConnectionErrorSignal();
+                }
             }
 #ifdef _WIN32
-            if (connected_) {
-                InstallGlobalPttHook();
+            if (weakSelf->connected_) {
+                weakSelf->InstallGlobalPttHook();
             } else {
-                UninstallGlobalPttHook();
+                weakSelf->UninstallGlobalPttHook();
             }
 #endif
-            connectBtn_->SetLabel((connected || userWantsSession_) ? _("Disconnect") : _("Connect"));
-            ResetPttReleaseBurstGuard();
-            RefreshPttUi();
-            UpdateProfileControlsEnabled();
-            // Guard path: if transport dropped but loss callback was missed/raced,
-            // keep reconnect loop alive as long as user still wants the session.
-            if (!connected && userWantsSession_ && !reconnectTimer_.IsRunning()) {
-                ScheduleReconnect();
-            }
+            weakSelf->connectBtn_->SetLabel((connected || weakSelf->userWantsSession_) ? _("Disconnect")
+                                                                                      : _("Connect"));
+            weakSelf->ResetPttReleaseBurstGuard();
+            weakSelf->RefreshPttUi();
+            weakSelf->UpdateProfileControlsEnabled();
         });
     });
-    relay_->SetWelcomeCallback([this](const WelcomeConfig& cfg) {
-        this->CallAfter([this, cfg] {
-            audio_->Reconfigure(cfg);
-            busyModeEnabled_ = cfg.busyMode;
-            serverRxBroadcastActive_ = false;
-            serverPttLocked_ = false;
-            pttLockDisplaySec_ = 0;
-            StopBusyTimeoutCountdown();
-            audio_->PlayConnectedSignal();
-            RefreshPttUi();
+    relay_->SetWelcomeCallback([weakSelf](const WelcomeConfig& cfg) {
+        if (!weakSelf) {
+            return;
+        }
+        weakSelf->CallAfter([weakSelf, cfg] {
+            if (!weakSelf) {
+                return;
+            }
+            weakSelf->audio_->Reconfigure(cfg);
+            weakSelf->busyModeEnabled_ = cfg.busyMode;
+            weakSelf->serverRxBroadcastActive_ = false;
+            weakSelf->serverPttLocked_ = false;
+            weakSelf->pttLockDisplaySec_ = 0;
+            weakSelf->StopBusyTimeoutCountdown();
+            weakSelf->audio_->PlayConnectedSignal();
+            weakSelf->RefreshPttUi();
         });
     });
     relay_->SetPcmFrameCallback([this](const int16_t* samples, size_t count) {
@@ -1760,17 +1778,66 @@ MainFrame::MainFrame(const std::string& connectUri)
         }
         audio_->OnIncomingPcmFrame(samples, count);
     });
-    relay_->SetTxCountdownStartCallback([this] { this->CallAfter([this] { StartTxCountdownFromServer(); }); });
-    relay_->SetRxBroadcastStartCallback([this](bool bm) {
-        this->CallAfter([this, bm] { OnRxBroadcastStartFromRelay(bm); });
+    relay_->SetTxCountdownStartCallback([weakSelf] {
+        if (!weakSelf) {
+            return;
+        }
+        weakSelf->CallAfter([weakSelf] {
+            if (weakSelf) {
+                weakSelf->StartTxCountdownFromServer();
+            }
+        });
     });
-    relay_->SetRxBroadcastEndCallback([this] { this->CallAfter([this] { OnRxBroadcastEndFromRelay(); }); });
-    relay_->SetServerPttLockCallback([this](int ds) {
-        this->CallAfter([this, ds] { OnServerPttLockFromRelay(ds); });
+    relay_->SetRxBroadcastStartCallback([weakSelf](bool bm) {
+        if (!weakSelf) {
+            return;
+        }
+        weakSelf->CallAfter([weakSelf, bm] {
+            if (weakSelf) {
+                weakSelf->OnRxBroadcastStartFromRelay(bm);
+            }
+        });
     });
-    relay_->SetServerPttUnlockCallback([this] { this->CallAfter([this] { OnServerPttUnlockFromRelay(); }); });
-    relay_->SetTxStopCallback([this] { this->CallAfter([this] { OnTxStop(); }); });
-    relay_->SetConnectionLostCallback([this] { this->CallAfter([this] { OnRelayConnectionLost(); }); });
+    relay_->SetRxBroadcastEndCallback([weakSelf] {
+        if (!weakSelf) {
+            return;
+        }
+        weakSelf->CallAfter([weakSelf] {
+            if (weakSelf) {
+                weakSelf->OnRxBroadcastEndFromRelay();
+            }
+        });
+    });
+    relay_->SetServerPttLockCallback([weakSelf](int ds) {
+        if (!weakSelf) {
+            return;
+        }
+        weakSelf->CallAfter([weakSelf, ds] {
+            if (weakSelf) {
+                weakSelf->OnServerPttLockFromRelay(ds);
+            }
+        });
+    });
+    relay_->SetServerPttUnlockCallback([weakSelf] {
+        if (!weakSelf) {
+            return;
+        }
+        weakSelf->CallAfter([weakSelf] {
+            if (weakSelf) {
+                weakSelf->OnServerPttUnlockFromRelay();
+            }
+        });
+    });
+    relay_->SetTxStopCallback([weakSelf] {
+        if (!weakSelf) {
+            return;
+        }
+        weakSelf->CallAfter([weakSelf] {
+            if (weakSelf) {
+                weakSelf->OnTxStop();
+            }
+        });
+    });
 
     audio_->SetPcmFrameCallback([this](const int16_t* samples, size_t count) {
         relay_->PushTxPcm(samples, count);
@@ -1832,8 +1899,6 @@ MainFrame::MainFrame(const std::string& connectUri)
 
 MainFrame::~MainFrame() {
     userWantsSession_ = false;
-    reconnectScheduleTicket_.fetch_add(1, std::memory_order_relaxed);
-    reconnectAttemptInFlight_.store(false);
     if (audio_) {
         audio_->PrepareForExit();
         audio_->StopTransmit();
@@ -1841,8 +1906,8 @@ MainFrame::~MainFrame() {
 #ifdef _WIN32
     UninstallGlobalPttHook();
 #endif
-    StopReconnectTimer();
     if (relay_) {
+        relay_->DetachUiCallbacks();
         relay_->Disconnect(false);
     }
     SaveAudioSettings();
@@ -2455,7 +2520,6 @@ void MainFrame::OnProfileChoice(wxCommandEvent&) {
     }
 
     // Switch connection while session is active: disconnect and connect to newly selected profile.
-    StopReconnectTimer();
     audio_->StopTransmit();
     relay_->Disconnect();
     ResetPttReleaseBurstGuard();
@@ -2525,43 +2589,6 @@ void MainFrame::OnDeleteProfile(wxCommandEvent&) {
     SetStatus("Profile deleted");
 }
 
-void MainFrame::StopReconnectTimer() {
-    reconnectScheduleTicket_.fetch_add(1, std::memory_order_relaxed);
-    if (reconnectTimer_.IsRunning()) {
-        reconnectTimer_.Stop();
-    }
-}
-
-void MainFrame::ScheduleReconnect() {
-    // userWantsSession_ is the UI source of truth; relay may lag on atomic flags during teardown.
-    if (!userWantsSession_) {
-        return;
-    }
-    const int delayMs = reconnectBackoffMs_;
-    const uint64_t ticket = reconnectScheduleTicket_.fetch_add(1, std::memory_order_relaxed) + 1;
-    SetStatus(wxString::Format("Reconnecting in %d ms", delayMs));
-    std::thread([this, ticket, delayMs] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
-        this->CallAfter([this, ticket] {
-            if (ticket != reconnectScheduleTicket_.load(std::memory_order_relaxed)) {
-                return;
-            }
-            if (!userWantsSession_ || relay_->IsConnected()) {
-                return;
-            }
-            StartReconnectAttemptAsync();
-        });
-    }).detach();
-}
-
-void MainFrame::OnReconnectTimer(wxTimerEvent&) {
-    // Legacy fallback path (timer no longer primary reconnect scheduler).
-    if (!userWantsSession_ || relay_->IsConnected()) {
-        return;
-    }
-    StartReconnectAttemptAsync();
-}
-
 bool MainFrame::TryConnectWithCurrentFields() {
     long port = 0;
     if (!portCtrl_->GetValue().ToLong(&port)) {
@@ -2571,66 +2598,6 @@ bool MainFrame::TryConnectWithCurrentFields() {
     const std::string hostU8 = hostCtrl_->GetValue().utf8_string();
     const std::string chU8 = channelCtrl_->GetValue().utf8_string();
     return relay_->Connect(hostU8, static_cast<int>(port), chU8, repeaterCheck_->GetValue());
-}
-
-void MainFrame::StartReconnectAttemptAsync() {
-    bool expected = false;
-    if (!reconnectAttemptInFlight_.compare_exchange_strong(expected, true)) {
-        return;
-    }
-
-    long port = 0;
-    if (!portCtrl_->GetValue().ToLong(&port)) {
-        reconnectAttemptInFlight_.store(false);
-        SetStatus("Invalid port");
-        return;
-    }
-    const std::string hostU8 = hostCtrl_->GetValue().utf8_string();
-    const std::string chU8 = channelCtrl_->GetValue().utf8_string();
-    const bool repeater = repeaterCheck_->GetValue();
-    const int attemptNo = ++reconnectAttemptSeq_;
-    SetStatus(wxString::Format("Reconnect attempt #%d", attemptNo));
-
-    std::thread([this, hostU8, chU8, port, repeater] {
-        const bool ok = relay_->Connect(hostU8, static_cast<int>(port), chU8, repeater);
-        this->CallAfter([this, ok] {
-            reconnectAttemptInFlight_.store(false);
-            if (!userWantsSession_) {
-                return;
-            }
-            if (ok) {
-                reconnectBackoffMs_ = 1500;
-                reconnectAttemptSeq_ = 0;
-                SaveAudioSettings();
-                SetStatus("Reconnected");
-                return;
-            }
-            SetStatus(wxString::Format("Reconnect failed, retry in %d ms", reconnectBackoffMs_));
-            reconnectBackoffMs_ = std::min(reconnectBackoffMs_ * 2, 30000);
-            ScheduleReconnect();
-        });
-    }).detach();
-}
-
-void MainFrame::OnRelayConnectionLost() {
-    ResetPttReleaseBurstGuard();
-    StopTxCountdownFromServer();
-    audio_->StopTransmit();
-    globalPttPressed_ = false;
-    globalPttToggleHookDown_ = false;
-    suppressHoldPttUntilRelease_ = false;
-    connected_ = false;
-    audio_->PlayConnectionErrorSignal();
-    connectBtn_->SetLabel(userWantsSession_ ? _("Disconnect") : _("Connect"));
-    UpdateProfileControlsEnabled();
-    RefreshPttUi();
-
-    if (!userWantsSession_) {
-        SetStatus("Disconnected");
-        return;
-    }
-    SetStatus("Connection lost — retrying");
-    ScheduleReconnect();
 }
 
 void MainFrame::BuildUi() {
@@ -2890,7 +2857,7 @@ void MainFrame::OnRepeaterToggled(wxCommandEvent&) {
         profiles_[static_cast<size_t>(activeProfileIndex_)].repeater = v;
         SaveProfilesToDisk();
     }
-    if (connected_) {
+    if (IsRelaySessionReady()) {
         relay_->SetRepeaterMode(v);
     }
 }
@@ -2973,8 +2940,7 @@ void MainFrame::OnImportConnectionLink(wxCommandEvent&) {
         return;
     }
 
-    // User has an active/desired session: immediately reconnect using imported fields.
-    StopReconnectTimer();
+    // User has an active/desired session: reconnect using imported fields.
     audio_->StopTransmit();
     relay_->Disconnect();
     ResetPttReleaseBurstGuard();
@@ -3011,7 +2977,6 @@ void MainFrame::UpdateMicLevelIndicatorVisibility() {
 
 void MainFrame::OnConnectClicked(wxCommandEvent&) {
     audio_->PlaySwitchNavSignal();
-    StopReconnectTimer();
 
     if (connected_ || userWantsSession_) {
         userWantsSession_ = false;
@@ -3037,7 +3002,6 @@ void MainFrame::OnConnectClicked(wxCommandEvent&) {
     SyncActiveProfileFromUi();
     userWantsSession_ = true;
     audio_->PlayManualConnectStartSignal();
-    reconnectBackoffMs_ = 1500;
     UpdateProfileControlsEnabled();
     connectBtn_->SetLabel(_("Disconnect"));
 

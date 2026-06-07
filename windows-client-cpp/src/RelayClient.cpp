@@ -4,10 +4,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <thread>
 
 RelayClient::RelayClient() = default;
 
 RelayClient::~RelayClient() {
+    StopReconnectLoop();
     Disconnect(false);
 }
 
@@ -31,25 +34,17 @@ void RelayClient::clearManagedSession() {
     sessionId_ = owalkie::kInvalidSessionId;
 }
 
-void RelayClient::PostConnectionLostOnce() {
-    if (!autoReconnectDesired_.load()) {
-        return;
-    }
-    bool expected = false;
-    if (connectionLostPosted_.compare_exchange_strong(expected, true)) {
-        if (onConnectionLost_) {
-            onConnectionLost_();
-        }
-    }
-}
-
 void RelayClient::HandleSessionEvent(const owalkie::Event& event) {
     if (!owalkie::client_events::isVisible(event.type)) {
         return;
     }
     switch (event.type) {
-        case owalkie::EventType::SessionReady: {
-            connectionLostPosted_.store(false);
+        case owalkie::EventType::ConnectionLost:
+            if (onStatus_) {
+                onStatus_(event.disconnectReason.empty() ? "reconnecting" : event.disconnectReason);
+            }
+            break;
+        case owalkie::EventType::Connected: {
             const WelcomeConfig cfg = MapWelcome(event.welcome);
             {
                 std::lock_guard<std::mutex> lg(stateMu_);
@@ -66,7 +61,8 @@ void RelayClient::HandleSessionEvent(const owalkie::Event& event) {
             }
             break;
         }
-        case owalkie::EventType::ConnectFailed:
+        case owalkie::EventType::ConnectionFailed:
+            StopReconnectLoop();
             clearManagedSession();
             if (notifyUiCallbacks_.load(std::memory_order_relaxed)) {
                 if (onConnected_) {
@@ -75,10 +71,10 @@ void RelayClient::HandleSessionEvent(const owalkie::Event& event) {
                 if (!event.disconnectReason.empty() && onStatus_) {
                     onStatus_(std::string("connect failed: ") + event.disconnectReason);
                 }
-                PostConnectionLostOnce();
             }
             break;
         case owalkie::EventType::Disconnected:
+            StopReconnectLoop();
             clearManagedSession();
             if (notifyUiCallbacks_.load(std::memory_order_relaxed)) {
                 if (onConnected_) {
@@ -87,11 +83,10 @@ void RelayClient::HandleSessionEvent(const owalkie::Event& event) {
                 if (!event.disconnectReason.empty() && onStatus_) {
                     onStatus_(std::string("ws ended: ") + event.disconnectReason);
                 }
-                PostConnectionLostOnce();
             }
             break;
         case owalkie::EventType::ProtocolError:
-            autoReconnectDesired_.store(false);
+            StopReconnectLoop();
             clearManagedSession();
             if (notifyUiCallbacks_.load(std::memory_order_relaxed)) {
                 if (onStatus_) {
@@ -139,14 +134,8 @@ void RelayClient::HandleSessionEvent(const owalkie::Event& event) {
 
 bool RelayClient::Connect(const std::string& host, int serverPort, const std::string& channel, bool repeater) {
     auto& manager = owalkie::SessionManager::instance();
-    if (sessionId_ != owalkie::kInvalidSessionId && manager.isSessionReady(sessionId_)) {
-        return true;
-    }
 
     Disconnect(false);
-
-    autoReconnectDesired_.store(true);
-    connectionLostPosted_.store(false);
 
     owalkie::SessionCallbacks callbacks{};
     callbacks.onRxPcm = [this](std::span<const int16_t> pcm, int sampleRate, int packetMs) {
@@ -167,20 +156,92 @@ bool RelayClient::Connect(const std::string& host, int serverPort, const std::st
     params.channel = channel.empty() ? "global" : channel;
     params.repeaterMode = repeater;
 
-    const owalkie::SessionId id = manager.connect(params, std::move(callbacks));
+    const owalkie::SessionId id = manager.prepareConnection(params, std::move(callbacks));
     if (id == owalkie::kInvalidSessionId) {
         return false;
     }
 
     sessionId_ = id;
+    notifyUiCallbacks_.store(true, std::memory_order_relaxed);
     manager.setPowerProfile(sessionId_, owalkie::PowerProfile::Foreground);
+    StartReconnectLoop();
+    (void)TryReconnect(10000);
     return true;
 }
 
+void RelayClient::DetachUiCallbacks() {
+    onStatus_ = {};
+    onConnected_ = {};
+    onWelcome_ = {};
+    onPcmFrame_ = {};
+    onTxCountdownStart_ = {};
+    onServerPttLock_ = {};
+    onServerPttUnlock_ = {};
+    onRxBroadcastStart_ = {};
+    onRxBroadcastEnd_ = {};
+    onTxStop_ = {};
+}
+
+bool RelayClient::TryReconnect(int timeoutMs) {
+    if (sessionId_ == owalkie::kInvalidSessionId) {
+        return false;
+    }
+    if (connectInFlight_.exchange(true)) {
+        return IsConnected();
+    }
+    struct ConnectGuard {
+        std::atomic<bool>& flag;
+        ~ConnectGuard() { flag.store(false); }
+    } guard{connectInFlight_};
+
+    auto& manager = owalkie::SessionManager::instance();
+    if (!manager.isValid(sessionId_)) {
+        return false;
+    }
+    const owalkie::Result result = manager.connect(sessionId_, timeoutMs);
+    return result == owalkie::Result::Ok && manager.isSessionReady(sessionId_);
+}
+
+void RelayClient::StartReconnectLoop() {
+    if (reconnectLoopRunning_.exchange(true)) {
+        return;
+    }
+    reconnectBackoffMs_ = 1500;
+    reconnectThread_ = std::thread([this]() {
+        while (reconnectLoopRunning_.load(std::memory_order_relaxed)) {
+            if (sessionId_ == owalkie::kInvalidSessionId) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                continue;
+            }
+            if (IsConnected()) {
+                reconnectBackoffMs_ = 1500;
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                continue;
+            }
+            if (connectInFlight_.load(std::memory_order_acquire)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                continue;
+            }
+            TryReconnect(3500);
+            const int backoff = reconnectBackoffMs_;
+            reconnectBackoffMs_ = std::min(reconnectBackoffMs_ * 2, 30000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(backoff));
+        }
+    });
+}
+
+void RelayClient::StopReconnectLoop() {
+    if (!reconnectLoopRunning_.exchange(false)) {
+        return;
+    }
+    if (reconnectThread_.joinable()) {
+        reconnectThread_.join();
+    }
+}
+
 void RelayClient::Disconnect(bool notifyCallbacks) {
+    StopReconnectLoop();
     notifyUiCallbacks_.store(notifyCallbacks, std::memory_order_relaxed);
-    autoReconnectDesired_.store(false);
-    connectionLostPosted_.store(false);
     if (sessionId_ != owalkie::kInvalidSessionId) {
         const owalkie::SessionId id = sessionId_;
         sessionId_ = owalkie::kInvalidSessionId;
@@ -199,10 +260,6 @@ void RelayClient::JoinWorkerThreads() {
 bool RelayClient::IsConnected() const {
     return sessionId_ != owalkie::kInvalidSessionId &&
         owalkie::SessionManager::instance().isSessionReady(sessionId_);
-}
-
-bool RelayClient::AutoReconnectDesired() const {
-    return autoReconnectDesired_.load();
 }
 
 WelcomeConfig RelayClient::CurrentConfig() const {

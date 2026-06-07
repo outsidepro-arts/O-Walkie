@@ -26,16 +26,18 @@ inline owalkie_session_id owalkie_invalid_session_id(void) { return 0; }
 
 /** Client-visible session events (internal transport / welcome steps are not emitted). */
 typedef enum owalkie_event_type {
-    OWALKIE_EV_READY = 0,
+    OWALKIE_EV_CONNECTED = 0,
     OWALKIE_EV_DISCONNECTED,
     OWALKIE_EV_PROTOCOL_ERROR,
-    OWALKIE_EV_CONNECT_FAILED,
+    OWALKIE_EV_CONNECTION_FAILED,
     OWALKIE_EV_RX_BROADCAST_START,
     OWALKIE_EV_RX_BROADCAST_END,
     OWALKIE_EV_PTT_LOCKED,
     OWALKIE_EV_PTT_UNLOCKED,
     OWALKIE_EV_TX_COUNTDOWN_START,
     OWALKIE_EV_TX_STOP,
+    /** Transport lost; client should call @c owalkie_connect(session_id) until @c OWALKIE_EV_CONNECTED. */
+    OWALKIE_EV_CONNECTION_LOST,
 } owalkie_event_type;
 
 typedef struct owalkie_welcome_config {
@@ -85,6 +87,7 @@ typedef struct owalkie_session_info {
     int ready;
     int connected;
     int udp_ready;
+    int connection_lost;
     int receiving;
     int local_tx_active;
     int ptt_server_locked;
@@ -210,9 +213,15 @@ typedef enum owalkie_signal_mode {
 } owalkie_signal_mode;
 
 /* --- managed sessions (requires OWALKIE_CORE_HAS_SESSION) --- */
-owalkie_session_id owalkie_connect(
+owalkie_session_id owalkie_prepare_connection(
     const owalkie_connect_params* params,
     const owalkie_managed_callbacks* callbacks);
+
+/**
+ * Single connect attempt on a prepared session (teardown + TCP/WS). Call repeatedly after
+ * @c OWALKIE_EV_CONNECTION_LOST until @c OWALKIE_EV_CONNECTED. @p timeout_ms TCP budget; 0 = ~3.5s.
+ */
+owalkie_result owalkie_connect(owalkie_session_id session_id, int timeout_ms);
 
 void owalkie_disconnect(owalkie_session_id session_id);
 void owalkie_disconnect_all(void);

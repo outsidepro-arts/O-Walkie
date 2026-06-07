@@ -63,9 +63,6 @@ private:
     void OnPttButtonKeyUp(wxKeyEvent& event);
     void OnCallSignalClicked(wxCommandEvent& event);
     void OnTxStop();
-    void OnReconnectTimer(wxTimerEvent& event);
-    void OnRelayConnectionLost();
-
     void LoadAllSettings();
     void LoadCustomSignalPatternsFromDisk();
     void SaveCustomSignalPatternsToDisk() const;
@@ -98,10 +95,7 @@ private:
     void OnShareConnectionLink(wxCommandEvent& event);
     void OnImportConnectionLink(wxCommandEvent& event);
 
-    void ScheduleReconnect();
-    void StopReconnectTimer();
     bool TryConnectWithCurrentFields();
-    void StartReconnectAttemptAsync();
     void BeginPttTx();
     void EndPttTx();
     void StartTxCountdownFromServer();
@@ -184,11 +178,6 @@ private:
     std::vector<ServerProfile> profiles_;
     int activeProfileIndex_ = 0;
 
-    wxTimer reconnectTimer_;
-    int reconnectBackoffMs_ = 1500;
-    std::atomic<bool> reconnectAttemptInFlight_{false};
-    int reconnectAttemptSeq_ = 0;
-    std::atomic<uint64_t> reconnectScheduleTicket_{0};
 
     std::atomic<uint64_t> pttReleaseBurstTimerTicket_{0};
     std::atomic<int> pttReleaseBurstCount_{0};

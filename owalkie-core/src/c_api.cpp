@@ -86,6 +86,7 @@ void fillSessionInfoC(
     out.ready = ready ? 1 : 0;
     out.connected = st.connected ? 1 : 0;
     out.udp_ready = st.udpReady ? 1 : 0;
+    out.connection_lost = st.connectionLost ? 1 : 0;
     out.receiving = st.receiving ? 1 : 0;
     out.local_tx_active = st.localTxActive ? 1 : 0;
     out.ptt_server_locked = st.pttServerLocked ? 1 : 0;
@@ -103,7 +104,7 @@ void fillManagedEventC(
     std::memset(&cev, 0, sizeof(cev));
     cev.type = owalkie::client_events::toPublic(ev.type);
     switch (ev.type) {
-        case owalkie::EventType::SessionReady:
+        case owalkie::EventType::Connected:
             fillWelcomeC(ev.welcome, cev.u.welcome.config, scratch);
             break;
         case owalkie::EventType::RxBroadcastStart:
@@ -123,8 +124,9 @@ void fillManagedEventC(
             scratch = ev.protocolError;
             cev.u.protocol_error.message = scratch.c_str();
             break;
-        case owalkie::EventType::ConnectFailed:
+        case owalkie::EventType::ConnectionFailed:
         case owalkie::EventType::Disconnected:
+        case owalkie::EventType::ConnectionLost:
             cev.u.disconnected.code = ev.disconnectCode;
             scratch = ev.disconnectReason;
             cev.u.disconnected.reason = scratch.empty() ? nullptr : scratch.c_str();
@@ -200,7 +202,7 @@ owalkie_result owalkie_json_parse_server_message(
 
     std::memset(out_event, 0, sizeof(*out_event));
     if (ev.type == owalkie::EventType::Welcome) {
-        out_event->type = OWALKIE_EV_READY;
+        out_event->type = OWALKIE_EV_CONNECTED;
     } else if (!owalkie::client_events::isVisible(ev.type)) {
         return OWALKIE_OK;
     } else {
@@ -208,7 +210,7 @@ owalkie_result owalkie_json_parse_server_message(
     }
     switch (ev.type) {
         case owalkie::EventType::Welcome:
-        case owalkie::EventType::SessionReady: {
+        case owalkie::EventType::Connected: {
             std::string scratch;
             if (string_buf && string_buf_size > 0) {
                 if (!copyToBuf(ev.welcome.opus.application, string_buf, string_buf_size)) {
@@ -424,7 +426,7 @@ owalkie::SessionCallbacks makeManagedSessionCallbacks(const std::shared_ptr<Mana
         owalkie_event cev{};
         fillManagedEventC(ev, cev, bridge->eventScratch);
         bridge->cbs.on_session_event(bridge->cbs.user_data, sid, &cev);
-        if (ev.type == owalkie::EventType::ConnectFailed ||
+        if (ev.type == owalkie::EventType::ConnectionFailed ||
             ev.type == owalkie::EventType::Disconnected ||
             ev.type == owalkie::EventType::ProtocolError) {
             std::lock_guard<std::mutex> lock(g_managedBridgeMu);
@@ -436,7 +438,7 @@ owalkie::SessionCallbacks makeManagedSessionCallbacks(const std::shared_ptr<Mana
 
 } // namespace
 
-owalkie_session_id owalkie_connect(
+owalkie_session_id owalkie_prepare_connection(
     const owalkie_connect_params* params,
     const owalkie_managed_callbacks* callbacks) {
     if (!params || !params->host || !callbacks || !callbacks->on_session_event) {
@@ -453,7 +455,7 @@ owalkie_session_id owalkie_connect(
     cpp.useTls = params->use_tls != 0;
     cpp.repeaterMode = params->repeater_mode != 0;
 
-    const owalkie::SessionId id = owalkie::SessionManager::instance().connect(
+    const owalkie::SessionId id = owalkie::SessionManager::instance().prepareConnection(
         cpp,
         makeManagedSessionCallbacks(bridge),
         [bridge](owalkie::SessionId allocated) {
@@ -464,6 +466,19 @@ owalkie_session_id owalkie_connect(
         return owalkie_invalid_session_id();
     }
     return id;
+}
+
+owalkie_result owalkie_connect(owalkie_session_id session_id, int timeout_ms) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    const owalkie::Result r =
+        owalkie::SessionManager::instance().connect(session_id, timeout_ms);
+    if (r == owalkie::Result::Ok &&
+        owalkie::SessionManager::instance().isSessionReady(session_id)) {
+        return OWALKIE_OK;
+    }
+    return toC(r);
 }
 
 void owalkie_disconnect(owalkie_session_id session_id) {
@@ -613,11 +628,12 @@ int owalkie_get_uplink_signal_byte(void) {
 
 #else
 
-owalkie_session_id owalkie_connect(
+owalkie_session_id owalkie_prepare_connection(
     const owalkie_connect_params*,
     const owalkie_managed_callbacks*) {
     return owalkie_invalid_session_id();
 }
+owalkie_result owalkie_connect(owalkie_session_id, int) { return OWALKIE_ERR_UNSUPPORTED; }
 void owalkie_disconnect(owalkie_session_id) {}
 void owalkie_disconnect_all(void) {}
 void owalkie_disconnect_all_and_wait(int) {}

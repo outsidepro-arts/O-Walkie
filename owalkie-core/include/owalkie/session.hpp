@@ -35,23 +35,26 @@ public:
 
     bool isConnected() const;
     bool isSessionReady() const;
-    void setAutoReconnect(bool enabled);
-    bool autoReconnectEnabled() const;
+    bool isConnectionLost() const;
 
-    /** Client-driven local TX window (encode/send PCM inside core). */
+    Result reconnectTeardown();
+    Result reconnectConnect(const ConnectParams& params);
+    Result reconnectConnect(const ConnectParams& params, int timeoutMs);
+    void emitConnectionLost(const std::string& reason);
+    void emitConnectionFailed(const std::string& reason);
+    void clearConnectionLostSignaled();
+    void cancelOngoingConnect();
+
     Result txStart();
     Result pushTxPcm(std::span<const int16_t> samples);
     Result txEnd();
 
-    /** Legacy / tests: raw Opus without tx_start. */
     Result sendTxOpus(std::span<const uint8_t> opus);
     Result sendTxEofBurst();
     Result setRepeaterMode(bool enabled);
     Result resetUdpTransport();
     void setPowerProfile(PowerProfile profile);
     PowerProfile powerProfile() const;
-    void enterUdpRecovery();
-    void notifyNetworkChanged();
     Result punchUdpNat();
 
     SessionState state() const;

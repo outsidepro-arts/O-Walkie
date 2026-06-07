@@ -47,3 +47,13 @@ cd android
 | x86_64 | x64-android |
 
 Override vcpkg path: set **`VCPKG_ROOT`** before building.
+
+## Client-owned reconnect (Android)
+
+`WalkieService` gates reconnect attempts on local `NET_CAPABILITY_VALIDATED` (no native reachability API):
+
+1. `nativePrepareConnection` — allocate session id (no network)
+2. `nativeConnect(sessionId, timeoutMs)` — first connect and every retry on the same id
+3. On `EV_CONNECTION_LOST` — client loop calls `nativeConnect` again (backoff 1.5s → 8s)
+
+`bindProcessToActiveNetwork()` runs before each connect attempt.

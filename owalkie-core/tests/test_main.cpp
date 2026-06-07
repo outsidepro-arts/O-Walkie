@@ -7,6 +7,7 @@ extern int run_signal_tests();
 extern int run_udp_tests();
 extern int run_link_signal_tests();
 extern int run_session_info_tests();
+extern int run_client_events_tests();
 
 int main() {
     int failed = 0;
@@ -17,6 +18,7 @@ int main() {
     failed += run_udp_tests();
     failed += run_link_signal_tests();
     failed += run_session_info_tests();
+    failed += run_client_events_tests();
     if (failed == 0) {
         std::cout << "All tests passed.\n";
         return 0;

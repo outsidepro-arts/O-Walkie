@@ -28,9 +28,12 @@ target_include_directories(owalkie_jni PRIVATE
     "${OWALKIE_REPO_ROOT}/owalkie-core/include"
 )
 
+find_library(owalkie_android_lib android)
+
 target_link_libraries(owalkie_jni
     owalkie_core
     log
+    ${owalkie_android_lib}
 )
 
 target_include_directories(owalkie_jni PRIVATE

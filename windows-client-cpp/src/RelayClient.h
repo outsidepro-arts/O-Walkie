@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "owalkie/session_manager.hpp"
@@ -36,7 +37,6 @@ public:
     using RxBroadcastStartCallback = std::function<void(bool busyMode)>;
     using RxBroadcastEndCallback = std::function<void()>;
     using TxStopCallback = std::function<void()>;
-    using ConnectionLostCallback = std::function<void()>;
 
     RelayClient();
     ~RelayClient();
@@ -44,9 +44,11 @@ public:
     bool Connect(const std::string& host, int serverPort, const std::string& channel, bool repeater);
     void Disconnect(bool notifyCallbacks = true);
     void JoinWorkerThreads();
+    bool TryReconnect(int timeoutMs = 0);
+    void StartReconnectLoop();
+    void StopReconnectLoop();
 
     bool IsConnected() const;
-    bool AutoReconnectDesired() const;
     WelcomeConfig CurrentConfig() const;
 
     bool TxStart();
@@ -64,20 +66,21 @@ public:
     void SetRxBroadcastStartCallback(RxBroadcastStartCallback cb) { onRxBroadcastStart_ = std::move(cb); }
     void SetRxBroadcastEndCallback(RxBroadcastEndCallback cb) { onRxBroadcastEnd_ = std::move(cb); }
     void SetTxStopCallback(TxStopCallback cb) { onTxStop_ = std::move(cb); }
-    void SetConnectionLostCallback(ConnectionLostCallback cb) { onConnectionLost_ = std::move(cb); }
+    void DetachUiCallbacks();
 
 private:
     static WelcomeConfig MapWelcome(const owalkie::WelcomeConfig& src);
     void HandleSessionEvent(const owalkie::Event& event);
-    void PostConnectionLostOnce();
     void clearManagedSession();
 
     owalkie::SessionId sessionId_ = owalkie::kInvalidSessionId;
     mutable std::mutex stateMu_;
     WelcomeConfig cfg_;
-    std::atomic<bool> autoReconnectDesired_{false};
-    std::atomic<bool> connectionLostPosted_{false};
     std::atomic<bool> notifyUiCallbacks_{true};
+    std::thread reconnectThread_;
+    std::atomic<bool> reconnectLoopRunning_{false};
+    std::atomic<bool> connectInFlight_{false};
+    int reconnectBackoffMs_ = 1500;
 
     StatusCallback onStatus_;
     ConnectedCallback onConnected_;
@@ -89,5 +92,4 @@ private:
     RxBroadcastStartCallback onRxBroadcastStart_;
     RxBroadcastEndCallback onRxBroadcastEnd_;
     TxStopCallback onTxStop_;
-    ConnectionLostCallback onConnectionLost_;
 };

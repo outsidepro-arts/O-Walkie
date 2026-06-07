@@ -1,9 +1,15 @@
 #include <jni.h>
 
+#include <android/log.h>
+#include <android/multinetwork.h>
+
 #include <atomic>
+#include <cerrno>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -12,6 +18,8 @@
 #include "owalkie/session_manager.hpp"
 
 namespace {
+
+constexpr const char* kLogTag = "OwalkieRelay";
 
 struct JniSessionBinding {
     owalkie::SessionId id = owalkie::kInvalidSessionId;
@@ -25,6 +33,27 @@ struct JniSessionBinding {
 
 std::mutex g_jniMu;
 std::unordered_map<owalkie::SessionId, std::shared_ptr<JniSessionBinding>> g_jniBindings;
+std::atomic<long long> g_networkHandle{0};
+std::atomic<bool> g_preConnectHookInstalled{false};
+
+void ensurePreConnectHook() {
+    bool expected = false;
+    if (!g_preConnectHookInstalled.compare_exchange_strong(expected, true)) {
+        return;
+    }
+    owalkie::SessionManager::instance().setPreConnectHook([]() {
+        const long long stored = g_networkHandle.load(std::memory_order_relaxed);
+        const net_handle_t handle =
+            stored == 0LL ? NETWORK_UNSPECIFIED : static_cast<net_handle_t>(stored);
+        const int rc = android_setprocnetwork(handle);
+        __android_log_print(
+            ANDROID_LOG_INFO,
+            kLogTag,
+            "preConnect bindProcessNetwork handle=%lld rc=%d",
+            static_cast<long long>(stored),
+            rc);
+    });
+}
 
 class JniEnv {
 public:
@@ -84,10 +113,15 @@ void eraseBinding(owalkie::SessionId id) {
         binding = it->second;
         g_jniBindings.erase(it);
     }
-    if (binding && binding->jvm) {
-        JniEnv env(binding->jvm);
-        releaseBindingRefs(env.get(), binding.get());
+    if (!binding || !binding->jvm) {
+        return;
     }
+    // Teardown must not DeleteGlobalRef(listener) while dispatchEvent is in CallVoidMethod.
+    for (int i = 0; i < 500 && binding->jniCallbackDepth.load(std::memory_order_acquire) > 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    JniEnv env(binding->jvm);
+    releaseBindingRefs(env.get(), binding.get());
 }
 
 void dispatchEvent(JniSessionBinding* binding, int eventType, const char* info) {
@@ -155,10 +189,11 @@ void dispatchSessionEvent(const std::shared_ptr<JniSessionBinding>& binding, con
     std::string info;
     const char* infoPtr = nullptr;
     switch (ev.type) {
-        case owalkie::EventType::SessionReady:
+        case owalkie::EventType::Connected:
             break;
-        case owalkie::EventType::ConnectFailed:
+        case owalkie::EventType::ConnectionFailed:
         case owalkie::EventType::Disconnected:
+        case owalkie::EventType::ConnectionLost:
             infoPtr = ev.disconnectReason.c_str();
             break;
         case owalkie::EventType::ProtocolError:
@@ -175,10 +210,15 @@ void dispatchSessionEvent(const std::shared_ptr<JniSessionBinding>& binding, con
         default:
             break;
     }
-    dispatchEvent(
-        binding.get(),
-        static_cast<int>(owalkie::client_events::toPublic(ev.type)),
-        infoPtr);
+    const int publicType = static_cast<int>(owalkie::client_events::toPublic(ev.type));
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        kLogTag,
+        "event session=%lld type=%d info=%s",
+        static_cast<long long>(binding->id),
+        publicType,
+        infoPtr ? infoPtr : "");
+    dispatchEvent(binding.get(), publicType, infoPtr);
 }
 
 owalkie::SessionCallbacks makeSessionCallbacks(const std::shared_ptr<JniSessionBinding>& binding) {
@@ -188,8 +228,7 @@ owalkie::SessionCallbacks makeSessionCallbacks(const std::shared_ptr<JniSessionB
     };
     callbacks.onSessionEvent = [binding](const owalkie::Event& event) {
         dispatchSessionEvent(binding, event);
-        if (event.type == owalkie::EventType::ConnectFailed ||
-            event.type == owalkie::EventType::Disconnected ||
+        if (event.type == owalkie::EventType::ConnectionFailed ||
             event.type == owalkie::EventType::ProtocolError) {
             eraseBinding(binding->id);
         }
@@ -211,7 +250,7 @@ owalkie::PowerProfile mapPower(jint profile) {
 } // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeConnect(
+Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativePrepareConnection(
     JNIEnv* env,
     jobject,
     jobject listener,
@@ -245,7 +284,9 @@ Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeConnect(
     params.channel = channelUtf;
     params.repeaterMode = repeater == JNI_TRUE;
 
-    const owalkie::SessionId id = owalkie::SessionManager::instance().connect(
+    ensurePreConnectHook();
+
+    const owalkie::SessionId id = owalkie::SessionManager::instance().prepareConnection(
         params,
         makeSessionCallbacks(binding),
         [binding](owalkie::SessionId allocated) {
@@ -266,12 +307,32 @@ Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeConnect(
     return static_cast<jlong>(id);
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeConnect(JNIEnv*, jobject, jlong sessionId, jint timeoutMs) {
+    if (sessionId <= 0) {
+        return static_cast<jint>(owalkie::Result::InvalidArg);
+    }
+    const owalkie::SessionId id = static_cast<owalkie::SessionId>(sessionId);
+    ensurePreConnectHook();
+    const owalkie::Result result =
+        owalkie::SessionManager::instance().connect(id, timeoutMs < 0 ? 0 : timeoutMs);
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        kLogTag,
+        "nativeConnect session=%lld timeout=%d result=%d",
+        static_cast<long long>(id),
+        timeoutMs,
+        static_cast<int>(result));
+    return static_cast<jint>(result);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeDisconnect(JNIEnv*, jobject, jlong sessionId) {
     if (sessionId <= 0) {
         return;
     }
     const owalkie::SessionId id = static_cast<owalkie::SessionId>(sessionId);
+    __android_log_print(ANDROID_LOG_INFO, kLogTag, "nativeDisconnect session=%lld", static_cast<long long>(id));
     owalkie::SessionManager::instance().disconnect(id);
     eraseBinding(id);
 }
@@ -343,7 +404,7 @@ Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeGetSessionInfoFlags(
     if (sessionId <= 0 || !outInts) {
         return static_cast<jint>(OWALKIE_ERR_INVALID_ARG);
     }
-    if (env->GetArrayLength(outInts) < 8) {
+    if (env->GetArrayLength(outInts) < 9) {
         return static_cast<jint>(OWALKIE_ERR_INVALID_ARG);
     }
     owalkie_session_info info{};
@@ -352,17 +413,18 @@ Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeGetSessionInfoFlags(
     if (r != OWALKIE_OK) {
         return static_cast<jint>(r);
     }
-    jint values[8]{
+    jint values[9]{
         info.ready,
         info.connected,
         info.udp_ready,
+        info.connection_lost,
         info.receiving,
         info.local_tx_active,
         info.ptt_server_locked,
         info.ptt_lock_display_sec,
         info.has_config,
     };
-    env->SetIntArrayRegion(outInts, 0, 8, values);
+    env->SetIntArrayRegion(outInts, 0, 9, values);
     return static_cast<jint>(OWALKIE_OK);
 }
 
@@ -466,6 +528,23 @@ Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeSetPowerProfile(
     owalkie::SessionManager::instance().setPowerProfile(
         static_cast<owalkie::SessionId>(sessionId),
         mapPower(profile));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeBindProcessNetwork(JNIEnv*, jobject, jlong networkHandle) {
+    g_networkHandle.store(static_cast<long long>(networkHandle), std::memory_order_relaxed);
+    ensurePreConnectHook();
+    const net_handle_t handle =
+        networkHandle == 0L ? NETWORK_UNSPECIFIED : static_cast<net_handle_t>(networkHandle);
+    const int rc = android_setprocnetwork(handle);
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        kLogTag,
+        "bindProcessNetwork handle=%lld rc=%d errno=%d",
+        static_cast<long long>(networkHandle),
+        rc,
+        rc != 0 ? errno : 0);
+    return rc == 0 ? 0 : -1;
 }
 
 extern "C" JNIEXPORT jint JNICALL

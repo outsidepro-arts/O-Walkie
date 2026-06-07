@@ -27,7 +27,7 @@ enum class Result {
 
 enum class EventType {
     Connecting = 0,
-    Connected = 1,
+    TransportConnected = 1,
     Disconnected = 2,
     ProtocolError = 3,
     Welcome = 4,
@@ -41,8 +41,9 @@ enum class EventType {
     TxStop = 12,
     UdpTransportReady = 13,
     UdpTransportLost = 14,
-    ConnectFailed = 15,
-    SessionReady = 16,
+    ConnectionFailed = 15,
+    Connected = 16,
+    ConnectionLost = 17,
 };
 
 struct OpusConfig {
@@ -92,6 +93,7 @@ enum class PowerProfile {
 struct SessionState {
     bool connected = false;
     bool udpReady = false;
+    bool connectionLost = false;
     bool receiving = false;
     bool localTxActive = false;
     bool pttServerLocked = false;

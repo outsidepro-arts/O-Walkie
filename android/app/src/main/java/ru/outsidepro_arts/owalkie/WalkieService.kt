@@ -23,6 +23,7 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
+import android.util.Log
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -62,10 +63,11 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.PI
 import kotlin.math.sin
-import kotlin.random.Random
 
 class WalkieService : Service(), NativeRelayBridge.Host {
     companion object {
+        private const val TAG = "OwalkieRelay"
+
         const val ACTION_START = "ru.outsidepro_arts.owalkie.action.START"
         /** Reconnect to another server profile while keeping [desiredConnection]. */
         const val ACTION_SWITCH_SERVER = "ru.outsidepro_arts.owalkie.action.SWITCH_SERVER"
@@ -106,7 +108,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         const val EXTRA_PARALLEL_TX_COLLISION = "parallelTxCollision"
         const val EXTRA_CALL_ACTIVE = "callActive"
         const val EXTRA_PTT_BURST_PRESS_BLOCKED = "pttBurstPressBlocked"
-        const val EXTRA_DEBUG_WS_RECONNECT_COUNT = "debugWsReconnectCount"
         const val EXTRA_DEBUG_UDP_RECOVERY_COUNT = "debugUdpRecoveryCount"
         const val EXTRA_DEBUG_LAST_UDP_GAP_MS = "debugLastUdpGapMs"
         const val EXTRA_SERVER_HOST = "serverHost"
@@ -145,7 +146,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         private const val PTT_RELEASE_BURST_BLOCK_THRESHOLD = 3
         private const val CALL_LOCAL_GAIN_DB = -10.0
         private const val PLAYBACK_BUFFER_FRAMES = 2
-        private const val WS_RECONNECT_JITTER_PERCENT = 20L
         private const val NATIVE_RELAY_SHUTDOWN_WAIT_MS = 3000
         private const val SIGNAL_POLL_INTERVAL_FOREGROUND_MS = 1000L
         private const val SIGNAL_POLL_INTERVAL_BACKGROUND_MS = 5000L
@@ -158,14 +158,21 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         /** End parallel-TX collision feedback this long after the last inbound frame while local TX is on. */
         private const val PARALLEL_TX_RX_STALE_NS = 250_000_000L
         private const val TRANSMIT_TIMEOUT_COUNTDOWN_PULSE_MS = 35L
+        private const val CLIENT_RECONNECT_INTERVAL_INITIAL_MS = 1500L
+        private const val CLIENT_RECONNECT_INTERVAL_MAX_MS = 8000L
+        private const val CLIENT_RECONNECT_TIMEOUT_MS = 3500
+        private const val CLIENT_INITIAL_CONNECT_TIMEOUT_MS = 5000
+        /** Ignore spurious CONNECTION_LOST while UDP/WS settles after a successful connect. */
+        private const val CLIENT_RECONNECT_SETTLE_MS = 2500L
     }
 
     private val binder = Binder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private var wsReconnectJob: Job? = null
     private var signalMonitorJob: Job? = null
-    private val wsRetryAttempt = AtomicInteger(0)
+    private var clientReconnectJob: Job? = null
+    private val nativeConnectInFlight = AtomicBoolean(false)
+    private val lastRelayConnectedAtMs = AtomicLong(0L)
     private val desiredConnection = AtomicBoolean(false)
     private val relayPausedForCellularCall = AtomicBoolean(false)
     private val configLock = Any()
@@ -177,14 +184,12 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private var activeCellularOrWifi: Network? = null
     private val pendingUdpNetworkRecreate = AtomicBoolean(false)
     private var lastWelcomeSessionId: Long = 0L
+    private val lastNetworkValidated = AtomicBoolean(false)
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             activeCellularOrWifi = network
-            val fingerprint = network.hashCode().toLong()
-            val previous = lastNetworkFingerprint.getAndSet(fingerprint)
-            if (previous != fingerprint) {
-                onNetworkChangedForRecovery()
-            }
+            network.hashCode().toLong().let { lastNetworkFingerprint.getAndSet(it) }
+            updateNetworkReachableFromCapabilities("onAvailable")
         }
 
         override fun onLost(network: Network) {
@@ -192,6 +197,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 val fallback = connectivityManager.activeNetwork
                 if (fallback != null && fallback != network) {
                     activeCellularOrWifi = fallback
+                    updateNetworkReachableFromCapabilities("onLost/fallback")
+                    return
                 } else {
                     activeCellularOrWifi = null
                 }
@@ -200,8 +207,13 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             val previous = lastNetworkFingerprint.get()
             if (previous == fingerprint || previous == 0L) {
                 lastNetworkFingerprint.set(0L)
-                onNetworkChangedForRecovery()
+                lastNetworkValidated.set(false)
             }
+        }
+
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            activeCellularOrWifi = network
+            updateNetworkReachableFromCapabilities("onCapabilitiesChanged")
         }
     }
 
@@ -229,7 +241,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private val pttReleaseBurstCount = AtomicInteger(0)
     private val pttReleaseBurstPressBlocked = AtomicBoolean(false)
     private var pttReleaseBurstResetJob: Job? = null
-    private val wsReconnectCount = AtomicLong(0L)
     private val udpRecoveryCount = AtomicLong(0L)
     private val lastObservedUdpGapMs = AtomicLong(0L)
     private val lastNetworkFingerprint = AtomicLong(0L)
@@ -305,10 +316,51 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private fun relayTransportConnecting(): Boolean = relay().isConnecting
 
-    private fun nativeRelayDisconnect() {
-        serviceScope.launch(Dispatchers.IO) {
-            relay().disconnect()
+    @Volatile
+    private var nativeDisconnectJob: Job? = null
+
+    private suspend fun waitForNativeConnectIdle(maxWaitMs: Long = 3_000L) {
+        var waitedMs = 0L
+        while (nativeConnectInFlight.get() && waitedMs < maxWaitMs) {
+            delay(50)
+            waitedMs += 50
         }
+    }
+
+    private suspend fun tearDownNativeRelay(sessionId: Long) {
+        OwalkieNative.ensureLoaded()
+        if (sessionId != 0L) {
+            OwalkieNative.nativeDisconnect(sessionId)
+        }
+        waitForNativeConnectIdle()
+        if (sessionId != 0L) {
+            if (OwalkieNative.nativeSessionValid(sessionId) != 0) {
+                Log.w(TAG, "tearDownNativeRelay session=$sessionId still valid after disconnect")
+                OwalkieNative.nativeDisconnect(sessionId)
+                waitForNativeConnectIdle(1_000L)
+            }
+        } else {
+            OwalkieNative.nativeDisconnectAllAndWait(NATIVE_RELAY_SHUTDOWN_WAIT_MS)
+        }
+    }
+
+    private fun beginNativeTeardown(sessionId: Long): Job {
+        nativeDisconnectJob?.cancel()
+        val job = serviceScope.launch(Dispatchers.IO) {
+            tearDownNativeRelay(sessionId)
+        }
+        nativeDisconnectJob = job
+        return job
+    }
+
+    private fun requestNativeRelayDisconnect() {
+        val sessionId = relay().detachLocalTransportState()
+        beginNativeTeardown(sessionId)
+    }
+
+    private suspend fun awaitNativeDisconnectIdle() {
+        nativeDisconnectJob?.join()
+        nativeDisconnectJob = null
     }
 
     private fun runOnMain(block: () -> Unit) {
@@ -458,8 +510,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         localCallPlaybackJob?.cancel()
         localPttPressPlaybackJob?.cancel()
         releaseRxPlaybackTrack()
-        wsReconnectJob?.cancel()
         signalMonitorJob?.cancel()
+        stopClientReconnectLoop()
         unregisterNetworkCallback()
         unregisterTelephonyForRelayPause()
         if (nativeRelayLazy.isInitialized()) {
@@ -496,10 +548,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         val changed = applyConfigFromIntent(intent)
         enforceAudioRoutePolicy()
         startForegroundInternal()
-        wsReconnectJob?.cancel()
-        wsReconnectJob = null
-        connectRelay(force = changed)
+        connectRelay(force = true)
         ensureSignalMonitorLoop()
+        ensureClientReconnectLoop()
     }
 
     /** Hot-swap server profile without clearing user connect intent (next/prev server buttons). */
@@ -507,14 +558,92 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         applyConfigFromIntent(intent)
         enforceAudioRoutePolicy()
         resetRelayCodecState()
-        tearDownTransport(clearUserIntent = false)
-        startForegroundInternal()
-        wsReconnectJob?.cancel()
-        wsReconnectJob = null
-        wsRetryAttempt.set(0)
-        connectRelay(force = true)
-        ensureSignalMonitorLoop()
-        broadcastStatus(currentSignalByte())
+        serviceScope.launch(Dispatchers.IO) {
+            tearDownTransportAndAwait(clearUserIntent = false)
+            withContext(Dispatchers.Main) {
+                startForegroundInternal()
+                broadcastStatus(currentSignalByte())
+            }
+            connectNativeRelay(force = true)
+            ensureSignalMonitorLoop()
+            ensureClientReconnectLoop()
+        }
+    }
+
+    private fun shouldDeferReconnectAttempt(sessionId: Long): Boolean {
+        if (sessionId == 0L) {
+            return false
+        }
+        val elapsed = System.currentTimeMillis() - lastRelayConnectedAtMs.get()
+        if (elapsed in 0 until CLIENT_RECONNECT_SETTLE_MS &&
+            OwalkieNative.nativeSessionReady(sessionId) != 0
+        ) {
+            return true
+        }
+        return false
+    }
+
+    private fun stopClientReconnectLoop() {
+        clientReconnectJob?.cancel()
+        clientReconnectJob = null
+    }
+
+    private fun ensureClientReconnectLoop() {
+        if (clientReconnectJob?.isActive == true) return
+        clientReconnectJob = serviceScope.launch(Dispatchers.IO) {
+            var backoffMs = CLIENT_RECONNECT_INTERVAL_INITIAL_MS
+            while (isActive) {
+                if (!desiredConnection.get() || relayPausedForCellularCall.get()) {
+                    delay(500)
+                    continue
+                }
+                if (relayTransportConnected()) {
+                    backoffMs = CLIENT_RECONNECT_INTERVAL_INITIAL_MS
+                    delay(500)
+                    continue
+                }
+                if (nativeConnectInFlight.get()) {
+                    delay(300)
+                    continue
+                }
+                if (!lastNetworkValidated.get()) {
+                    delay(500)
+                    continue
+                }
+                bindProcessToActiveNetwork()
+                val bridge = relay()
+                val sessionId = bridge.activeSessionId
+                if (shouldDeferReconnectAttempt(sessionId)) {
+                    bridge.resyncReadyFromNative()
+                    delay(500)
+                    continue
+                }
+                val nativeValid =
+                    sessionId != 0L && OwalkieNative.nativeSessionValid(sessionId) != 0
+                if (nativeValid) {
+                    if (OwalkieNative.nativeSessionReady(sessionId) != 0) {
+                        bridge.resyncReadyFromNative()
+                        backoffMs = CLIENT_RECONNECT_INTERVAL_INITIAL_MS
+                        delay(500)
+                        continue
+                    }
+                    Log.i(TAG, "clientConnect session=$sessionId backoff=${backoffMs}ms")
+                    tryNativeConnect(CLIENT_RECONNECT_TIMEOUT_MS)
+                } else if (!nativeConnectInFlight.get()) {
+                    if (sessionId != 0L) {
+                        Log.w(TAG, "clientConnect stale kotlin session=$sessionId; native teardown")
+                        OwalkieNative.nativeDisconnect(sessionId)
+                        relay().detachLocalTransportState()
+                    }
+                    connectNativeRelay(force = true)
+                }
+                delay(backoffMs)
+                backoffMs = minOf(
+                    (backoffMs * 1.5).toLong().coerceAtLeast(1L),
+                    CLIENT_RECONNECT_INTERVAL_MAX_MS,
+                )
+            }
+        }
     }
 
     private fun resetNativeRelayUiTransportState() {
@@ -631,12 +760,37 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         connectNativeRelay(force)
     }
 
+    private fun tryNativeConnect(timeoutMs: Int): Int {
+        if (!nativeConnectInFlight.compareAndSet(false, true)) {
+            return OwalkieNative.ERR_NOT_READY
+        }
+        return try {
+            val bridge = relay()
+            val sessionId = bridge.activeSessionId
+            if (sessionId != 0L && shouldDeferReconnectAttempt(sessionId)) {
+                bridge.resyncReadyFromNative()
+                OwalkieNative.OK
+            } else {
+                val rc = bridge.activateConnection(timeoutMs)
+                if (rc == OwalkieNative.OK) {
+                    bridge.resyncReadyFromNative()
+                }
+                rc
+            }
+        } finally {
+            nativeConnectInFlight.set(false)
+        }
+    }
+
     private fun connectNativeRelay(force: Boolean = false) {
         if (!desiredConnection.get()) return
         if (relayPausedForCellularCall.get()) return
+        if (!force && relay().activeSessionId != 0L) return
         if (!force && (relayTransportConnected() || relayTransportConnecting())) return
+        if (!nativeConnectInFlight.compareAndSet(false, true)) return
 
         serviceScope.launch(Dispatchers.IO) {
+            awaitNativeDisconnectIdle()
             var connectOk = false
             var invalidEndpoint = false
             val endpoint = parseServerEndpoint(serverHost, serverPort)
@@ -646,23 +800,31 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 } else if (!desiredConnection.get() || relayPausedForCellularCall.get()) {
                     connectOk = false
                 } else {
+                    bindProcessToActiveNetwork()
                     val bridge = relay()
                     currentSignalByte()
                     bridge.syncActivityFocus(activityFocused)
                     val selectedChannel = channel.trim().ifBlank { DEFAULT_CHANNEL }
-                    connectOk = bridge.connect(
+                    if (bridge.activeSessionId == 0L) {
+                        OwalkieNative.nativeDisconnectAll()
+                    }
+                    connectOk = bridge.prepareConnection(
                         endpoint.host,
                         endpoint.port,
                         selectedChannel,
                         repeaterEnabled,
                         endpoint.wsSecure,
                     )
+                    if (connectOk && desiredConnection.get()) {
+                        bridge.activateConnection(CLIENT_INITIAL_CONNECT_TIMEOUT_MS)
+                    }
                     if (!connectOk || !desiredConnection.get()) {
                         bridge.disconnect()
                         connectOk = false
                     }
                 }
             } finally {
+                nativeConnectInFlight.set(false)
                 withContext(Dispatchers.Main) {
                     if (invalidEndpoint) {
                         channelBound = false
@@ -673,14 +835,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                         }
                     } else if (!connectOk) {
                         channelBound = false
-                    }
-                    if (!connectOk &&
-                        !invalidEndpoint &&
-                        desiredConnection.get() &&
-                        !relayPausedForCellularCall.get()
-                    ) {
-                        wsReconnectCount.incrementAndGet()
-                        scheduleWsReconnect()
                     }
                     broadcastStatus(currentSignalByte())
                 }
@@ -1362,6 +1516,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 // auto-applies when headset connects and auto-falls back when disconnected.
                 enforceAudioRoutePolicy()
                 val signal = currentSignalByte()
+                syncRelayReadyFromNativeIfNeeded()
+                maybeRefreshNetworkReachableWhileReconnecting()
                 broadcastStatus(signal)
                 val loopDelayMs = if (activityFocused) {
                     SIGNAL_POLL_INTERVAL_FOREGROUND_MS
@@ -1387,6 +1543,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                     activeCellularOrWifi = n
                 }
             }
+            updateNetworkReachableFromCapabilities("registerNetworkCallback")
         }
     }
 
@@ -1398,8 +1555,64 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         networkCallbackRegistered = false
     }
 
-    private fun onNetworkChangedForRecovery() {
-        if (!desiredConnection.get()) return
+    private fun bindProcessToActiveNetwork() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return
+        }
+        OwalkieNative.ensureLoaded()
+        val network = activeCellularOrWifi ?: connectivityManager.activeNetwork
+        val handle = network?.networkHandle ?: 0L
+        val rc = OwalkieNative.nativeBindProcessNetwork(handle)
+        Log.i(TAG, "bindProcessNetwork handle=$handle rc=$rc network=${network != null}")
+    }
+
+    private fun networkCapabilitiesValidated(caps: NetworkCapabilities): Boolean {
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
+    }
+
+    private fun updateNetworkReachableFromCapabilities(reason: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            if (!lastNetworkValidated.getAndSet(true)) {
+                onNetworkValidated(true, reason)
+            }
+            return
+        }
+        val network = activeCellularOrWifi ?: connectivityManager.activeNetwork
+        if (network == null) {
+            if (lastNetworkValidated.getAndSet(false)) {
+                Log.i(TAG, "networkValidated=false ($reason/noActiveNetwork)")
+            }
+            return
+        }
+        val caps = connectivityManager.getNetworkCapabilities(network) ?: run {
+            if (lastNetworkValidated.getAndSet(false)) {
+                Log.i(TAG, "networkValidated=false ($reason/noCapabilities)")
+            }
+            return
+        }
+        val validated = networkCapabilitiesValidated(caps)
+        if (validated == lastNetworkValidated.get()) {
+            return
+        }
+        lastNetworkValidated.set(validated)
+        onNetworkValidated(validated, reason)
+    }
+
+    private fun maybeRefreshNetworkReachableWhileReconnecting() {
+        if (!desiredConnection.get() || relayPausedForCellularCall.get()) return
+        if (relayTransportConnected()) return
+        updateNetworkReachableFromCapabilities("signalMonitor")
+    }
+
+    private fun onNetworkValidated(validated: Boolean, reason: String) {
+        Log.i(TAG, "networkValidated=$validated ($reason)")
+        if (!validated || !desiredConnection.get()) return
+        bindProcessToActiveNetwork()
+        if (relayTransportConnecting()) {
+            return
+        }
         if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
             pendingUdpNetworkRecreate.set(true)
             return
@@ -1497,29 +1710,16 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             putExtra(EXTRA_PARALLEL_TX_COLLISION, parallelTxCollisionActive.get())
             putExtra(EXTRA_CALL_ACTIVE, callStreaming.get())
             putExtra(EXTRA_PTT_BURST_PRESS_BLOCKED, pttReleaseBurstPressBlocked.get())
-            putExtra(EXTRA_DEBUG_WS_RECONNECT_COUNT, wsReconnectCount.get())
             putExtra(EXTRA_DEBUG_UDP_RECOVERY_COUNT, udpRecoveryCount.get())
             putExtra(EXTRA_DEBUG_LAST_UDP_GAP_MS, lastObservedUdpGapMs.get())
         }
         sendBroadcast(statusIntent)
     }
 
-    private fun scheduleWsReconnect() {
-        if (relayPausedForCellularCall.get()) return
-        if (wsReconnectJob?.isActive == true) return
-        wsReconnectJob = serviceScope.launch {
-            val attempt = wsRetryAttempt.incrementAndGet()
-            var delayMs = (1000L * (1 shl (attempt - 1).coerceIn(0, 5))).coerceAtMost(30000L)
-            val jitterRange = (delayMs * WS_RECONNECT_JITTER_PERCENT) / 100L
-            if (jitterRange > 0L) {
-                delayMs += Random.nextLong(-jitterRange, jitterRange + 1L)
-                if (delayMs < 250L) delayMs = 250L
-            }
-            delay(delayMs)
-            if (desiredConnection.get() && !relayTransportConnected()) {
-                wsReconnectCount.incrementAndGet()
-                connectRelay(force = true)
-            }
+    private fun syncRelayReadyFromNativeIfNeeded() {
+        if (!desiredConnection.get() || relayPausedForCellularCall.get()) return
+        if (relay().resyncReadyFromNative()) {
+            broadcastStatus(currentSignalByte())
         }
     }
 
@@ -1566,7 +1766,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             protocolError = true
             relayPausedForCellularCall.set(false)
             desiredConnection.set(false)
-            nativeRelayDisconnect()
+            requestNativeRelayDisconnect()
             broadcastStatus(currentSignalByte())
             return
         }
@@ -1574,7 +1774,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             protocolError = true
             relayPausedForCellularCall.set(false)
             desiredConnection.set(false)
-            nativeRelayDisconnect()
+            requestNativeRelayDisconnect()
             broadcastStatus(currentSignalByte())
             return
         }
@@ -1596,7 +1796,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         clearServerSessionControlState()
         channelBound = true
         if (!desiredConnection.get()) {
-            nativeRelayDisconnect()
+            requestNativeRelayDisconnect()
             return
         }
         syncPttMediaSession()
@@ -1798,7 +1998,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
      * Drops active relay transport and TX/Roger/Call jobs.
      * @param clearUserIntent When true, clears [desiredConnection] (user or fatal protocol disconnect).
      */
-    private fun tearDownTransport(clearUserIntent: Boolean) {
+    private fun prepareTransportTeardown(clearUserIntent: Boolean): Long {
         resetPttReleaseBurstGuard()
         stopTxCountdownFromServer()
         transmitting.set(false)
@@ -1816,6 +2016,10 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         localCallPlaybackJob = null
         if (clearUserIntent) {
             desiredConnection.set(false)
+            stopClientReconnectLoop()
+        } else {
+            // Pause reconnect attempts while native teardown runs (server switch / cellular pause).
+            stopClientReconnectLoop()
         }
         channelBound = false
         protocolError = false
@@ -1831,19 +2035,32 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         sessionId.set(0)
         resetRelayCodecState()
         pendingUdpNetworkRecreate.set(false)
-        wsReconnectCount.set(0L)
         udpRecoveryCount.set(0L)
-        wsReconnectJob?.cancel()
-        wsReconnectJob = null
         resetNativeRelayUiTransportState()
-        nativeRelayDisconnect()
         restoreMediaAudioProfile()
+        return relay().detachLocalTransportState()
+    }
+
+    private fun tearDownTransport(clearUserIntent: Boolean) {
+        val detachedSessionId = prepareTransportTeardown(clearUserIntent)
+        beginNativeTeardown(detachedSessionId)
+    }
+
+    private suspend fun tearDownTransportAndAwait(clearUserIntent: Boolean) {
+        val detachedSessionId = prepareTransportTeardown(clearUserIntent)
+        beginNativeTeardown(detachedSessionId).join()
+        nativeDisconnectJob = null
     }
 
     private fun cancelConnection() {
         relayPausedForCellularCall.set(false)
-        tearDownTransport(clearUserIntent = true)
-        broadcastStatus(currentSignalByte())
+        serviceScope.launch(Dispatchers.IO) {
+            stopClientReconnectLoop()
+            tearDownTransportAndAwait(clearUserIntent = true)
+            withContext(Dispatchers.Main) {
+                broadcastStatus(currentSignalByte())
+            }
+        }
     }
 
     private fun pauseRelayTransportForCellularCall() {
@@ -1911,9 +2128,14 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     private fun disconnectAndStopService() {
-        cancelConnection()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        relayPausedForCellularCall.set(false)
+        serviceScope.launch(Dispatchers.IO) {
+            tearDownTransportAndAwait(clearUserIntent = true)
+            withContext(Dispatchers.Main) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }
     }
 
     private fun exitApp() {
@@ -2066,10 +2288,24 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
     }
 
-    override fun onRelayReady(serverSessionId: Long, udpReady: Boolean) {
+    override fun onRelayConnectionLost(reason: String?) {
+        val sessionId = relay().activeSessionId
+        if (sessionId != 0L && shouldDeferReconnectAttempt(sessionId)) {
+            Log.i(TAG, "connectionLost ignored during settle reason=$reason")
+            relay().resyncReadyFromNative()
+            return
+        }
+        runOnMain {
+            clearServerSessionControlState()
+            broadcastStatus(currentSignalByte())
+            syncPttMediaSession()
+        }
+    }
+
+    override fun onRelayConnected(serverSessionId: Long, udpReady: Boolean) {
+        lastRelayConnectedAtMs.set(System.currentTimeMillis())
         runOnMain {
             sessionId.set(serverSessionId)
-            wsRetryAttempt.set(0)
             protocolError = false
             if (udpReady) {
                 udpRecoveryCount.incrementAndGet()
@@ -2087,7 +2323,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             relayPausedForCellularCall.set(false)
             desiredConnection.set(false)
             channelBound = false
-            nativeRelayDisconnect()
+            requestNativeRelayDisconnect()
             broadcastStatus(currentSignalByte())
             syncPttMediaSession()
         }
@@ -2100,9 +2336,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             clearServerSessionControlState()
             broadcastStatus(currentSignalByte())
             syncPttMediaSession()
-            if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
-                scheduleWsReconnect()
-            }
         }
     }
 

@@ -22,23 +22,25 @@ Options:
 Public header: `include/owalkie_core.h`
 
 - **Utilities** (always available): protocol normalize, JSON parse (welcome/server messages), signal PCM, UDP pack/unpack. Outbound WS wire messages (`join`, `udp_hello`, …) are built inside the session only.
-- **Managed session** (when `OWALKIE_CORE_HAS_SESSION` is defined): `owalkie_connect`, TX/RX PCM, `owalkie_get_session_info`, `owalkie_set_repeater_mode`, `owalkie_set_power_profile`, `owalkie_punch_nat`
+- **Managed session** (when `OWALKIE_CORE_HAS_SESSION` is defined): `owalkie_prepare_connection`, `owalkie_connect(session_id)`, TX/RX PCM, `owalkie_get_session_info`, `owalkie_set_repeater_mode`, `owalkie_set_power_profile`, `owalkie_punch_nat`
 
-`owalkie_connect` requires `on_session_event`; `on_rx_pcm` is optional.
+`owalkie_prepare_connection` allocates a session id and registers callbacks (no network I/O). The client calls `owalkie_connect(session_id, timeout_ms)` for the first connect and every retry.
 
 Callbacks:
 
 - `on_rx_pcm` — decoded PCM from relay (Opus decode is inside core)
 - `on_session_event` — public `owalkie_event_type` values only (connecting, welcome, UDP hello/ready/lost, local TX, etc. stay internal):
-  - `OWALKIE_EV_READY`, `DISCONNECTED`, `PROTOCOL_ERROR`, `CONNECT_FAILED`
+  - `OWALKIE_EV_CONNECTED`, `DISCONNECTED`, `PROTOCOL_ERROR`, `CONNECTION_FAILED`, `CONNECTION_LOST`
   - `RX_BROADCAST_START` / `RX_BROADCAST_END`, `PTT_LOCKED` / `PTT_UNLOCKED`
   - `TX_COUNTDOWN_START`, `TX_STOP`
 
-Lifecycle: `owalkie_disconnect`, `owalkie_disconnect_all`, `owalkie_disconnect_all_and_wait` (app exit), `owalkie_session_id_valid`, `owalkie_session_id_ready`.
+Lifecycle: `owalkie_disconnect`, `owalkie_disconnect_all`, `owalkie_disconnect_all_and_wait` (app exit), `owalkie_session_id_valid`, `owalkie_session_id_ready`, `owalkie_connect` (single teardown+connect attempt per call).
 
 ### UDP keepalive
 
-Keepalive, recovery, and NAT punch timing run **inside** the session implementation. Clients only set power profile and may call `owalkie_punch_nat(session_id)` for an optional one-shot punch.
+Keepalive, recovery, WS heartbeat, and NAT punch run inside the session until `owalkie_disconnect()`. **Transport reconnect is client-owned**: while the user intent remains connected, the app calls `owalkie_connect(session_id, timeout_ms)` on a timer (with backoff). Core emits `OWALKIE_EV_CONNECTION_LOST` when the link drops; `OWALKIE_EV_DISCONNECTED` is reserved for explicit user teardown (or fatal config/protocol errors). Optional `owalkie_punch_nat(session_id)` remains for manual NAT punch.
+
+On Android, gate reconnect attempts locally with `NetworkCallback` / `NET_CAPABILITY_VALIDATED` (do not call into core for reachability).
 
 | Profile | Idle | Recovery | RTX | Lost |
 |---------|------|----------|-----|------|
@@ -65,7 +67,7 @@ owalkie_push_tx_pcm(session_id, pcm_samples, sample_count);
 owalkie_tx_end(session_id);  // UDP EOF burst + local TX end
 ```
 
-After `OWALKIE_EV_READY`, prefer `owalkie_get_session_info` for welcome/transport flags (Android JNI uses this; no JSON round-trip). The ready event may still carry `u.welcome.config`, but string pointers are only valid for the callback.
+After `OWALKIE_EV_CONNECTED`, prefer `owalkie_get_session_info` for welcome/transport flags (Android JNI uses this; no JSON round-trip). The connected event may still carry `u.welcome.config`, but string pointers are only valid for the callback.
 
 Roger/Call tones are generated client-side via `owalkie_signal_generate_pcm`; the library does not send them automatically.
 

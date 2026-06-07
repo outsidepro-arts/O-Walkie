@@ -48,8 +48,12 @@ constexpr int64_t kNsPerSec = 1'000'000'000LL;
 constexpr int64_t kNsPerMs = 1'000'000LL;
 constexpr int64_t kUdpKeepaliveRecoveryWindowNs = 90LL * kNsPerSec;
 constexpr int64_t kNetworkRecoveryMinIntervalNs = 3LL * kNsPerSec;
+constexpr int64_t kWsHeartbeatIntervalNs = 30LL * kNsPerSec;
 constexpr int kKeepaliveJitterPercent = 15;
 constexpr int kSocketRecvTimeoutMs = 2000;
+constexpr int kConnectTimeoutMs = 5000;
+constexpr int kResolveTimeoutMs = 2500;
+constexpr int kReconnectConnectTimeoutMs = 3500;
 
 void setSocketRecvTimeoutMs(boost::asio::ip::tcp::socket& socket, int timeoutMs) {
     if (timeoutMs <= 0) {
@@ -89,6 +93,17 @@ bool isSocketRecvTimeout(const boost::system::error_code& ec) {
 #else
     return ec == boost::asio::error::timed_out;
 #endif
+}
+
+bool isBenignUdpSocketError(const boost::system::error_code& ec) {
+    if (ec == boost::asio::error::interrupted || ec == boost::asio::error::operation_aborted) {
+        return true;
+    }
+    const std::string msg = ec.message();
+    return msg.find("Interrupted") != std::string::npos ||
+        msg.find("interrupted") != std::string::npos ||
+        msg.find("Operation canceled") != std::string::npos ||
+        msg.find("operation canceled") != std::string::npos;
 }
 
 struct KeepaliveTimings {
@@ -219,6 +234,7 @@ struct Session::Impl {
     std::mutex teardownMu;
     std::condition_variable stopCv;
     std::atomic<bool> udpResetRequested{false};
+    std::atomic<int64_t> udpResetGraceUntilNs{0};
     std::atomic<bool> wsThreadCompletesTeardown{false};
     std::atomic<bool> disconnectEventEmitted{false};
     std::atomic<bool> disconnectStarted{false};
@@ -253,35 +269,30 @@ struct Session::Impl {
     std::atomic<int64_t> lastInboundNs{0};
     std::atomic<int64_t> lastUdpKeepaliveSentNs{0};
     std::atomic<int64_t> lastUdpKeepalivePendingSinceNs{0};
+    std::atomic<int64_t> lastWsHeartbeatSentNs{0};
+    std::atomic<bool> connectionLostSignaled{false};
 
-    void emitEvent(const Event& event) {
-        std::function<void(const Event&)> eventCb;
-        {
-            std::lock_guard<std::mutex> lg(cbMu);
-            eventCb = callbacks.onSessionEvent;
-        }
-        if (eventCb) {
-            eventCb(event);
-        }
-        std::lock_guard<std::mutex> sl(stateMu);
+    void applyEventState(const Event& event) {
         switch (event.type) {
-            case EventType::Connected:
+            case EventType::TransportConnected:
                 sessionState.connected = true;
                 break;
             case EventType::Disconnected:
             case EventType::ProtocolError:
                 sessionState.connected = false;
                 sessionState.udpReady = false;
+                sessionState.connectionLost = false;
                 break;
             case EventType::Welcome:
                 sessionState.welcome = event.welcome;
                 sessionState.hasWelcome = true;
                 break;
-            case EventType::SessionReady:
+            case EventType::Connected:
                 sessionState.welcome = event.welcome;
                 sessionState.hasWelcome = true;
                 sessionState.connected = true;
                 sessionState.udpReady = true;
+                sessionState.connectionLost = false;
                 break;
             case EventType::RxBroadcastStart:
                 sessionState.receiving = true;
@@ -309,9 +320,222 @@ struct Session::Impl {
             case EventType::UdpTransportLost:
                 sessionState.udpReady = false;
                 break;
+            case EventType::ConnectionLost:
+                sessionState.connected = false;
+                sessionState.udpReady = false;
+                sessionState.connectionLost = true;
+                sessionState.receiving = false;
+                break;
             default:
                 break;
         }
+    }
+
+    void emitEvent(const Event& event) {
+        {
+            std::lock_guard<std::mutex> sl(stateMu);
+            applyEventState(event);
+        }
+        std::function<void(const Event&)> eventCb;
+        {
+            std::lock_guard<std::mutex> lg(cbMu);
+            eventCb = callbacks.onSessionEvent;
+        }
+        if (eventCb) {
+            eventCb(event);
+        }
+    }
+
+    void emitConnectionFailedInternal(const std::string& reason) {
+        Event ev{};
+        ev.type = EventType::ConnectionFailed;
+        ev.disconnectReason = reason;
+        emitEvent(ev);
+    }
+
+    void emitConnectionLostInternal(const std::string& reason) {
+        if (disconnectStarted.load()) {
+            return;
+        }
+        connectionLostSignaled.store(true);
+
+        Event rxEnd{};
+        rxEnd.type = EventType::RxBroadcastEnd;
+        emitEvent(rxEnd);
+
+        Event ev{};
+        ev.type = EventType::ConnectionLost;
+        ev.disconnectReason = reason;
+        emitEvent(ev);
+    }
+
+    void signalRecoverableLoss(const std::string& reason) {
+        if (disconnectStarted.load()) {
+            return;
+        }
+        connected.store(false);
+        haltTransportInternal();
+        // Do not releaseWsStream here: often called from wsReadLoop while status is open.
+        // Client connect()/disconnect paths join workers then clear transport.
+
+        bool expected = false;
+        if (!connectionLostSignaled.compare_exchange_strong(expected, true)) {
+            return;
+        }
+
+        Event rxEnd{};
+        rxEnd.type = EventType::RxBroadcastEnd;
+        emitEvent(rxEnd);
+
+        Event ev{};
+        ev.type = EventType::ConnectionLost;
+        ev.disconnectReason = reason;
+        emitEvent(ev);
+    }
+
+    Result resolveWithTimeout(
+        const std::string& host,
+        const std::string& port,
+        int timeoutMs,
+        tcp::resolver::results_type& resultsOut) {
+        bool completed = false;
+        boost::system::error_code resolveEc;
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+
+        resolver.async_resolve(
+            host,
+            port,
+            [&](const boost::system::error_code& ec, tcp::resolver::results_type results) {
+                completed = true;
+                resolveEc = ec;
+                if (!ec) {
+                    resultsOut = std::move(results);
+                }
+            });
+
+        while (!completed && !stopRequested.load()) {
+            ioc.run_for(std::chrono::milliseconds(200));
+            if (std::chrono::steady_clock::now() >= deadline) {
+                resolver.cancel();
+                break;
+            }
+        }
+        if (!completed) {
+            resolver.cancel();
+            (void)ioc.run_for(std::chrono::milliseconds(100));
+        }
+        ioc.restart();
+
+        if (stopRequested.load()) {
+            return Result::Network;
+        }
+        if (!completed || resolveEc) {
+            return Result::Network;
+        }
+        return Result::Ok;
+    }
+
+    Result connectTcpWithTimeout(
+        tcp::socket& socket,
+        const tcp::resolver::results_type& results,
+        int timeoutMs) {
+        boost::system::error_code connectEc = boost::asio::error::would_block;
+        boost::asio::steady_timer timer(ioc);
+        bool completed = false;
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+
+        timer.expires_after(std::chrono::milliseconds(timeoutMs));
+        timer.async_wait([&](const boost::system::error_code& timerEc) {
+            if (!timerEc && !completed) {
+                boost::system::error_code cancelEc;
+                socket.cancel(cancelEc);
+            }
+        });
+
+        boost::asio::async_connect(
+            socket,
+            results,
+            [&](const boost::system::error_code& ec, const tcp::endpoint&) {
+                completed = true;
+                (void)timer.cancel();
+                connectEc = ec;
+            });
+
+        while (!completed && !stopRequested.load()) {
+            ioc.run_for(std::chrono::milliseconds(200));
+            if (std::chrono::steady_clock::now() >= deadline) {
+                boost::system::error_code cancelEc;
+                socket.cancel(cancelEc);
+                break;
+            }
+        }
+        if (!completed) {
+            boost::system::error_code cancelEc;
+            socket.cancel(cancelEc);
+            (void)ioc.run_for(std::chrono::milliseconds(100));
+        }
+        ioc.restart();
+
+        if (stopRequested.load()) {
+            return Result::Network;
+        }
+        if (!completed || connectEc) {
+            return Result::Network;
+        }
+        return Result::Ok;
+    }
+
+    Result handshakeWithTimeout(ws::stream<tcp::socket>& ws, const std::string& host, int timeoutMs) {
+        boost::system::error_code ec = boost::asio::error::would_block;
+        bool completed = false;
+        boost::asio::steady_timer timer(ioc);
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+
+        timer.expires_after(std::chrono::milliseconds(timeoutMs));
+        timer.async_wait([&](const boost::system::error_code& timerEc) {
+            if (!timerEc && !completed) {
+                boost::system::error_code cancelEc;
+                ws.next_layer().cancel(cancelEc);
+            }
+        });
+
+        ws.async_handshake(host, "/ws", [&](const boost::system::error_code& handshakeEc) {
+            completed = true;
+            (void)timer.cancel();
+            ec = handshakeEc;
+        });
+
+        while (!completed && !stopRequested.load()) {
+            ioc.run_for(std::chrono::milliseconds(50));
+            if (std::chrono::steady_clock::now() >= deadline) {
+                boost::system::error_code cancelEc;
+                ws.next_layer().cancel(cancelEc);
+                break;
+            }
+        }
+        if (!completed) {
+            boost::system::error_code cancelEc;
+            ws.next_layer().cancel(cancelEc);
+            (void)ioc.run_for(std::chrono::milliseconds(100));
+        }
+        ioc.restart();
+
+        if (stopRequested.load()) {
+            return Result::Network;
+        }
+        if (!completed || ec) {
+            return Result::Network;
+        }
+        return Result::Ok;
+    }
+
+    void cancelOngoingConnectInternal() {
+        stopRequested.store(true);
+        signalStopWorkers();
+        closeSockets();
     }
 
     void emitRxPcm(std::span<const int16_t> pcm) {
@@ -359,8 +583,14 @@ struct Session::Impl {
         }
         boost::system::error_code ec;
         try {
+            // Safe only after wsReadLoop has exited (joinWsThreadUnlessCaller).
+            if (wsStream->is_open()) {
+                wsStream->close(ws::close_code::going_away, ec);
+            }
             auto& tcp = wsStream->next_layer();
             if (tcp.is_open()) {
+                tcp.shutdown(tcp::socket::shutdown_both, ec);
+                ec.clear();
                 tcp.close(ec);
             }
         } catch (...) {
@@ -411,6 +641,19 @@ struct Session::Impl {
         }
     }
 
+    void detachWorkerThreadsUnlessCaller() {
+        const auto tid = std::this_thread::get_id();
+        if (wsThread.joinable() && wsThread.get_id() != tid) {
+            wsThread.detach();
+        }
+        if (udpThread.joinable() && udpThread.get_id() != tid) {
+            udpThread.detach();
+        }
+        if (keepaliveThread.joinable() && keepaliveThread.get_id() != tid) {
+            keepaliveThread.detach();
+        }
+    }
+
     void resetIoContextInternal() {
         ioc.restart();
     }
@@ -429,6 +672,7 @@ struct Session::Impl {
         pendingNetworkRecreate.store(false);
         lastNetworkRecoveryAtNs.store(0);
         udpResetRequested.store(false);
+        udpResetGraceUntilNs.store(0);
         clientTxOpen.store(false);
     }
 
@@ -626,7 +870,7 @@ struct Session::Impl {
         sendUdpKeepalive();
 
         Event readyEv{};
-        readyEv.type = EventType::SessionReady;
+        readyEv.type = EventType::Connected;
         readyEv.welcome = cfg;
         emitEvent(readyEv);
 
@@ -642,14 +886,16 @@ struct Session::Impl {
             return;
         }
         if (parsed != Result::Ok) {
-            Event err{};
-            err.type = parsed == Result::Protocol ? EventType::ProtocolError : EventType::Disconnected;
-            err.protocolError = parsed == Result::Protocol ? "protocol mismatch" : "invalid server message";
-            emitEvent(err);
             if (parsed == Result::Protocol) {
+                Event err{};
+                err.type = EventType::ProtocolError;
+                err.protocolError = "protocol mismatch";
                 connected.store(false);
+                emitEvent(err);
                 closeSockets();
+                return;
             }
+            // Unknown server message types are ignored; do not tear down a live session.
             return;
         }
         if (event.type == EventType::Welcome) {
@@ -678,14 +924,10 @@ struct Session::Impl {
                     continue;
                 }
                 connected.store(false);
-                // Intentional teardown: disconnectInternal() will emit Disconnected.
                 const bool intentional =
                     stopRequested.load() || ec == boost::asio::error::operation_aborted;
                 if (!intentional) {
-                    Event ev{};
-                    ev.type = EventType::Disconnected;
-                    ev.disconnectReason = ec.message();
-                    emitEvent(ev);
+                    signalRecoverableLoss(ec.message());
                 }
                 break;
             }
@@ -705,10 +947,8 @@ struct Session::Impl {
         }
         if (wsThreadCompletesTeardown.exchange(false)) {
             finishDisconnectFromWsThread();
-        } else if (stopRequested.load() && onWsThread()) {
-            joinUdpKeepaliveThreadsUnlessCaller();
-            clearTransportState();
         }
+        // Recoverable loss: sibling workers are joined from reconnect/disconnect thread.
     }
 
     void udpReadLoop() {
@@ -721,18 +961,19 @@ struct Session::Impl {
             AsioUdp::endpoint ep;
             const std::size_t n = udpSocket->receive_from(boost::asio::buffer(data), ep, 0, ec);
             if (ec) {
-                if (stopRequested.load() || udpResetRequested.load()) {
+                if (stopRequested.load() || udpResetRequested.load() ||
+                    nowNs() < udpResetGraceUntilNs.load()) {
                     interruptibleSleepMs(50);
                     continue;
                 }
                 if (!stopRequested.load() && isSocketRecvTimeout(ec)) {
                     continue;
                 }
-                connected.store(false);
-                Event ev{};
-                ev.type = EventType::UdpTransportLost;
-                ev.disconnectReason = ec.message();
-                emitEvent(ev);
+                if (isBenignUdpSocketError(ec)) {
+                    interruptibleSleepMs(50);
+                    continue;
+                }
+                signalRecoverableLoss(std::string("udp: ") + ec.message());
                 break;
             }
             const auto buf = std::span<const uint8_t>(data.data(), n);
@@ -799,10 +1040,8 @@ struct Session::Impl {
             if (pendingSince != 0) {
                 if (now - pendingSince >= timings.lostNs) {
                     lastUdpKeepalivePendingSinceNs.store(0);
-                    (void)resetUdpInternal();
-                    enterUdpRecoveryInternal();
-                    interruptibleSleepMs(250);
-                    continue;
+                    signalRecoverableLoss("keepalive_lost");
+                    break;
                 }
                 const int64_t lastSent = lastUdpKeepaliveSentNs.load();
                 if (lastSent == 0 || now - lastSent >= timings.rtxNs) {
@@ -817,6 +1056,12 @@ struct Session::Impl {
                 if (lastSent == 0 || now - lastSent >= intervalNs) {
                     sendUdpKeepalive();
                 }
+            }
+
+            const int64_t lastWsHb = lastWsHeartbeatSentNs.load();
+            if (lastWsHb == 0 || now - lastWsHb >= kWsHeartbeatIntervalNs) {
+                sendWsText(json::buildHeartbeat());
+                lastWsHeartbeatSentNs.store(now);
             }
 
             const int64_t delayMs = jitteredKeepaliveDelayMs(intervalSec, rng);
@@ -869,14 +1114,19 @@ struct Session::Impl {
         return static_cast<uint8_t>(link_signal::Registry::instance().combinedByte());
     }
 
-    Result connectInternal(const ConnectParams& params) {
-        if (connected.load() || disconnectStarted.load()) {
-            disconnectInternal();
-            waitUntilTransportStoppedInternal(-1);
+    Result connectInternal(
+        const ConnectParams& params,
+        int connectTimeoutMs = kConnectTimeoutMs,
+        bool afterTeardown = false) {
+        if (!afterTeardown) {
+            if (connected.load() || disconnectStarted.load()) {
+                disconnectInternal();
+                waitUntilTransportStoppedInternal(-1);
+            }
+            closeSockets();
+            joinThreads();
+            resetIoContextInternal();
         }
-        closeSockets();
-        joinThreads();
-        resetIoContextInternal();
 
         connectParams = params;
         const ParsedHost parsed = parseHostEndpoint(params.host, params.port);
@@ -904,11 +1154,25 @@ struct Session::Impl {
         emitEvent(connecting);
 
         try {
-            auto results = resolver.resolve(hostForWs, std::to_string(params.port));
+            tcp::resolver::results_type results;
+            if (resolveWithTimeout(hostForWs, std::to_string(params.port), kResolveTimeoutMs, results) !=
+                Result::Ok) {
+                throw std::runtime_error("dns resolve timed out");
+            }
+            if (wsStream) {
+                joinWsThreadUnlessCaller();
+                joinUdpKeepaliveThreadsUnlessCaller();
+                releaseWsStream();
+            }
             wsStream.emplace(ioc);
-            boost::asio::connect(wsStream->next_layer(), results.begin(), results.end());
+            if (connectTcpWithTimeout(wsStream->next_layer(), results, connectTimeoutMs) !=
+                Result::Ok) {
+                throw std::runtime_error("tcp connect timed out");
+            }
             setSocketRecvTimeoutMs(wsStream->next_layer(), kSocketRecvTimeoutMs);
-            wsStream->handshake(hostForWs, "/ws");
+            if (handshakeWithTimeout(*wsStream, hostForWs, connectTimeoutMs) != Result::Ok) {
+                throw std::runtime_error("websocket handshake timed out");
+            }
 
             const tcp::endpoint tcpRemote = wsStream->next_layer().remote_endpoint();
             const auto peerAddr = tcpRemote.address();
@@ -923,19 +1187,61 @@ struct Session::Impl {
             connected.store(true);
             enterUdpRecoveryInternal();
 
+            connectionLostSignaled.store(false);
             wsThread = std::thread([this] { wsReadLoop(); });
             udpThread = std::thread([this] { udpReadLoop(); });
             keepaliveThread = std::thread([this] { keepaliveLoop(); });
             return Result::Ok;
-        } catch (const std::exception& ex) {
-            Event err{};
-            err.type = EventType::ConnectFailed;
-            err.disconnectReason = ex.what();
-            emitEvent(err);
+        } catch (const std::exception&) {
             closeSockets();
             joinThreads();
             return Result::Network;
         }
+    }
+
+    Result reconnectTeardownInternal() {
+        connectionLostSignaled.store(false);
+        disconnectStarted.store(false);
+        disconnectEventEmitted.store(false);
+        stopRequested.store(false);
+        wsThreadCompletesTeardown.store(false);
+
+        joinWsThreadUnlessCaller();
+        joinUdpKeepaliveThreadsUnlessCaller();
+        transportFullyStopped.store(true);
+        clearTransportState();
+        welcome = WelcomeConfig{};
+        seq.store(0);
+        opus.reset();
+        txPcmBuffer.clear();
+        clientTxOpen.store(false);
+        endLocalTxIfNeeded();
+        lastWsHeartbeatSentNs.store(0);
+
+        {
+            std::lock_guard<std::mutex> lg(stateMu);
+            sessionState.receiving = false;
+            sessionState.localTxActive = false;
+            sessionState.connectionLost = false;
+            sessionState.connected = false;
+            sessionState.udpReady = false;
+        }
+
+        return Result::Ok;
+    }
+
+    Result reconnectConnectInternal(const ConnectParams& params, int timeoutMs) {
+        stopRequested.store(false);
+        const int connectTimeout =
+            timeoutMs > 0 ? timeoutMs : kReconnectConnectTimeoutMs;
+        return connectInternal(params, connectTimeout, true);
+    }
+
+    Result reconnectInternal(const ConnectParams& params) {
+        if (reconnectTeardownInternal() != Result::Ok) {
+            return Result::Network;
+        }
+        return reconnectConnectInternal(params, 0);
     }
 
     void haltTransportInternal() {
@@ -987,8 +1293,15 @@ struct Session::Impl {
             }
         }
 
-        joinWsThreadUnlessCaller();
-        joinUdpKeepaliveThreadsUnlessCaller();
+        const bool pastDeadline =
+            timeoutMs >= 0 && std::chrono::steady_clock::now() >= deadline;
+        if (pastDeadline) {
+            detachWorkerThreadsUnlessCaller();
+            clearTransportState();
+        } else {
+            joinWsThreadUnlessCaller();
+            joinUdpKeepaliveThreadsUnlessCaller();
+        }
         transportFullyStopped.store(true);
     }
 
@@ -1120,6 +1433,7 @@ struct Session::Impl {
         if (!connected.load() || !wsStream) {
             return Result::NotConnected;
         }
+        udpResetGraceUntilNs.store(nowNs() + 300 * kNsPerMs);
         udpResetRequested.store(true);
         boost::system::error_code ec;
         {
@@ -1202,12 +1516,37 @@ bool Session::isSessionReady() const {
     return impl_->connected.load() && impl_->welcome.sessionId != 0;
 }
 
-void Session::setAutoReconnect(bool enabled) {
-    impl_->autoReconnect.store(enabled);
+bool Session::isConnectionLost() const {
+    std::lock_guard<std::mutex> lg(impl_->stateMu);
+    return impl_->sessionState.connectionLost;
 }
 
-bool Session::autoReconnectEnabled() const {
-    return impl_->autoReconnect.load();
+Result Session::reconnectTeardown() {
+    return impl_->reconnectTeardownInternal();
+}
+
+Result Session::reconnectConnect(const ConnectParams& params) {
+    return impl_->reconnectConnectInternal(params, 0);
+}
+
+Result Session::reconnectConnect(const ConnectParams& params, int timeoutMs) {
+    return impl_->reconnectConnectInternal(params, timeoutMs);
+}
+
+void Session::emitConnectionLost(const std::string& reason) {
+    impl_->emitConnectionLostInternal(reason);
+}
+
+void Session::emitConnectionFailed(const std::string& reason) {
+    impl_->emitConnectionFailedInternal(reason);
+}
+
+void Session::clearConnectionLostSignaled() {
+    impl_->connectionLostSignaled.store(false);
+}
+
+void Session::cancelOngoingConnect() {
+    impl_->cancelOngoingConnectInternal();
 }
 
 Result Session::txStart() {
@@ -1249,14 +1588,6 @@ void Session::setPowerProfile(PowerProfile profile) {
 
 PowerProfile Session::powerProfile() const {
     return impl_->powerProfileInternal();
-}
-
-void Session::enterUdpRecovery() {
-    impl_->enterUdpRecoveryInternalPublic();
-}
-
-void Session::notifyNetworkChanged() {
-    impl_->notifyNetworkChangedInternal();
 }
 
 Result Session::punchUdpNat() {

@@ -85,6 +85,7 @@ if(OWALKIE_CORE_BUILD_TESTS)
         tests/test_signal.cpp
         tests/test_link_signal.cpp
         tests/test_session_info.cpp
+        tests/test_client_events.cpp
         tests/test_udp.cpp
         tests/test_main.cpp
     )

@@ -41,7 +41,7 @@ int run_json_tests() {
     EXPECT_EQ(
         owalkie_json_parse_server_message(welcome, 0, &ev, opusApp, sizeof(opusApp)),
         OWALKIE_OK);
-    EXPECT_EQ(ev.type, OWALKIE_EV_READY);
+    EXPECT_EQ(ev.type, OWALKIE_EV_CONNECTED);
     EXPECT_EQ(ev.u.welcome.config.session_id, 42u);
 
     const char* pttLock = R"({"type":"ptt_lock","displaySec":3})";
