@@ -265,7 +265,8 @@ struct Session::Impl {
     bool repeaterMode = false;
 
     codec::OpusCodec opus{};
-    std::mutex opusMu;
+    std::mutex encodeMu;
+    std::mutex decodeMu;
     std::vector<int16_t> txPcmBuffer;
 
     std::thread wsThread;
@@ -381,6 +382,7 @@ struct Session::Impl {
         }
         connected.store(false);
         haltTransportInternal();
+        welcome = WelcomeConfig{};
         // Do not releaseWsStream here: often called from wsIoLoop while status is open.
         // Client connect()/disconnect paths join workers then clear transport.
 
@@ -712,7 +714,7 @@ struct Session::Impl {
         welcome = WelcomeConfig{};
         seq.store(0);
         {
-            std::lock_guard<std::mutex> lg(opusMu);
+            std::scoped_lock lock(encodeMu, decodeMu);
             opus.reset();
             txPcmBuffer.clear();
         }
@@ -939,7 +941,7 @@ struct Session::Impl {
     void handleWelcome(const WelcomeConfig& cfg) {
         welcome = cfg;
         {
-            std::lock_guard<std::mutex> lg(opusMu);
+            std::scoped_lock lock(encodeMu, decodeMu);
             opus.configure(welcome);
             txPcmBuffer.clear();
         }
@@ -1065,7 +1067,7 @@ struct Session::Impl {
 
             std::vector<int16_t> pcm;
             {
-                std::lock_guard<std::mutex> lg(opusMu);
+                std::lock_guard<std::mutex> lg(decodeMu);
                 if (opus.decode(pkt.opus, opus.frameSamples(), pcm) != Result::Ok) {
                     continue;
                 }
@@ -1206,10 +1208,11 @@ struct Session::Impl {
         disconnectEventEmitted.store(false);
         disconnectStarted.store(false);
         transportFullyStopped.store(false);
+        resetIoContextInternal();
         seq.store(0);
         welcome = WelcomeConfig{};
         {
-            std::lock_guard<std::mutex> lg(opusMu);
+            std::scoped_lock lock(encodeMu, decodeMu);
             txPcmBuffer.clear();
             opus.reset();
         }
@@ -1273,15 +1276,19 @@ struct Session::Impl {
         stopRequested.store(false);
         wsThreadCompletesTeardown.store(false);
 
-        joinWsThreadUnlessCaller();
-        joinUdpKeepaliveThreadsUnlessCaller();
-        transportFullyStopped.store(true);
+        if (!transportFullyStopped.load()) {
+            haltTransportInternal();
+            waitUntilTransportStoppedInternal(3000);
+        }
+        // connect()'s prior wait may have set transportFullyStopped without running halt here;
+        // haltTransportInternal() leaves io_context stopped unless we reset transport state.
         clearTransportState();
+
         welcome = WelcomeConfig{};
         seq.store(0);
         clientTxOpen.store(false);
         {
-            std::lock_guard<std::mutex> lg(opusMu);
+            std::scoped_lock lock(encodeMu, decodeMu);
             opus.reset();
             txPcmBuffer.clear();
         }
@@ -1343,9 +1350,9 @@ struct Session::Impl {
             if (transportFullyStopped.load()) {
                 break;
             }
-            // haltTransport() without disconnectInternal() never sets transportFullyStopped
-            // and leaves no teardown worker — fall through to direct ws/udp joins below.
-            if (!joinedTeardown) {
+            // No background teardown worker — keep polling until deadline (bounded wait)
+            // or until transportFullyStopped is set by a worker exit path.
+            if (!joinedTeardown && timeoutMs < 0) {
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -1367,6 +1374,7 @@ struct Session::Impl {
         const bool pastDeadline =
             timeoutMs >= 0 && std::chrono::steady_clock::now() >= deadline;
         if (pastDeadline) {
+            haltTransportInternal();
             detachWorkerThreadsUnlessCaller();
             clearTransportState();
         } else {
@@ -1401,23 +1409,33 @@ struct Session::Impl {
     }
 
     void flushTxPcmBuffer() {
-        std::lock_guard<std::mutex> lg(opusMu);
-        const int frame = opus.frameSamples();
-        if (frame <= 0) {
-            return;
-        }
-        if (!txPcmBuffer.empty() && static_cast<int>(txPcmBuffer.size()) < frame) {
-            txPcmBuffer.resize(static_cast<size_t>(frame), 0);
-        }
-        std::vector<uint8_t> encoded;
-        while (static_cast<int>(txPcmBuffer.size()) >= frame) {
-            const auto frameSpan = std::span<const int16_t>(txPcmBuffer.data(), static_cast<size_t>(frame));
-            if (opus.encode(frameSpan, encoded) != Result::Ok) {
-                txPcmBuffer.clear();
-                return;
+        for (;;) {
+            std::vector<uint8_t> encoded;
+            bool haveFrame = false;
+            {
+                std::lock_guard<std::mutex> lg(encodeMu);
+                const int frame = opus.frameSamples();
+                if (frame <= 0) {
+                    return;
+                }
+                if (!txPcmBuffer.empty() && static_cast<int>(txPcmBuffer.size()) < frame) {
+                    txPcmBuffer.resize(static_cast<size_t>(frame), 0);
+                }
+                if (static_cast<int>(txPcmBuffer.size()) < frame) {
+                    break;
+                }
+                const auto frameSpan = std::span<const int16_t>(txPcmBuffer.data(), static_cast<size_t>(frame));
+                if (opus.encode(frameSpan, encoded) != Result::Ok) {
+                    txPcmBuffer.clear();
+                    return;
+                }
+                txPcmBuffer.erase(txPcmBuffer.begin(), txPcmBuffer.begin() + frame);
+                haveFrame = true;
+            }
+            if (!haveFrame) {
+                break;
             }
             sendOpusFrame(encoded.data(), encoded.size(), uplinkSignalByte());
-            txPcmBuffer.erase(txPcmBuffer.begin(), txPcmBuffer.begin() + frame);
         }
     }
 
@@ -1426,7 +1444,7 @@ struct Session::Impl {
             return Result::NotConnected;
         }
         {
-            std::lock_guard<std::mutex> lg(opusMu);
+            std::lock_guard<std::mutex> lg(encodeMu);
             txPcmBuffer.clear();
         }
         clientTxOpen.store(true);
@@ -1443,7 +1461,7 @@ struct Session::Impl {
         }
         flushTxPcmBuffer();
         {
-            std::lock_guard<std::mutex> lg(opusMu);
+            std::lock_guard<std::mutex> lg(encodeMu);
             txPcmBuffer.clear();
         }
         clientTxOpen.store(false);
@@ -1460,21 +1478,28 @@ struct Session::Impl {
         if (samples.empty()) {
             return Result::InvalidArg;
         }
-        std::lock_guard<std::mutex> lg(opusMu);
-        const int frame = opus.frameSamples();
-        if (frame <= 0) {
-            return Result::NotReady;
-        }
-        txPcmBuffer.insert(txPcmBuffer.end(), samples.begin(), samples.end());
         std::vector<uint8_t> encoded;
-        while (static_cast<int>(txPcmBuffer.size()) >= frame) {
+        bool haveFrame = false;
+        {
+            std::lock_guard<std::mutex> lg(encodeMu);
+            const int frame = opus.frameSamples();
+            if (frame <= 0) {
+                return Result::NotReady;
+            }
+            txPcmBuffer.insert(txPcmBuffer.end(), samples.begin(), samples.end());
+            if (static_cast<int>(txPcmBuffer.size()) < frame) {
+                return Result::Ok;
+            }
             const auto frameSpan = std::span<const int16_t>(txPcmBuffer.data(), static_cast<size_t>(frame));
             if (opus.encode(frameSpan, encoded) != Result::Ok) {
                 txPcmBuffer.clear();
                 return Result::NotReady;
             }
-            sendOpusFrame(encoded.data(), encoded.size(), uplinkSignalByte());
             txPcmBuffer.erase(txPcmBuffer.begin(), txPcmBuffer.begin() + frame);
+            haveFrame = true;
+        }
+        if (haveFrame) {
+            sendOpusFrame(encoded.data(), encoded.size(), uplinkSignalByte());
         }
         return Result::Ok;
     }
@@ -1495,7 +1520,7 @@ struct Session::Impl {
             return Result::NotConnected;
         }
         {
-            std::lock_guard<std::mutex> lg(opusMu);
+            std::lock_guard<std::mutex> lg(encodeMu);
             txPcmBuffer.clear();
         }
         static constexpr int delays[] = {0, 20, 60};

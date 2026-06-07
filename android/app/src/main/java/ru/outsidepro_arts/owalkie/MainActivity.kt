@@ -147,6 +147,7 @@ class MainActivity : ComponentActivity() {
                     userRequestedConnection &&
                     prevConnected &&
                     !wsConnected &&
+                    !wsConnecting &&
                     !relayPausedForPhoneCall
                 ) {
                     uiSignalPlayer.playConnectionError()

@@ -451,21 +451,32 @@ void AudioEngine::Shutdown() {
 
 void AudioEngine::Reconfigure(const WelcomeConfig& cfg) {
     shuttingDown_.store(false, std::memory_order_release);
-    std::lock_guard<std::mutex> lg(mu_);
-    if (captureActive_) {
-        transmitting_.store(false);
-        ma_device_stop(&captureDev_);
-        ma_device_uninit(&captureDev_);
-        captureActive_ = false;
-        captureFifo_.clear();
+    std::thread pumpJoin;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        if (captureActive_) {
+            transmitting_.store(false);
+            StopTxPumpThreadLocked();
+            if (txPumpThread_.joinable()) {
+                pumpJoin = std::move(txPumpThread_);
+            }
+            ma_device_stop(&captureDev_);
+            ma_device_uninit(&captureDev_);
+            captureActive_ = false;
+            captureFifo_.clear();
+            txNextFrameAtNs_ = 0;
+        }
+        const bool timingChanged = cfg.sampleRate != sampleRate_ || cfg.packetMs != packetMs_;
+        sampleRate_ = cfg.sampleRate;
+        packetMs_ = cfg.packetMs;
+        if (timingChanged) {
+            CloseOutputStreamLocked();
+        }
+        EnsurePlaybackDeviceLocked();
     }
-    const bool timingChanged = cfg.sampleRate != sampleRate_ || cfg.packetMs != packetMs_;
-    sampleRate_ = cfg.sampleRate;
-    packetMs_ = cfg.packetMs;
-    if (timingChanged) {
-        CloseOutputStreamLocked();
+    if (pumpJoin.joinable()) {
+        pumpJoin.join();
     }
-    EnsurePlaybackDeviceLocked();
 }
 
 std::vector<NamedAudioDevice> AudioEngine::ListInputDevices() {
@@ -560,6 +571,99 @@ void AudioEngine::CloseCaptureDeviceLocked() {
         captureActive_ = false;
     }
     captureFifo_.clear();
+    txNextFrameAtNs_ = 0;
+}
+
+void AudioEngine::StopTxPumpThreadLocked() {
+    txPumpStop_ = true;
+    txPumpCv_.notify_all();
+}
+
+void AudioEngine::StartTxPumpThreadLocked() {
+    if (txPumpThread_.joinable()) {
+        return;
+    }
+    txPumpStop_ = false;
+    txNextFrameAtNs_ = 0;
+    txPumpThread_ = std::thread([this] { TxPumpLoop(); });
+}
+
+void AudioEngine::TxPumpLoop() {
+    for (;;) {
+        std::vector<int16_t> framePcm;
+        PcmFrameCallback pcmCb;
+        LevelCallback levelCb;
+        ParallelTxCollisionCallback collisionCb;
+        int levelPercent = 0;
+        {
+            std::unique_lock<std::mutex> lk(mu_);
+            txPumpCv_.wait(lk, [this] {
+                return txPumpStop_ ||
+                       (transmitting_.load(std::memory_order_relaxed) &&
+                        static_cast<int>(captureFifo_.size()) >= FrameSamples());
+            });
+            if (txPumpStop_) {
+                break;
+            }
+            if (!transmitting_.load(std::memory_order_relaxed)) {
+                continue;
+            }
+
+            const int frame = FrameSamples();
+            if (frame <= 0 || static_cast<int>(captureFifo_.size()) < frame) {
+                continue;
+            }
+
+            const int64_t frameNs = static_cast<int64_t>(packetMs_) * 1'000'000LL;
+            const int64_t nowNs = CurrentSteadyNs();
+            if (txNextFrameAtNs_ <= 0) {
+                txNextFrameAtNs_ = nowNs;
+            }
+            const int64_t sleepNs = txNextFrameAtNs_ - nowNs;
+            if (sleepNs > 0) {
+                lk.unlock();
+                std::this_thread::sleep_for(std::chrono::nanoseconds(sleepNs));
+                lk.lock();
+                if (txPumpStop_) {
+                    break;
+                }
+                if (!transmitting_.load(std::memory_order_relaxed)) {
+                    continue;
+                }
+            } else if (sleepNs < -frameNs * 2) {
+                txNextFrameAtNs_ = CurrentSteadyNs();
+            }
+
+            if (static_cast<int>(captureFifo_.size()) < frame) {
+                continue;
+            }
+
+            int peak = 0;
+            for (int i = 0; i < frame; ++i) {
+                peak = std::max(peak, std::abs(static_cast<int>(captureFifo_[i])));
+            }
+            levelPercent = std::clamp((peak * 100) / 32767, 0, 100);
+
+            framePcm.assign(captureFifo_.begin(), captureFifo_.begin() + frame);
+            captureFifo_.erase(captureFifo_.begin(), captureFifo_.begin() + frame);
+            txNextFrameAtNs_ += frameNs;
+
+            pcmCb = onPcmFrame_;
+            levelCb = onLevel_;
+            collisionCb = onParallelTxCollision_;
+        }
+
+        if (transmitting_.load(std::memory_order_relaxed) || signalStreaming_.load(std::memory_order_relaxed)) {
+            PollParallelTxCollisionState(CurrentSteadyNs());
+        }
+        if (levelCb) {
+            levelCb(levelPercent);
+        }
+        if (pcmCb && !framePcm.empty()) {
+            pcmCb(framePcm.data(), framePcm.size());
+        }
+        (void)collisionCb;
+    }
 }
 
 const SignalPattern* AudioEngine::FindRogerPatternLocked() const {
@@ -732,6 +836,7 @@ bool AudioEngine::StartTransmit() {
     {
         std::lock_guard<std::mutex> lg(mu_);
         captureActive_ = true;
+        StartTxPumpThreadLocked();
     }
     return true;
 }
@@ -739,19 +844,37 @@ bool AudioEngine::StartTransmit() {
 void AudioEngine::StopTransmit() {
     transmitting_.store(false);
     PollParallelTxCollisionState(CurrentSteadyNs());
+    std::thread pumpJoin;
     if (shuttingDown_.load(std::memory_order_acquire)) {
         for (int attempt = 0; attempt < 50; ++attempt) {
             std::unique_lock<std::mutex> lk(mu_, std::try_to_lock);
             if (lk.owns_lock()) {
+                StopTxPumpThreadLocked();
+                if (txPumpThread_.joinable()) {
+                    pumpJoin = std::move(txPumpThread_);
+                }
                 CloseCaptureDeviceLocked();
+                if (pumpJoin.joinable()) {
+                    lk.unlock();
+                    pumpJoin.join();
+                }
                 return;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         return;
     }
-    std::lock_guard<std::mutex> lg(mu_);
-    CloseCaptureDeviceLocked();
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        StopTxPumpThreadLocked();
+        if (txPumpThread_.joinable()) {
+            pumpJoin = std::move(txPumpThread_);
+        }
+        CloseCaptureDeviceLocked();
+    }
+    if (pumpJoin.joinable()) {
+        pumpJoin.join();
+    }
 }
 
 void AudioEngine::RequestAbortOutgoingSignalStream() {
@@ -1068,37 +1191,18 @@ bool AudioEngine::StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal) {
 }
 
 void AudioEngine::OnCaptureFrames(const void* pInput, ma_uint32 frameCount) {
-    if (!transmitting_.load() || !pInput || frameCount == 0) {
+    if (!transmitting_.load(std::memory_order_relaxed) || !pInput || frameCount == 0) {
         return;
     }
     const auto* s = static_cast<const int16_t*>(pInput);
-    captureFifo_.insert(captureFifo_.end(), s, s + frameCount);
-    DrainCaptureFifo();
-}
-
-void AudioEngine::DrainCaptureFifo() {
-    const int frame = FrameSamples();
-    if (frame <= 0) {
-        return;
+    {
+        std::lock_guard<std::mutex> lg(mu_);
+        if (!transmitting_.load(std::memory_order_relaxed)) {
+            return;
+        }
+        captureFifo_.insert(captureFifo_.end(), s, s + frameCount);
     }
-    while (static_cast<int>(captureFifo_.size()) >= frame) {
-        int peak = 0;
-        for (int i = 0; i < frame; ++i) {
-            peak = std::max(peak, std::abs(static_cast<int>(captureFifo_[i])));
-        }
-        const int level = std::clamp((peak * 100) / 32767, 0, 100);
-        if (onLevel_) {
-            onLevel_(level);
-        }
-        if (transmitting_.load(std::memory_order_relaxed) || signalStreaming_.load(std::memory_order_relaxed)) {
-            PollParallelTxCollisionState(CurrentSteadyNs());
-        }
-
-        if (onPcmFrame_) {
-            onPcmFrame_(captureFifo_.data(), static_cast<size_t>(frame));
-        }
-        captureFifo_.erase(captureFifo_.begin(), captureFifo_.begin() + frame);
-    }
+    txPumpCv_.notify_one();
 }
 
 void AudioEngine::SetRxVolumePercent(int percent) {

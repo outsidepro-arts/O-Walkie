@@ -75,13 +75,20 @@ class NativeRelayBridge(
         val existingId = managedSessionId
         if (existingId != 0L) {
             if (OwalkieNative.nativeSessionValid(existingId) != 0) {
-                Log.i(TAG, "prepareConnection: reuse session=$existingId")
-                connecting.set(!sessionReady.get())
-                return true
+                if (OwalkieNative.nativeSessionReady(existingId) != 0) {
+                    Log.i(TAG, "prepareConnection: reuse session=$existingId")
+                    connecting.set(!sessionReady.get())
+                    return true
+                }
+                Log.w(TAG, "prepareConnection: drop in-flight session=$existingId")
+                OwalkieNative.nativeDisconnect(existingId)
+                managedSessionId = 0L
+                clearLocalState()
+            } else {
+                Log.w(TAG, "prepareConnection: drop stale kotlin session=$existingId")
+                managedSessionId = 0L
+                clearLocalState()
             }
-            Log.w(TAG, "prepareConnection: drop stale kotlin session=$existingId")
-            managedSessionId = 0L
-            clearLocalState()
         }
         connecting.set(true)
         val id = OwalkieNative.nativePrepareConnection(this, host, port, channel, repeater)

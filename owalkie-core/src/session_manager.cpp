@@ -225,10 +225,6 @@ Result SessionManager::connect(SessionId id, int timeoutMs) {
     if (session->isSessionReady()) {
         return Result::Ok;
     }
-    if (session->isConnected()) {
-        // Transport is already live; welcome/session-ready may still be in flight.
-        return Result::Ok;
-    }
 
     const int connectTimeout =
         timeoutMs > 0 ? timeoutMs : kDefaultReconnectTimeoutMs;
@@ -238,9 +234,6 @@ Result SessionManager::connect(SessionId id, int timeoutMs) {
         return Result::InvalidArg;
     }
     if (session->isSessionReady()) {
-        return Result::Ok;
-    }
-    if (session->isConnected()) {
         return Result::Ok;
     }
 
@@ -255,8 +248,23 @@ Result SessionManager::connect(SessionId id, int timeoutMs) {
     if (session->isSessionReady()) {
         return Result::Ok;
     }
-    if (session->isConnected()) {
-        return Result::Ok;
+
+    if (session->isConnected() && !session->isSessionReady()) {
+        const int welcomeWaitMs = std::min(connectTimeout, 2500);
+        const auto welcomeDeadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(welcomeWaitMs);
+        while (std::chrono::steady_clock::now() < welcomeDeadline && managed->userIntent.load()) {
+            if (session->isSessionReady()) {
+                return Result::Ok;
+            }
+            if (!session->isConnected()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        if (session->isSessionReady()) {
+            return Result::Ok;
+        }
     }
 
     session->reconnectTeardown();
@@ -276,6 +284,21 @@ Result SessionManager::connect(SessionId id, int timeoutMs) {
 
     const Result result = session->reconnectConnect(managed->params, connectTimeout);
 
+    if (result == Result::Ok && !session->isSessionReady() && managed->userIntent.load()) {
+        const int welcomeWaitMs = std::min(connectTimeout, 2500);
+        const auto welcomeDeadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(welcomeWaitMs);
+        while (std::chrono::steady_clock::now() < welcomeDeadline && managed->userIntent.load()) {
+            if (session->isSessionReady()) {
+                break;
+            }
+            if (!session->isConnected()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
+
     clientReconnectLog(
         "connect session=%llu result=%d ready=%d timeout=%d",
         static_cast<unsigned long long>(id),
@@ -285,6 +308,10 @@ Result SessionManager::connect(SessionId id, int timeoutMs) {
 
     if (result == Result::Ok && session->isSessionReady()) {
         return Result::Ok;
+    }
+
+    if (result == Result::Ok) {
+        return Result::Network;
     }
 
     if (result == Result::InvalidArg || result == Result::Unsupported || result == Result::Protocol) {

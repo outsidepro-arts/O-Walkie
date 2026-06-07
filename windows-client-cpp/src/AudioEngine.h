@@ -4,8 +4,10 @@
 #include <cstdint>
 #include <functional>
 #include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "miniaudio.h"
@@ -111,11 +113,13 @@ private:
     void CloseOutputStreamLocked();
     void CloseCaptureDeviceLocked();
     void EnsurePlaybackDeviceLocked();
+    void StartTxPumpThreadLocked();
+    void StopTxPumpThreadLocked();
+    void TxPumpLoop();
 
     static void CaptureCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
     static void PlaybackCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
     void OnCaptureFrames(const void* pInput, ma_uint32 frameCount);
-    void DrainCaptureFifo();
 
 private:
     mutable std::mutex mu_;
@@ -142,6 +146,10 @@ private:
     std::vector<SignalPattern> customCallPatterns_;
 
     std::vector<int16_t> captureFifo_;
+    std::thread txPumpThread_;
+    std::condition_variable txPumpCv_;
+    bool txPumpStop_ = false;
+    int64_t txNextFrameAtNs_ = 0;
     std::atomic<bool> transmitting_{false};
     std::atomic<bool> shuttingDown_{false};
     std::atomic<bool> signalStreaming_{false};
