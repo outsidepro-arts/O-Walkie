@@ -8,6 +8,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -56,17 +57,16 @@ constexpr int kResolveTimeoutMs = 2500;
 constexpr int kReconnectConnectTimeoutMs = 3500;
 
 void setSocketRecvTimeoutMs(boost::asio::ip::tcp::socket& socket, int timeoutMs) {
-    if (timeoutMs <= 0) {
-        return;
-    }
     const auto handle = socket.native_handle();
 #if defined(_WIN32)
-    const DWORD tv = static_cast<DWORD>(timeoutMs);
+    const DWORD tv = timeoutMs <= 0 ? 0 : static_cast<DWORD>(timeoutMs);
     ::setsockopt(handle, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
 #else
     struct timeval tv {};
-    tv.tv_sec = timeoutMs / 1000;
-    tv.tv_usec = (timeoutMs % 1000) * 1000;
+    if (timeoutMs > 0) {
+        tv.tv_sec = timeoutMs / 1000;
+        tv.tv_usec = (timeoutMs % 1000) * 1000;
+    }
     ::setsockopt(handle, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
 }
@@ -230,6 +230,8 @@ struct Session::Impl {
     AsioUdp::endpoint udpRemote;
     std::mutex udpMu;
     std::mutex wsIoMu;
+    std::mutex wsOutboundMu;
+    std::deque<std::string> wsOutboundQueue;
     std::mutex stopMu;
     std::mutex teardownMu;
     std::condition_variable stopCv;
@@ -674,6 +676,10 @@ struct Session::Impl {
         udpResetRequested.store(false);
         udpResetGraceUntilNs.store(0);
         clientTxOpen.store(false);
+        {
+            std::lock_guard<std::mutex> lg(wsOutboundMu);
+            wsOutboundQueue.clear();
+        }
     }
 
     void joinThreads() {
@@ -720,15 +726,41 @@ struct Session::Impl {
     }
 
     void sendWsText(const std::string& text) {
-        if (!wsStream || !connected.load() || stopRequested.load()) {
+        if (!connected.load() || stopRequested.load() || text.empty()) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lg(wsOutboundMu);
+            wsOutboundQueue.push_back(text);
+        }
+        // Wake blocking ws read so queued outbound is flushed quickly on same WS thread.
+        // Do not cancel blocking read here: on Windows this surfaces as
+        // WSAEINTR/WSACancelBlockingCall and can flap the WS transport.
+    }
+
+    void flushWsOutboundFromQueue() {
+        if (!wsStream || !wsStream->is_open() || stopRequested.load()) {
             return;
         }
         boost::system::error_code ec;
-        std::lock_guard<std::mutex> lg(wsIoMu);
-        if (!wsStream || stopRequested.load() || !wsStream->is_open()) {
-            return;
+        for (;;) {
+            std::string text;
+            {
+                std::lock_guard<std::mutex> lg(wsOutboundMu);
+                if (wsOutboundQueue.empty()) {
+                    break;
+                }
+                text = std::move(wsOutboundQueue.front());
+                wsOutboundQueue.pop_front();
+            }
+            wsStream->text(true);
+            wsStream->write(boost::asio::buffer(text), ec);
+            if (ec) {
+                std::lock_guard<std::mutex> lg(wsOutboundMu);
+                wsOutboundQueue.clear();
+                break;
+            }
         }
-        wsStream->write(boost::asio::buffer(text), ec);
     }
 
     void sendUdpPayload(const uint8_t* data, size_t size) {
@@ -906,20 +938,34 @@ struct Session::Impl {
     }
 
     void wsReadLoop() {
+        auto hasQueuedWsOutbound = [this]() -> bool {
+            std::lock_guard<std::mutex> lg(wsOutboundMu);
+            return !wsOutboundQueue.empty();
+        };
         boost::system::error_code ec;
         while (!stopRequested.load()) {
             if (!connected.load()) {
                 break;
             }
-            {
-                std::lock_guard<std::mutex> lg(wsIoMu);
-                if (!wsStream || !wsStream->is_open() || stopRequested.load()) {
-                    break;
+            if (!wsStream || !wsStream->is_open() || stopRequested.load()) {
+                if (!stopRequested.load() && connected.load()) {
+                    connected.store(false);
                 }
+                break;
+            }
+            flushWsOutboundFromQueue();
+            if (hasQueuedWsOutbound()) {
+                // Keep draining outbound without entering blocking read yet.
+                continue;
             }
             boost::beast::flat_buffer buffer;
             wsStream->read(buffer, ec);
             if (ec) {
+                if (!stopRequested.load() &&
+                    (ec == boost::asio::error::operation_aborted ||
+                        ec == boost::asio::error::interrupted)) {
+                    continue;
+                }
                 if (!stopRequested.load() && isSocketRecvTimeout(ec)) {
                     continue;
                 }
@@ -932,15 +978,10 @@ struct Session::Impl {
                 break;
             }
             const std::string payload = boost::beast::buffers_to_string(buffer.data());
-            bool peerClosed = false;
-            {
-                std::lock_guard<std::mutex> lg(wsIoMu);
-                if (!wsStream || !wsStream->is_open()) {
-                    peerClosed = true;
-                }
-            }
             handleWsText(payload);
-            if (peerClosed || stopRequested.load()) {
+            // If handleWsText enqueued protocol messages (join/udp_hello/repeater), send them immediately.
+            flushWsOutboundFromQueue();
+            if (!wsStream || !wsStream->is_open() || stopRequested.load()) {
                 connected.store(false);
                 break;
             }
@@ -1173,6 +1214,8 @@ struct Session::Impl {
             if (handshakeWithTimeout(*wsStream, hostForWs, connectTimeoutMs) != Result::Ok) {
                 throw std::runtime_error("websocket handshake timed out");
             }
+            // Use blocking websocket reads; sendWsText wakes read loop via tcp cancel.
+            setSocketRecvTimeoutMs(wsStream->next_layer(), 0);
 
             const tcp::endpoint tcpRemote = wsStream->next_layer().remote_endpoint();
             const auto peerAddr = tcpRemote.address();

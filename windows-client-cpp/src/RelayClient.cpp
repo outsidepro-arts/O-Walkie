@@ -213,7 +213,11 @@ void RelayClient::StartReconnectLoop() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
             }
-            if (IsConnected()) {
+            owalkie::SessionState st{};
+            bool ready = false;
+            const auto infoResult = owalkie::SessionManager::instance().getSessionInfo(sessionId_, &st, &ready);
+            const bool transportUp = infoResult == owalkie::Result::Ok && st.connected;
+            if (IsConnected() || transportUp) {
                 reconnectBackoffMs_ = 1500;
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 continue;
@@ -259,6 +263,7 @@ void RelayClient::JoinWorkerThreads() {
 
 bool RelayClient::IsConnected() const {
     return sessionId_ != owalkie::kInvalidSessionId &&
+        owalkie::SessionManager::instance().isValid(sessionId_) &&
         owalkie::SessionManager::instance().isSessionReady(sessionId_);
 }
 

@@ -225,6 +225,10 @@ Result SessionManager::connect(SessionId id, int timeoutMs) {
     if (session->isSessionReady()) {
         return Result::Ok;
     }
+    if (session->isConnected()) {
+        // Transport is already live; welcome/session-ready may still be in flight.
+        return Result::Ok;
+    }
 
     const int connectTimeout =
         timeoutMs > 0 ? timeoutMs : kDefaultReconnectTimeoutMs;
@@ -234,6 +238,9 @@ Result SessionManager::connect(SessionId id, int timeoutMs) {
         return Result::InvalidArg;
     }
     if (session->isSessionReady()) {
+        return Result::Ok;
+    }
+    if (session->isConnected()) {
         return Result::Ok;
     }
 
@@ -246,6 +253,9 @@ Result SessionManager::connect(SessionId id, int timeoutMs) {
         return Result::InvalidArg;
     }
     if (session->isSessionReady()) {
+        return Result::Ok;
+    }
+    if (session->isConnected()) {
         return Result::Ok;
     }
 
