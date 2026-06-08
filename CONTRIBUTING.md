@@ -19,7 +19,7 @@ Thanks for your interest in contributing.
 - Keep PRs small and focused.
 - Include clear rationale ("why"), not only implementation details ("what").
 - Add/update docs when behavior or configuration changes.
-- Test affected components locally (backend, Android, Windows prototype when relevant).
+- Test affected components locally (backend, Android, Windows client when relevant).
 
 ## Commit Message Guidance
 

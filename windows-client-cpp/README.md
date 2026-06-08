@@ -1,10 +1,10 @@
 # O-Walkie Desktop
 
-Windows desktop client with:
+Release Windows desktop client (`windows-client-cpp`):
+
 - `wxWidgets` UI
-- `Boost.Beast` WebSocket + UDP transport
-- `Opus` codec
-- **miniaudio** (vendored `third_party/miniaudio/miniaudio.h`) for capture/playback — WASAPI on Windows
+- `owalkie-core` managed session (`RelayClient`) for WebSocket + UDP + Opus
+- **miniaudio** (vendored `third_party/miniaudio/miniaudio.h`) for PCM capture/playback — WASAPI on Windows
 
 ## Toolchain location
 

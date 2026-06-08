@@ -33,8 +33,8 @@ This design gives a more "alive" radio feeling for communication.
 
 - `backend/` — Go relay server (`WebSocket` control plane + `UDP` audio plane).
 - `owalkie-core/` — shared C/C++ relay library (managed sessions, Opus, activity probe, Roger/Call PCM).
-- `android/` — Android client (release target); native relay via JNI → `owalkie-core`.
-- `windows-client-cpp/` — Windows desktop client (`wxWidgets` + miniaudio); working prototype, not a release target yet.
+- `android/` — Android client (release); native relay via JNI → `owalkie-core`.
+- `windows-client-cpp/` — Windows desktop client (release); `wxWidgets` + miniaudio, `owalkie-core` managed session.
 
 ### Client highlights
 
@@ -48,12 +48,11 @@ This design gives a more "alive" radio feeling for communication.
 
 ## What we publish
 
-Public release artifacts currently include:
+Public release artifacts include:
 
 - relay server build (`backend`)
 - Android client build (`android`)
-
-Windows client (`windows-client-cpp`) is available in the repository as a prototype and test client.
+- Windows desktop client build (`windows-client-cpp`)
 
 ## Quick start
 
@@ -67,6 +66,10 @@ Run from `android/`:
 
 - `./gradlew :app:assembleDebug`
 - `./gradlew :app:assembleRelease`
+
+### Windows client
+
+See build and distribution notes in `windows-client-cpp/README.md` (Release build → `build/dist/`).
 
 ## Contribution
 

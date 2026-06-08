@@ -33,8 +33,8 @@ O-Walkie намеренно моделирует поведение "живой 
 
 - `backend/` — relay-сервер на Go (`WebSocket` control plane + `UDP` audio plane).
 - `owalkie-core/` — общая C/C++ библиотека relay (managed-сессии, Opus, probe активности, Roger/Call PCM).
-- `android/` — Android-клиент (релизный таргет); нативный relay через JNI → `owalkie-core`.
-- `windows-client-cpp/` — Windows desktop-клиент (`wxWidgets` + miniaudio); рабочий прототип, пока не релизный таргет.
+- `android/` — Android-клиент (релиз); нативный relay через JNI → `owalkie-core`.
+- `windows-client-cpp/` — Windows desktop-клиент (релиз); `wxWidgets` + miniaudio, managed-сессия `owalkie-core`.
 
 ### Возможности клиентов
 
@@ -48,12 +48,11 @@ O-Walkie намеренно моделирует поведение "живой 
 
 ## Что публикуем
 
-В публичные релизы сейчас входят:
+В публичные релизы входят:
 
 - сборка relay-сервера (`backend`);
-- сборка Android-клиента (`android`).
-
-Windows-клиент (`windows-client-cpp`) доступен в репозитории как прототип и тестовый клиент.
+- сборка Android-клиента (`android`);
+- сборка Windows desktop-клиента (`windows-client-cpp`).
 
 ## Быстрый старт
 
@@ -67,6 +66,10 @@ Windows-клиент (`windows-client-cpp`) доступен в репозито
 
 - `./gradlew :app:assembleDebug`
 - `./gradlew :app:assembleRelease`
+
+### Windows-клиент
+
+Сборка и распространение — в `windows-client-cpp/README.md` (Release → `build/dist/`).
 
 ## Contribution
 
