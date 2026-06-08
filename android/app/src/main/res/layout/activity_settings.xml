@@ -46,6 +46,13 @@
         android:layout_marginTop="12dp"
         android:text="@string/use_bluetooth_headset_label" />
 
+    <CheckBox
+        android:id="@+id/warmMicRecorderCheckBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="@string/warm_mic_recorder_label" />
+
     <LinearLayout
         android:id="@+id/hardwarePttRow"
         android:layout_width="match_parent"

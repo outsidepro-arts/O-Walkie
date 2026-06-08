@@ -47,6 +47,7 @@ import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 import ru.outsidepro_arts.owalkie.model.RxVolumeStore
 import ru.outsidepro_arts.owalkie.model.ServerProfile
 import ru.outsidepro_arts.owalkie.model.ServerStore
+import ru.outsidepro_arts.owalkie.model.WarmMicRecorderStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,6 +58,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.ByteBuffer
@@ -85,6 +88,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         const val ACTION_STATUS = "ru.outsidepro_arts.owalkie.action.STATUS"
         const val ACTION_SET_RX_VOLUME = "ru.outsidepro_arts.owalkie.action.SET_RX_VOLUME"
         const val ACTION_SET_BLUETOOTH_HEADSET_MODE = "ru.outsidepro_arts.owalkie.action.SET_BLUETOOTH_HEADSET_MODE"
+        const val ACTION_SET_WARM_MIC_RECORDER = "ru.outsidepro_arts.owalkie.action.SET_WARM_MIC_RECORDER"
+        const val ACTION_SYNC_WARM_MIC_RECORDER = "ru.outsidepro_arts.owalkie.action.SYNC_WARM_MIC_RECORDER"
         const val ACTION_SET_ACTIVITY_FOCUS = "ru.outsidepro_arts.owalkie.action.SET_ACTIVITY_FOCUS"
         const val ACTION_SYNC_RELAY_STATUS = "ru.outsidepro_arts.owalkie.action.SYNC_RELAY_STATUS"
         const val ACTION_SYNC_PTT_MEDIA_SESSION = "ru.outsidepro_arts.owalkie.action.SYNC_PTT_MEDIA_SESSION"
@@ -125,6 +130,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         const val EXTRA_REPEATER_ENABLED = "repeaterEnabled"
         const val EXTRA_RX_VOLUME_PERCENT = "rxVolumePercent"
         const val EXTRA_USE_BLUETOOTH_HEADSET = "useBluetoothHeadset"
+        const val EXTRA_WARM_MIC_RECORDER_ENABLED = "warmMicRecorderEnabled"
         const val EXTRA_ACTIVITY_FOCUSED = "activityFocused"
         /** Relay transport paused while the system reports an active cellular call ([TelephonyManager.CALL_STATE_OFFHOOK]). */
         const val EXTRA_RELAY_PAUSED_PHONE_CALL = "relayPausedPhoneCall"
@@ -311,6 +317,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
     private lateinit var externalControlStore: ExternalControlStore
     private lateinit var phoneCallRelayPauseStore: PhoneCallRelayPauseStore
+    private lateinit var warmMicRecorderStore: WarmMicRecorderStore
     private var telephonyCallStateCallback: TelephonyCallback? = null
     @Suppress("DEPRECATION")
     private var legacyPhoneStateListener: PhoneStateListener? = null
@@ -324,6 +331,12 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private var useBluetoothHeadset: Boolean = false
     @Volatile
     private var activityFocused: Boolean = true
+
+    private val warmRecorderLock = Any()
+    private val warmRecorderOpsMutex = Mutex()
+    private var warmRecorder: AudioRecord? = null
+    private var warmRecorderJob: Job? = null
+    private var warmRecorderActiveConfigKey: String? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pttLockDisplayTickRunnable: Runnable? = null
@@ -429,6 +442,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         pttHardwareKeyStore = PttHardwareKeyStore(this)
         externalControlStore = ExternalControlStore(this)
         phoneCallRelayPauseStore = PhoneCallRelayPauseStore(this)
+        warmMicRecorderStore = WarmMicRecorderStore(this)
         mediaButtonPttToggleRunnable = Runnable { handleMediaButtonPttToggle() }
         useBluetoothHeadset = bluetoothHeadsetRouteStore.isEnabled()
         rxVolumePercent = rxVolumeStore.getPercent()
@@ -505,6 +519,10 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             ACTION_SET_BLUETOOTH_HEADSET_MODE -> updateBluetoothHeadsetMode(
                 intent.getBooleanExtra(EXTRA_USE_BLUETOOTH_HEADSET, useBluetoothHeadset),
             )
+            ACTION_SET_WARM_MIC_RECORDER -> updateWarmMicRecorderMode(
+                intent.getBooleanExtra(EXTRA_WARM_MIC_RECORDER_ENABLED, warmMicRecorderStore.isEnabled()),
+            )
+            ACTION_SYNC_WARM_MIC_RECORDER -> syncWarmRecorder(ensureAfterIdle = true)
             ACTION_SET_ACTIVITY_FOCUS -> updateActivityFocus(
                 intent.getBooleanExtra(EXTRA_ACTIVITY_FOCUSED, activityFocused),
             )
@@ -534,7 +552,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             return when (event.action) {
                 KeyEvent.ACTION_DOWN -> {
                     if (event.repeatCount == 0) {
-                        if (transmitting.get()) {
+                        if (outgoingStreamActive()) {
                             onPttRelease()
                         } else {
                             onPttPress()
@@ -894,6 +912,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                         } else {
                             clearReconnectSettle()
                         }
+                        if (connectOk) {
+                            syncWarmRecorder(ensureAfterIdle = true)
+                        }
                     }
                     if (!connectOk || !desiredConnection.get()) {
                         bridge.disconnect()
@@ -1083,6 +1104,11 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private fun onPttPress() {
         if (serverPttLocked.get()) return
+        stopTxCountdownFromServer()
+        if (transmitting.get()) return
+        // Previous TX may still be draining mic tail / playing roger; do not clobber that teardown.
+        if (txLoopRunning.get()) return
+
         rogerJob?.cancel()
         rogerJob = null
         rogerStreaming.set(false)
@@ -1092,8 +1118,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         localCallPlaybackJob?.cancel()
         localCallPlaybackJob = null
         lastRxDuringParallelTxNs.set(0L)
-        stopTxCountdownFromServer()
-        if (transmitting.getAndSet(true)) return
+        transmitting.set(true)
         txUplinkOpened.set(false)
         captureTailUntilNs.set(0L)
         pttReleaseCompletionPending.set(false)
@@ -1128,16 +1153,22 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             } finally {
                 txLoopRunning.set(false)
                 txJob = null
+                if (!rogerStreaming.get()) {
+                    syncWarmRecorder(ensureAfterIdle = true)
+                }
             }
         }
     }
 
     private fun onPttRelease() {
-        if (!transmitting.getAndSet(false)) return
+        val wasHeld = transmitting.getAndSet(false)
+        if (!wasHeld && !txLoopRunning.get()) return
         stopTxCountdownFromServer()
         recordPttReleaseBurstGuard()
         pttReleaseCompletionPending.set(true)
-        captureTailUntilNs.set(System.nanoTime() + micCaptureTailDrainNs())
+        if (wasHeld) {
+            captureTailUntilNs.set(System.nanoTime() + micCaptureTailDrainNs())
+        }
         if (!txLoopRunning.get()) {
             completePttReleaseAfterCapture()
         }
@@ -1157,8 +1188,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 if (txUplinkOpened.getAndSet(false)) {
                     relay().txVoiceEnd()
                     relay().waitTxIdle(TX_PIPELINE_IDLE_WAIT_MS)
-                    val rogerPcm = generateRogerFromSelectedPattern(currentCodecSampleRate())
-                    streamRogerBeep(rogerPcm)
+                    streamRogerBeep(generateRogerFromSelectedPattern(currentCodecSampleRate()))
                     relay().waitTxIdle(TX_PIPELINE_IDLE_WAIT_MS)
                     relay().txClose()
                     syncRelayPowerAfterTx()
@@ -1167,6 +1197,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 rogerStreaming.set(false)
                 releaseVoiceProfileIfIdle()
                 drainPendingUdpNetworkRecreate()
+                syncWarmRecorder(ensureAfterIdle = true)
             }
         }
     }
@@ -1197,7 +1228,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     private fun togglePttFromExternal() {
-        if (transmitting.get()) {
+        if (outgoingStreamActive()) {
             onPttRelease()
         } else {
             onPttPress()
@@ -1337,36 +1368,35 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private suspend fun runCaptureLoop() = withContext(Dispatchers.IO) {
         val frameSamples = currentFrameSamples()
-        val preferredOption = microphoneConfigStore.getSelectedOption()
-        ensureVoiceAudioProfile(useBluetoothHeadset || preferredOption.preferBluetooth)
-        val minBuffer = AudioRecord.getMinBufferSize(
-            currentCodecSampleRate(),
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-        )
-        val recorder = createRecorder(
-            source = preferredOption.audioSource,
-            frameSamples = frameSamples,
-            minBuffer = minBuffer,
-        ) ?: createRecorder(
-            source = MediaRecorder.AudioSource.MIC,
-            frameSamples = frameSamples,
-            minBuffer = minBuffer,
-        ) ?: run {
-            transmitting.set(false)
-            captureTailUntilNs.set(0L)
-            completePttReleaseAfterCapture()
-            broadcastStatus(currentSignalByte())
-            return@withContext
+        var recorder = takeWarmRecorderForTx()
+        if (recorder == null) {
+            val preferredOption = microphoneConfigStore.getSelectedOption()
+            ensureVoiceAudioProfile(useBluetoothHeadset || preferredOption.preferBluetooth)
+            recorder = createPreferredRecorder() ?: run {
+                transmitting.set(false)
+                captureTailUntilNs.set(0L)
+                completePttReleaseAfterCapture()
+                broadcastStatus(currentSignalByte())
+                return@withContext
+            }
+            disableRecordPreprocessing(recorder.audioSessionId)
+            try {
+                recorder.startRecording()
+            } catch (_: Exception) {
+                recorder.release()
+                transmitting.set(false)
+                captureTailUntilNs.set(0L)
+                completePttReleaseAfterCapture()
+                broadcastStatus(currentSignalByte())
+                return@withContext
+            }
         }
-        disableRecordPreprocessing(recorder.audioSessionId)
 
         val readBuffer = ShortArray(frameSamples)
         val txBuffer = ShortArray(frameSamples)
         var txFill = 0
         var captureFailed = false
         try {
-            recorder.startRecording()
             while (isActive && micCaptureActive()) {
                 txFill = appendCapturedSamples(
                     recorder = recorder,
@@ -1397,10 +1427,10 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                     txFill = 0
                 }
             }
-            recorder.stop()
         } finally {
-            recorder.release()
             captureTailUntilNs.set(0L)
+            runCatching { recorder.stop() }
+            recorder.release()
             if (captureFailed) {
                 pttReleaseCompletionPending.set(false)
                 if (txUplinkOpened.getAndSet(false)) {
@@ -1948,6 +1978,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
         syncPttMediaSession()
         broadcastStatus(currentSignalByte())
+        syncWarmRecorder(ensureAfterIdle = true)
     }
 
     private fun currentCodecSampleRate(): Int = normalizeSampleRate(serverSampleRate)
@@ -2011,6 +2042,12 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         useBluetoothHeadset = enabled
         bluetoothHeadsetRouteStore.setEnabled(enabled)
         enforceAudioRoutePolicy()
+        syncWarmRecorder(ensureAfterIdle = true)
+    }
+
+    private fun updateWarmMicRecorderMode(enabled: Boolean) {
+        warmMicRecorderStore.setEnabled(enabled)
+        syncWarmRecorder(ensureAfterIdle = enabled)
     }
 
     private fun updateActivityFocus(focused: Boolean) {
@@ -2022,6 +2059,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             publishRelayStatus()
         }
         syncPttMediaSession()
+        syncWarmRecorder(ensureAfterIdle = focused)
     }
 
     private fun shouldOfferMediaButtonCapture(): Boolean {
@@ -2039,7 +2077,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             broadcastStatus(currentSignalByte())
             return
         }
-        if (transmitting.get()) {
+        if (outgoingStreamActive()) {
             onPttRelease()
         } else {
             onPttPress()
@@ -2204,6 +2242,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private fun cancelConnection() {
         relayPausedForCellularCall.set(false)
+        stopWarmRecorder()
         serviceScope.launch(Dispatchers.IO) {
             stopClientReconnectLoop()
             waitForNativeConnectIdle()
@@ -2218,6 +2257,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         if (!phoneCallRelayPauseStore.isPauseDuringCallEnabled()) return
         if (!desiredConnection.get()) return
         if (!relayPausedForCellularCall.compareAndSet(false, true)) return
+        stopWarmRecorder()
         tearDownTransport(clearUserIntent = false)
         broadcastStatus(currentSignalByte())
     }
@@ -2359,6 +2399,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         localPttPressPlaybackJob?.cancel()
         localPttPressPlaybackJob = null
 
+        stopWarmRecorderSync()
+
         stopTxCountdownFromServer()
         resetPttReleaseBurstGuard()
         syncParallelCollisionVibration(false)
@@ -2404,6 +2446,208 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }.getOrNull()?.takeIf { it.state == AudioRecord.STATE_INITIALIZED }
     }
 
+    private fun createPreferredRecorder(): AudioRecord? {
+        val frameSamples = currentFrameSamples()
+        val preferredOption = microphoneConfigStore.getSelectedOption()
+        val minBuffer = AudioRecord.getMinBufferSize(
+            currentCodecSampleRate(),
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        return createRecorder(
+            source = preferredOption.audioSource,
+            frameSamples = frameSamples,
+            minBuffer = minBuffer,
+        ) ?: createRecorder(
+            source = MediaRecorder.AudioSource.MIC,
+            frameSamples = frameSamples,
+            minBuffer = minBuffer,
+        )
+    }
+
+    private fun warmRecorderConfigKey(): String {
+        val preferredOption = microphoneConfigStore.getSelectedOption()
+        val preferBluetoothMic = useBluetoothHeadset || preferredOption.preferBluetooth
+        return "${preferredOption.id}:${currentCodecSampleRate()}:$preferBluetoothMic"
+    }
+
+    /** Warm mic is allowed only while the app is foreground and connected. */
+    private fun shouldOfferWarmRecorder(): Boolean {
+        return warmMicRecorderStore.isEnabled() &&
+            activityFocused &&
+            channelBound &&
+            isRelaySessionReady() &&
+            !relayPausedForCellularCall.get()
+    }
+
+    /** Idle window where the warm pool should exist (not during TX / roger / call). */
+    private fun shouldMaintainWarmRecorderPool(): Boolean {
+        return shouldOfferWarmRecorder() &&
+            !transmitting.get() &&
+            !txLoopRunning.get() &&
+            !rogerStreaming.get() &&
+            !callStreaming.get()
+    }
+
+    private fun isWarmRecorderHeld(): Boolean {
+        synchronized(warmRecorderLock) {
+            return warmRecorder != null
+        }
+    }
+
+    private fun syncWarmRecorder(ensureAfterIdle: Boolean = false) {
+        if (!::warmMicRecorderStore.isInitialized) return
+        serviceScope.launch(Dispatchers.IO) {
+            warmRecorderOpsMutex.withLock {
+                ensureWarmRecorderState()
+                if (ensureAfterIdle) {
+                    ensureWarmRecorderPoolWithRetry()
+                }
+            }
+        }
+    }
+
+    private suspend fun ensureWarmRecorderState() {
+        if (!shouldOfferWarmRecorder()) {
+            stopWarmRecorderAndJoin()
+            releaseVoiceProfileIfIdle()
+            return
+        }
+        if (!shouldMaintainWarmRecorderPool()) {
+            // TX / roger / call in progress — keep an existing pool until takeWarmRecorderForTx().
+            return
+        }
+        val configKey = warmRecorderConfigKey()
+        val needsRestart = synchronized(warmRecorderLock) {
+            warmRecorder == null || warmRecorderActiveConfigKey != configKey
+        }
+        if (!needsRestart) return
+        stopWarmRecorderAndJoin()
+        if (!shouldMaintainWarmRecorderPool()) return
+        synchronized(warmRecorderLock) {
+            if (!shouldMaintainWarmRecorderPool()) return
+            startWarmRecorderLocked(configKey)
+        }
+    }
+
+    private suspend fun ensureWarmRecorderPoolWithRetry() {
+        repeat(4) { attempt ->
+            if (!shouldMaintainWarmRecorderPool()) return
+            if (isWarmRecorderHeld()) return
+            if (attempt > 0) delay(50L * attempt)
+            ensureWarmRecorderState()
+        }
+    }
+
+    private fun stopWarmRecorder() {
+        serviceScope.launch(Dispatchers.IO) {
+            warmRecorderOpsMutex.withLock {
+                stopWarmRecorderAndJoin()
+                releaseVoiceProfileIfIdle()
+            }
+        }
+    }
+
+    private fun stopWarmRecorderSync() {
+        runBlocking(Dispatchers.IO) {
+            warmRecorderOpsMutex.withLock {
+                stopWarmRecorderAndJoin()
+                releaseVoiceProfileIfIdle()
+            }
+        }
+    }
+
+    private suspend fun stopWarmRecorderAndJoin() {
+        val jobToJoin: Job?
+        val recorderToRelease: AudioRecord?
+        synchronized(warmRecorderLock) {
+            jobToJoin = warmRecorderJob
+            warmRecorderJob = null
+            recorderToRelease = warmRecorder
+            warmRecorder = null
+            warmRecorderActiveConfigKey = null
+        }
+        jobToJoin?.cancel()
+        jobToJoin?.join()
+        recorderToRelease?.let { releaseRecorderLocked(it) }
+    }
+
+    private fun releaseRecorderLocked(recorder: AudioRecord) {
+        runCatching { recorder.stop() }
+        runCatching { recorder.release() }
+    }
+
+    private fun startWarmRecorderLocked(configKey: String) {
+        val frameSamples = currentFrameSamples()
+        val preferredOption = microphoneConfigStore.getSelectedOption()
+        ensureVoiceAudioProfile(useBluetoothHeadset || preferredOption.preferBluetooth)
+        val recorder = createPreferredRecorder() ?: return
+        disableRecordPreprocessing(recorder.audioSessionId)
+        if (runCatching { recorder.startRecording() }.isFailure) {
+            recorder.release()
+            return
+        }
+        warmRecorder = recorder
+        warmRecorderActiveConfigKey = configKey
+        startWarmRecorderDrainLocked(recorder, frameSamples)
+    }
+
+    private fun startWarmRecorderDrainLocked(recorder: AudioRecord, frameSamples: Int) {
+        val preferredOption = microphoneConfigStore.getSelectedOption()
+        ensureVoiceAudioProfile(useBluetoothHeadset || preferredOption.preferBluetooth)
+        warmRecorderJob = serviceScope.launch(Dispatchers.IO) {
+            val readBuffer = ShortArray(frameSamples)
+            val ownedRecorder = recorder
+            try {
+                while (isActive) {
+                    val stillOwned = synchronized(warmRecorderLock) {
+                        warmRecorder === ownedRecorder
+                    }
+                    if (!stillOwned) break
+                    val read = ownedRecorder.read(readBuffer, 0, readBuffer.size, AudioRecord.READ_BLOCKING)
+                    if (read < 0) break
+                }
+            } finally {
+                val scheduleRecovery: Boolean
+                synchronized(warmRecorderLock) {
+                    scheduleRecovery = warmRecorder === ownedRecorder
+                    if (scheduleRecovery) {
+                        warmRecorderJob = null
+                        warmRecorder = null
+                        warmRecorderActiveConfigKey = null
+                        releaseRecorderLocked(ownedRecorder)
+                        releaseVoiceProfileIfIdle()
+                    }
+                }
+                if (scheduleRecovery && shouldMaintainWarmRecorderPool()) {
+                    syncWarmRecorder(ensureAfterIdle = true)
+                }
+            }
+        }
+    }
+
+    private suspend fun takeWarmRecorderForTx(): AudioRecord? {
+        val jobToJoin: Job?
+        val recorder: AudioRecord
+        synchronized(warmRecorderLock) {
+            jobToJoin = warmRecorderJob
+            warmRecorderJob = null
+            val owned = warmRecorder ?: return null
+            if (warmRecorderActiveConfigKey != warmRecorderConfigKey()) {
+                releaseRecorderLocked(owned)
+                warmRecorder = null
+                warmRecorderActiveConfigKey = null
+                return null
+            }
+            warmRecorder = null
+            warmRecorderActiveConfigKey = null
+            recorder = owned
+        }
+        jobToJoin?.cancel()
+        jobToJoin?.join()
+        return recorder
+    }
+
     private fun ensureVoiceAudioProfile(preferBluetoothMic: Boolean = false) {
         runCatching {
             val bluetoothRouteAllowed = preferBluetoothMic && isBluetoothHeadsetAvailable()
@@ -2429,6 +2673,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private fun releaseVoiceProfileIfIdle() {
         if (shouldHoldBluetoothCommunicationProfile()) {
+            return
+        }
+        if (isWarmRecorderHeld()) {
             return
         }
         if (!outgoingStreamActive()) {
@@ -2539,6 +2786,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             clearServerSessionControlState()
             broadcastStatus(currentSignalByte())
             syncPttMediaSession()
+            stopWarmRecorder()
         }
     }
 
@@ -2556,6 +2804,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             applyRelayPowerProfile()
             broadcastStatus(currentSignalByte())
             syncPttMediaSession()
+            syncWarmRecorder(ensureAfterIdle = true)
         }
     }
 

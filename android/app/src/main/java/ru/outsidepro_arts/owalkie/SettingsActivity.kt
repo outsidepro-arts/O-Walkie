@@ -25,6 +25,7 @@ import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
 import ru.outsidepro_arts.owalkie.model.RogerPattern
 import ru.outsidepro_arts.owalkie.model.RogerPatternStore
 import ru.outsidepro_arts.owalkie.model.ScreenOrientationStore
+import ru.outsidepro_arts.owalkie.model.WarmMicRecorderStore
 
 class SettingsActivity : ComponentActivity() {
     companion object {
@@ -39,12 +40,14 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
     private lateinit var externalControlStore: ExternalControlStore
     private lateinit var phoneCallRelayPauseStore: PhoneCallRelayPauseStore
+    private lateinit var warmMicRecorderStore: WarmMicRecorderStore
     private lateinit var screenOrientationStore: ScreenOrientationStore
     private lateinit var screenOrientationSpinner: Spinner
     private lateinit var hardwarePttRow: View
     private lateinit var hardwarePttStatusText: TextView
     private lateinit var microphoneSpinner: Spinner
     private lateinit var useBluetoothHeadsetCheckBox: CheckBox
+    private lateinit var warmMicRecorderCheckBox: CheckBox
     private lateinit var pttToggleModeCheckBox: CheckBox
     private lateinit var mediaButtonPttCheckBox: CheckBox
     private lateinit var externalControlCheckBox: CheckBox
@@ -83,6 +86,7 @@ class SettingsActivity : ComponentActivity() {
         pttHardwareKeyStore = PttHardwareKeyStore(this)
         externalControlStore = ExternalControlStore(this)
         phoneCallRelayPauseStore = PhoneCallRelayPauseStore(this)
+        warmMicRecorderStore = WarmMicRecorderStore(this)
 
         screenOrientationSpinner = findViewById(R.id.screenOrientationSpinner)
         initScreenOrientationSpinner()
@@ -91,6 +95,7 @@ class SettingsActivity : ComponentActivity() {
         hardwarePttStatusText = findViewById(R.id.hardwarePttStatusText)
         microphoneSpinner = findViewById(R.id.microphoneSpinner)
         useBluetoothHeadsetCheckBox = findViewById(R.id.useBluetoothHeadsetCheckBox)
+        warmMicRecorderCheckBox = findViewById(R.id.warmMicRecorderCheckBox)
         pttToggleModeCheckBox = findViewById(R.id.pttToggleModeCheckBox)
         mediaButtonPttCheckBox = findViewById(R.id.mediaButtonPttCheckBox)
         externalControlCheckBox = findViewById(R.id.externalControlCheckBox)
@@ -163,6 +168,10 @@ class SettingsActivity : ComponentActivity() {
             bluetoothHeadsetRouteStore.setEnabled(isChecked)
             sendBluetoothHeadsetModeToService(isChecked)
         }
+        warmMicRecorderCheckBox.setOnCheckedChangeListener { _, isChecked ->
+            warmMicRecorderStore.setEnabled(isChecked)
+            sendWarmMicRecorderModeToService(isChecked)
+        }
         pttToggleModeCheckBox.setOnCheckedChangeListener { _, isChecked ->
             pttHardwareKeyStore.setToggleModeEnabled(isChecked)
             refreshMediaButtonPttCheckbox()
@@ -186,6 +195,7 @@ class SettingsActivity : ComponentActivity() {
         refreshPhoneCallRelayPauseToggle()
         refreshMicrophoneOptions()
         refreshBluetoothHeadsetToggle()
+        refreshWarmMicRecorderToggle()
         refreshRogerPatterns()
         refreshCallingPatterns()
     }
@@ -240,6 +250,16 @@ class SettingsActivity : ComponentActivity() {
         useBluetoothHeadsetCheckBox.setOnCheckedChangeListener { _, isChecked ->
             bluetoothHeadsetRouteStore.setEnabled(isChecked)
             sendBluetoothHeadsetModeToService(isChecked)
+        }
+    }
+
+    private fun refreshWarmMicRecorderToggle() {
+        val enabled = warmMicRecorderStore.isEnabled()
+        warmMicRecorderCheckBox.setOnCheckedChangeListener(null)
+        warmMicRecorderCheckBox.isChecked = enabled
+        warmMicRecorderCheckBox.setOnCheckedChangeListener { _, isChecked ->
+            warmMicRecorderStore.setEnabled(isChecked)
+            sendWarmMicRecorderModeToService(isChecked)
         }
     }
 
@@ -371,7 +391,10 @@ class SettingsActivity : ComponentActivity() {
         microphoneSpinner.setSelection(selectedIndex, false)
         microphoneSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
-                microphoneOptions.getOrNull(position)?.let { microphoneConfigStore.setSelectedOption(it.id) }
+                microphoneOptions.getOrNull(position)?.let {
+                    microphoneConfigStore.setSelectedOption(it.id)
+                    notifyWalkieServiceWarmMicSync()
+                }
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -382,6 +405,21 @@ class SettingsActivity : ComponentActivity() {
         val intent = android.content.Intent(this, WalkieService::class.java).apply {
             action = WalkieService.ACTION_SET_BLUETOOTH_HEADSET_MODE
             putExtra(WalkieService.EXTRA_USE_BLUETOOTH_HEADSET, enabled)
+        }
+        startService(intent)
+    }
+
+    private fun sendWarmMicRecorderModeToService(enabled: Boolean) {
+        val intent = android.content.Intent(this, WalkieService::class.java).apply {
+            action = WalkieService.ACTION_SET_WARM_MIC_RECORDER
+            putExtra(WalkieService.EXTRA_WARM_MIC_RECORDER_ENABLED, enabled)
+        }
+        startService(intent)
+    }
+
+    private fun notifyWalkieServiceWarmMicSync() {
+        val intent = android.content.Intent(this, WalkieService::class.java).apply {
+            action = WalkieService.ACTION_SYNC_WARM_MIC_RECORDER
         }
         startService(intent)
     }

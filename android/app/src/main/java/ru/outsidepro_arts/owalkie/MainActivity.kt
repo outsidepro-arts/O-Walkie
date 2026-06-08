@@ -72,6 +72,7 @@ class MainActivity : ComponentActivity() {
     private var transmitting = false
     private var callActive = false
     private var pttToggleModeEnabled = false
+    private var toggleHandledByTouch = false
     private var selectedServerIndex = 0
     private val servers = mutableListOf<ServerProfile>()
     private var wsConnected = false
@@ -96,6 +97,8 @@ class MainActivity : ComponentActivity() {
     private var suppressTransientConnectionErrorTone = false
     /** Hold-to-talk: finger is down; release must send PTT_RELEASE even if STATUS has not arrived yet. */
     private var holdPttFingerDown = false
+    /** Toggle PTT: local press state so stop works before STATUS broadcast arrives. */
+    private var togglePttActive = false
     private var rxVolumeTouchTracking = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var rxVolumePreviewRunnable: Runnable? = null
@@ -113,6 +116,9 @@ class MainActivity : ComponentActivity() {
             wsConnected = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTED, false)
             wsConnecting = intent.getBooleanExtra(WalkieService.EXTRA_WS_CONNECTING, false)
             transmitting = intent.getBooleanExtra(WalkieService.EXTRA_TX_ACTIVE, transmitting)
+            if (!transmitting) {
+                togglePttActive = false
+            }
             callActive = intent.getBooleanExtra(WalkieService.EXTRA_CALL_ACTIVE, callActive)
             udpReady = intent.getBooleanExtra(WalkieService.EXTRA_UDP_READY, false)
             val prevProtocolIncompatible = protocolIncompatible
@@ -195,6 +201,7 @@ class MainActivity : ComponentActivity() {
             if (pttToggleModeEnabled) {
                 when (event.actionMasked) {
                     MotionEvent.ACTION_UP -> {
+                        toggleHandledByTouch = true
                         toggleTransmitUi()
                         true
                     }
@@ -221,6 +228,10 @@ class MainActivity : ComponentActivity() {
         }
         binding.pttButton.setOnClickListener {
             if (pttToggleModeEnabled) {
+                if (toggleHandledByTouch) {
+                    toggleHandledByTouch = false
+                    return@setOnClickListener
+                }
                 toggleTransmitUi()
             }
         }
@@ -428,9 +439,17 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startTransmitUi() {
-        if (transmitting) return
+        if (pttToggleModeEnabled) {
+            if (togglePttActive) return
+            togglePttActive = true
+        } else if (transmitting) {
+            return
+        }
         if (!wsConnected) return
-        if (serverPttLocked) return
+        if (serverPttLocked) {
+            if (pttToggleModeEnabled) togglePttActive = false
+            return
+        }
         sendServiceAction(WalkieService.ACTION_PTT_PRESS)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         binding.callButton.isEnabled = false
@@ -448,7 +467,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun toggleTransmitUi() {
-        if (transmitting) {
+        if (pttToggleModeEnabled) {
+            if (togglePttActive) {
+                stopTransmitUi()
+            } else {
+                startTransmitUi()
+            }
+        } else if (transmitting) {
             stopTransmitUi()
         } else {
             startTransmitUi()
@@ -456,7 +481,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopTransmitUi() {
-        if (!transmitting) return
+        if (pttToggleModeEnabled) {
+            if (!togglePttActive) return
+            togglePttActive = false
+        } else if (!transmitting) {
+            return
+        }
         sendServiceAction(WalkieService.ACTION_PTT_RELEASE)
         binding.callButton.isEnabled = wsConnected
         updatePttLabel()
