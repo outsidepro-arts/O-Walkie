@@ -95,6 +95,9 @@ Result parseServerMessage(std::string_view text, Event& out) {
         if (type == "joined" || type == "pong" || type == "udp_registered" || type == "repeater_mode") {
             return Result::NoEvent;
         }
+        if (type == "has_activity") {
+            return Result::InvalidArg;
+        }
         return Result::InvalidArg;
     } catch (...) {
         return Result::Protocol;
@@ -104,6 +107,24 @@ Result parseServerMessage(std::string_view text, Event& out) {
 std::string buildJoin(std::string_view channel) {
     json j = {{"type", "join"}, {"channel", std::string(channel)}};
     return j.dump();
+}
+
+std::string buildHasActivity(std::string_view channel) {
+    json j = {{"type", "has_activity"}, {"channel", std::string(channel)}};
+    return j.dump();
+}
+
+Result parseHasActivityResponse(std::string_view text, bool& outActive) {
+    try {
+        const json root = json::parse(text);
+        if (root.value("type", std::string{}) != "has_activity") {
+            return Result::InvalidArg;
+        }
+        outActive = root.value("active", false);
+        return Result::Ok;
+    } catch (...) {
+        return Result::Protocol;
+    }
 }
 
 std::string buildUdpHello(int localUdpPort) {

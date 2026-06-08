@@ -22,9 +22,24 @@ Options:
 Public header: `include/owalkie_core.h`
 
 - **Utilities** (always available): protocol normalize, JSON parse (welcome/server messages), signal PCM, UDP pack/unpack. Outbound WS wire messages (`join`, `udp_hello`, …) are built inside the session only.
+- **Activity probe** (when `OWALKIE_CORE_HAS_SESSION`): `owalkie_check_channel_activity` — short-lived WebSocket `has_activity` query using `owalkie_connect_params` (no managed session).
 - **Managed session** (when `OWALKIE_CORE_HAS_SESSION` is defined): `owalkie_prepare_connection`, `owalkie_connect(session_id)`, TX/RX PCM, `owalkie_get_session_info`, `owalkie_set_repeater_mode`, `owalkie_set_power_profile`, `owalkie_punch_nat`
 
 `owalkie_prepare_connection` allocates a session id and registers callbacks (no network I/O). The client calls `owalkie_connect(session_id, timeout_ms)` for the first connect and every retry.
+
+```c
+owalkie_connect_params params = {
+    .host = "relay.example.com",
+    .port = 5500,
+    .channel = "team-a",
+    .use_tls = 0,
+    .repeater_mode = 0,
+};
+int active = 0;
+if (owalkie_check_channel_activity(&params, 4000, &active) == OWALKIE_OK && active) {
+    /* recent traffic on channel */
+}
+```
 
 Callbacks:
 

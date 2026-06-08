@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "owalkie/activity_probe.hpp"
 #include "owalkie/json.hpp"
 #include "owalkie/link_signal.hpp"
 #include "owalkie/protocol.hpp"
@@ -440,6 +441,28 @@ owalkie::SessionCallbacks makeManagedSessionCallbacks(const std::shared_ptr<Mana
 
 } // namespace
 
+owalkie_result owalkie_check_channel_activity(
+    const owalkie_connect_params* params,
+    int timeout_ms,
+    int* out_active) {
+    if (!params || !params->host || !out_active) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    owalkie::ConnectParams cpp{};
+    cpp.host = params->host;
+    cpp.port = params->port;
+    cpp.channel = params->channel ? params->channel : "global";
+    cpp.useTls = params->use_tls != 0;
+    cpp.repeaterMode = params->repeater_mode != 0;
+
+    bool active = false;
+    const owalkie::Result r = owalkie::activity_probe::checkChannelActivity(cpp, timeout_ms, active);
+    if (r == owalkie::Result::Ok) {
+        *out_active = active ? 1 : 0;
+    }
+    return toC(r);
+}
+
 owalkie_session_id owalkie_prepare_connection(
     const owalkie_connect_params* params,
     const owalkie_managed_callbacks* callbacks) {
@@ -660,6 +683,13 @@ int owalkie_get_uplink_signal_byte(void) {
 }
 
 #else
+
+owalkie_result owalkie_check_channel_activity(
+    const owalkie_connect_params*,
+    int,
+    int*) {
+    return OWALKIE_ERR_UNSUPPORTED;
+}
 
 owalkie_session_id owalkie_prepare_connection(
     const owalkie_connect_params*,

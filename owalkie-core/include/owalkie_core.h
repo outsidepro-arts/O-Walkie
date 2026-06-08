@@ -222,6 +222,17 @@ typedef enum owalkie_signal_mode {
     OWALKIE_SIGNAL_CELL = 1,
 } owalkie_signal_mode;
 
+/**
+ * One-shot channel activity probe (WebSocket has_activity). Uses @p params like
+ * @c owalkie_prepare_connection but does not create a managed session.
+ * @p out_active is set to 1 when the server reports recent activity, 0 otherwise.
+ * @p timeout_ms total budget; 0 = ~4 s. TLS / wss is not supported.
+ */
+owalkie_result owalkie_check_channel_activity(
+    const owalkie_connect_params* params,
+    int timeout_ms,
+    int* out_active);
+
 /* --- managed sessions (requires OWALKIE_CORE_HAS_SESSION) --- */
 owalkie_session_id owalkie_prepare_connection(
     const owalkie_connect_params* params,

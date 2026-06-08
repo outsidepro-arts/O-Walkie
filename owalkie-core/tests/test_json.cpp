@@ -1,5 +1,7 @@
 #include "owalkie_core.h"
 
+#include "owalkie/json.hpp"
+
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -54,6 +56,22 @@ int run_json_tests() {
 
     const char* pong = R"({"type":"pong"})";
     EXPECT_EQ(owalkie_json_parse_server_message(pong, 0, &ev, nullptr, 0), OWALKIE_OK);
+
+    {
+        const std::string hasActivityReq = owalkie::json::buildHasActivity("team1");
+        EXPECT_TRUE(hasActivityReq.find("has_activity") != std::string::npos);
+        bool active = false;
+        EXPECT_TRUE(
+            owalkie::json::parseHasActivityResponse(
+                R"({"type":"has_activity","channel":"team1","active":true})",
+                active) == owalkie::Result::Ok);
+        EXPECT_TRUE(active);
+        EXPECT_TRUE(
+            owalkie::json::parseHasActivityResponse(
+                R"({"type":"has_activity","active":false})",
+                active) == owalkie::Result::Ok);
+        EXPECT_TRUE(!active);
+    }
 
     return 0;
 }

@@ -64,6 +64,7 @@ if(OWALKIE_CORE_BUILD_SESSION)
         src/opus_codec.cpp
         src/session.cpp
         src/session_manager.cpp
+        src/activity_probe.cpp
     )
     target_compile_definitions(owalkie_core PUBLIC OWALKIE_CORE_HAS_SESSION=1)
     target_link_libraries(owalkie_core
