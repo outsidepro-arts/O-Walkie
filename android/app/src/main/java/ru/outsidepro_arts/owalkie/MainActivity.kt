@@ -31,7 +31,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,12 +40,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 import org.json.JSONObject
 import ru.outsidepro_arts.owalkie.databinding.ActivityMainBinding
 import ru.outsidepro_arts.owalkie.model.PttHardwareKeyStore
@@ -104,7 +97,6 @@ class MainActivity : ComponentActivity() {
     private var rxVolumePreviewRunnable: Runnable? = null
     private var scanJob: Job? = null
     private val scanScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val scanClient = OkHttpClient.Builder().retryOnConnectionFailure(true).build()
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -348,7 +340,6 @@ class MainActivity : ComponentActivity() {
         cancelRxVolumePreview()
         stopScanning(announce = false)
         scanScope.cancel()
-        scanClient.dispatcher.executorService.shutdown()
         if (::uiSignalPlayer.isInitialized) {
             uiSignalPlayer.release()
         }
@@ -1029,9 +1020,13 @@ class MainActivity : ComponentActivity() {
                     continue
                 }
                 val snapshot = servers.toList()
+                val skipIndex = if (wsConnected) selectedServerIndex else -1
                 var foundIndex = -1
                 var foundProfile: ServerProfile? = null
-                for (profile in snapshot) {
+                for ((index, profile) in snapshot.withIndex()) {
+                    if (index == skipIndex) {
+                        continue
+                    }
                     val active = queryServerActivity(profile)
                     if (active) {
                         foundProfile = profile
@@ -1094,50 +1089,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private suspend fun queryServerActivity(profile: ServerProfile): Boolean = withContext(Dispatchers.IO) {
-        val wsUrl = buildWsUrlForScan(profile) ?: return@withContext false
-        val deferred = CompletableDeferred<Boolean>()
-        val request = runCatching { Request.Builder().url(wsUrl).build() }.getOrNull() ?: return@withContext false
-        val ws = scanClient.newWebSocket(request, object : WebSocketListener() {
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                val parseResult = runCatching {
-                    val obj = JSONObject(text)
-                    when (obj.optString("type")) {
-                        "welcome" -> {
-                            webSocket.send("""{"type":"has_activity","channel":"${profile.channel}"}""")
-                            null
-                        }
-                        "has_activity" -> obj.optBoolean("active", false)
-                        else -> null
-                    }
-                }.getOrNull()
-                if (parseResult != null) {
-                    if (!deferred.isCompleted) deferred.complete(parseResult)
-                    webSocket.close(1000, "done")
-                }
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                if (!deferred.isCompleted) deferred.complete(false)
-            }
-
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                if (!deferred.isCompleted) deferred.complete(false)
-            }
-        })
-        val result = withTimeoutOrNull(SCAN_QUERY_TIMEOUT_MS) { deferred.await() } ?: false
-        runCatching { ws.cancel() }
-        return@withContext result
-    }
-
-    private fun buildWsUrlForScan(profile: ServerProfile): String? {
-        val endpoint = parseServerEndpointForScan(profile.host, profile.port) ?: return null
-        val hostPart = if (endpoint.host.contains(':') && !endpoint.host.startsWith("[")) {
-            "[${endpoint.host}]"
-        } else {
-            endpoint.host
-        }
-        val scheme = if (endpoint.secure) "wss" else "ws"
-        return "$scheme://$hostPart:${endpoint.port}/ws"
+        val endpoint = resolveProfileEndpoint(profile.host, profile.port) ?: return@withContext false
+        OwalkieNative.checkChannelActivity(
+            host = endpoint.host,
+            port = endpoint.port,
+            channel = profile.channel,
+            wsSecure = endpoint.secure,
+            timeoutMs = SCAN_QUERY_TIMEOUT_MS.toInt(),
+        )
     }
 
     private data class ParsedScanEndpoint(
@@ -1146,7 +1105,7 @@ class MainActivity : ComponentActivity() {
         val secure: Boolean,
     )
 
-    private fun parseServerEndpointForScan(rawHost: String, fallbackWsPort: Int): ParsedScanEndpoint? {
+    private fun resolveProfileEndpoint(rawHost: String, fallbackWsPort: Int): ParsedScanEndpoint? {
         var value = rawHost.trim()
         if (value.isBlank()) return null
         var secure = false

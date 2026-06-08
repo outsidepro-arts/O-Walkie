@@ -640,3 +640,43 @@ Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeSetActivityFocused(
         static_cast<owalkie::SessionId>(sessionId),
         focused ? owalkie::PowerProfile::Foreground : owalkie::PowerProfile::Background);
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeCheckChannelActivity(
+    JNIEnv* env,
+    jobject,
+    jstring host,
+    jint port,
+    jstring channel,
+    jint timeoutMs,
+    jintArray outActive) {
+    if (!host || !channel || !outActive) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    if (env->GetArrayLength(outActive) < 1) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+
+    const char* hostUtf = env->GetStringUTFChars(host, nullptr);
+    const char* channelUtf = env->GetStringUTFChars(channel, nullptr);
+    owalkie_connect_params params{};
+    params.host = hostUtf;
+    params.port = port;
+    params.channel = channelUtf;
+    params.use_tls = 0;
+    params.repeater_mode = 0;
+
+    jint activeFlag = 0;
+    const owalkie_result rc = owalkie_check_channel_activity(
+        &params,
+        timeoutMs < 0 ? 0 : timeoutMs,
+        &activeFlag);
+
+    env->ReleaseStringUTFChars(host, hostUtf);
+    env->ReleaseStringUTFChars(channel, channelUtf);
+
+    if (rc == OWALKIE_OK) {
+        env->SetIntArrayRegion(outActive, 0, 1, &activeFlag);
+    }
+    return rc;
+}

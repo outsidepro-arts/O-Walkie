@@ -46,6 +46,30 @@ object OwalkieNative {
         fun onNativeRxPcm(sessionId: Long, pcm: ShortArray, sampleRate: Int, packetMs: Int)
     }
 
+    /** One-shot has_activity probe; does not create a managed session. */
+    external fun nativeCheckChannelActivity(
+        host: String,
+        port: Int,
+        channel: String,
+        timeoutMs: Int,
+        outActive: IntArray,
+    ): Int
+
+    fun checkChannelActivity(
+        host: String,
+        port: Int,
+        channel: String,
+        wsSecure: Boolean,
+        timeoutMs: Int = 4_000,
+    ): Boolean {
+        if (wsSecure) {
+            return false
+        }
+        ensureLoaded()
+        val out = IntArray(1)
+        return nativeCheckChannelActivity(host, port, channel, timeoutMs, out) == OK && out[0] != 0
+    }
+
     /** Allocates a managed session; does not open transport. */
     external fun nativePrepareConnection(
         listener: Listener,
