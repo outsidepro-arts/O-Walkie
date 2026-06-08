@@ -150,7 +150,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         private const val TX_MIC_TAIL_DRAIN_PACKET_MULTIPLIER = 4
         /** Extra HAL buffer drain after the timed tail (non-blocking reads). */
         private const val TX_MIC_HAL_DRAIN_MAX_MS = 150
-        private const val TX_VOICE_FRAME_THRESHOLD = 280
         private const val TX_PIPELINE_IDLE_WAIT_MS = 600
         /** Quiet period before burst counter / block clears; refreshed on each release and while blocked on each press attempt. */
         private const val PTT_RELEASE_BURST_TIMER_MS = 1000L
@@ -1108,8 +1107,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             broadcastStatus(currentSignalByte())
             return
         }
-        val micOption = microphoneConfigStore.getSelectedOption()
-        ensureVoiceAudioProfile(useBluetoothHeadset || micOption.preferBluetooth)
         localPttPressPlaybackJob?.cancel()
         localPttPressPlaybackJob = serviceScope.launch(Dispatchers.IO) {
             playLocalSignalPcm(localPttPressPcm, LOCAL_PLAYBACK_SAMPLE_RATE, 0.0)
@@ -1288,16 +1285,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         return true
     }
 
-    private fun frameHasVoice(frame: ShortArray, sampleCount: Int): Boolean {
-        val limit = sampleCount.coerceAtMost(frame.size)
-        for (i in 0 until limit) {
-            if (kotlin.math.abs(frame[i].toInt()) >= TX_VOICE_FRAME_THRESHOLD) {
-                return true
-            }
-        }
-        return false
-    }
-
     private fun submitTxPcmFrame(frame: ShortArray, sampleCount: Int, frameSamples: Int) {
         if (sampleCount <= 0) return
         if (sampleCount == frameSamples) {
@@ -1337,13 +1324,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 txFill += toCopy
                 srcPos += toCopy
                 if (txFill == frameSamples) {
-                    if (!txUplinkOpened.get()) {
-                        if (!frameHasVoice(txBuffer, frameSamples)) {
-                            txFill = 0
-                            break
-                        }
-                        if (!openTxUplinkIfNeeded()) return -1
-                    }
+                    if (!openTxUplinkIfNeeded()) return -1
                     currentSignalByte()
                     submitTxPcmFrame(txBuffer, frameSamples, frameSamples)
                     txFill = 0
@@ -1356,12 +1337,13 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private suspend fun runCaptureLoop() = withContext(Dispatchers.IO) {
         val frameSamples = currentFrameSamples()
+        val preferredOption = microphoneConfigStore.getSelectedOption()
+        ensureVoiceAudioProfile(useBluetoothHeadset || preferredOption.preferBluetooth)
         val minBuffer = AudioRecord.getMinBufferSize(
             currentCodecSampleRate(),
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
-        val preferredOption = microphoneConfigStore.getSelectedOption()
         val recorder = createRecorder(
             source = preferredOption.audioSource,
             frameSamples = frameSamples,
