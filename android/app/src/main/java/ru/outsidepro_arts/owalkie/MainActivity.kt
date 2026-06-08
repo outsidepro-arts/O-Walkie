@@ -279,7 +279,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        suppressTransientConnectionErrorTone = true
         sendActivityFocusState(true)
+        sendServiceAction(WalkieService.ACTION_SYNC_RELAY_STATUS)
         updateBatteryOptimizationUi()
         if (!receiverRegistered) {
             ContextCompat.registerReceiver(
@@ -751,6 +753,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestAppExit() {
+        WalkieService.markExitRequested()
         sendServiceAction(WalkieService.ACTION_EXIT_APP)
         finishAffinity()
     }

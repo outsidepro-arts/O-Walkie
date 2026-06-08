@@ -51,11 +51,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
@@ -83,6 +86,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         const val ACTION_SET_RX_VOLUME = "ru.outsidepro_arts.owalkie.action.SET_RX_VOLUME"
         const val ACTION_SET_BLUETOOTH_HEADSET_MODE = "ru.outsidepro_arts.owalkie.action.SET_BLUETOOTH_HEADSET_MODE"
         const val ACTION_SET_ACTIVITY_FOCUS = "ru.outsidepro_arts.owalkie.action.SET_ACTIVITY_FOCUS"
+        const val ACTION_SYNC_RELAY_STATUS = "ru.outsidepro_arts.owalkie.action.SYNC_RELAY_STATUS"
         const val ACTION_SYNC_PTT_MEDIA_SESSION = "ru.outsidepro_arts.owalkie.action.SYNC_PTT_MEDIA_SESSION"
         const val ACTION_HARDWARE_PTT_KEY = "ru.outsidepro_arts.owalkie.action.HARDWARE_PTT_KEY"
         const val ACTION_EXTERNAL_PTT_DOWN = ExternalControlReceiver.ACTION_PTT_DOWN
@@ -146,6 +150,18 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         private const val PTT_RELEASE_BURST_BLOCK_THRESHOLD = 3
         private const val CALL_LOCAL_GAIN_DB = -10.0
         private const val NATIVE_RELAY_SHUTDOWN_WAIT_MS = 3000
+        /** Full process exit: wait for all native sessions and teardown workers. */
+        private const val APP_EXIT_SHUTDOWN_WAIT_MS = 8000
+
+        private val exitRequested = AtomicBoolean(false)
+        private val isAppExiting = AtomicBoolean(false)
+        private val fullShutdownStarted = AtomicBoolean(false)
+
+        /** Call from UI before [ACTION_EXIT_APP] so [onTaskRemoved] does not restart the service. */
+        @JvmStatic
+        fun markExitRequested() {
+            exitRequested.set(true)
+        }
         private const val SIGNAL_POLL_INTERVAL_FOREGROUND_MS = 1000L
         private const val SIGNAL_POLL_INTERVAL_BACKGROUND_MS = 5000L
         private const val SIGNAL_REFRESH_INTERVAL_FOREGROUND_MS = 1000L
@@ -310,19 +326,41 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private fun relay(): NativeRelayBridge = nativeRelayLazy.value
 
-    private fun relayTransportConnected(): Boolean = relay().isConnected
+    private fun relayTransportConnected(): Boolean {
+        val bridge = relay()
+        if (bridge.isConnected) {
+            if (!bridge.isNativeSessionReady()) {
+                bridge.syncTransportStateFromNative()
+            }
+            return bridge.isConnected
+        }
+        if (bridge.isNativeSessionReady()) {
+            bridge.syncTransportStateFromNative()
+            bridge.resyncReadyFromNative()
+            return bridge.isConnected || bridge.isNativeSessionReady()
+        }
+        bridge.syncTransportStateFromNative()
+        return bridge.isConnected
+    }
 
-    private fun relayTransportConnecting(): Boolean = relay().isConnecting
+    private fun relayTransportConnecting(): Boolean {
+        if (relayTransportConnected()) {
+            return false
+        }
+        return relay().isConnecting ||
+            (desiredConnection.get() && !relayPausedForCellularCall.get())
+    }
 
     @Volatile
     private var nativeDisconnectJob: Job? = null
 
-    private suspend fun waitForNativeConnectIdle(maxWaitMs: Long = 12_000L) {
+    private suspend fun waitForNativeConnectIdle(maxWaitMs: Long = 12_000L): Boolean {
         var waitedMs = 0L
         while (nativeConnectInFlight.get() && waitedMs < maxWaitMs) {
             delay(50)
             waitedMs += 50
         }
+        return !nativeConnectInFlight.get()
     }
 
     private suspend fun tearDownNativeRelay(sessionId: Long) {
@@ -370,6 +408,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     override fun onCreate() {
         super.onCreate()
+        exitRequested.set(false)
+        isAppExiting.set(false)
+        fullShutdownStarted.set(false)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         rogerPatternStore = RogerPatternStore(this)
         callingPatternStore = CallingPatternStore(this)
@@ -405,6 +446,12 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (isAppExiting.get() || exitRequested.get()) {
+            if (intent?.action == ACTION_EXIT_APP) {
+                exitApp()
+            }
+            return START_NOT_STICKY
+        }
         if (intent?.action == Intent.ACTION_MEDIA_BUTTON) {
             if (shouldOfferMediaButtonCapture()) {
                 syncPttMediaSession()
@@ -452,6 +499,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             ACTION_SET_ACTIVITY_FOCUS -> updateActivityFocus(
                 intent.getBooleanExtra(EXTRA_ACTIVITY_FOCUSED, activityFocused),
             )
+            ACTION_SYNC_RELAY_STATUS -> publishRelayStatus()
             ACTION_SYNC_PTT_MEDIA_SESSION -> syncPttMediaSession()
             ACTION_EXTERNAL_PTT_DOWN -> if (externalControlStore.isEnabled()) onPttPress()
             ACTION_EXTERNAL_PTT_UP -> if (externalControlStore.isEnabled()) onPttRelease()
@@ -506,35 +554,22 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         pttMediaSessionController?.release()
         pttMediaSessionController = null
-        resetPttReleaseBurstGuard()
-        transmitting.set(false)
-        txJob?.cancel()
-        rogerJob?.cancel()
-        callSignalJob?.cancel()
-        stopTxCountdownFromServer()
-        localRogerPlaybackJob?.cancel()
-        localCallPlaybackJob?.cancel()
-        localPttPressPlaybackJob?.cancel()
-        releaseRxPlaybackTrack()
-        signalMonitorJob?.cancel()
-        stopClientReconnectLoop()
-        unregisterNetworkCallback()
-        unregisterTelephonyForRelayPause()
-        if (nativeRelayLazy.isInitialized()) {
-            Thread {
+        if (!fullShutdownStarted.get()) {
+            Thread({
                 runBlocking(Dispatchers.IO) {
-                    nativeRelayLazy.value.disconnectAllAndWait(NATIVE_RELAY_SHUTDOWN_WAIT_MS)
+                    performFullShutdown(logTag = "onDestroy")
                 }
-            }.start()
+            }, "owalkie-onDestroy").start()
         }
-        restoreMediaAudioProfile()
+        serviceScope.cancel()
+        super.onDestroy()
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        if (exitRequested.get() || isAppExiting.get()) return
         if (!desiredConnection.get()) return
         if (relayPausedForCellularCall.get()) return
         val restartIntent = Intent(applicationContext, WalkieService::class.java).apply {
@@ -643,12 +678,13 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 val nativeValid =
                     sessionId != 0L && OwalkieNative.nativeSessionValid(sessionId) != 0
                 if (nativeValid) {
-                    if (OwalkieNative.nativeSessionReady(sessionId) != 0) {
-                        if (bridge.resyncReadyFromNative()) {
+                    if (bridge.isNativeSessionReady()) {
+                        if (bridge.syncTransportStateFromNative() || bridge.resyncReadyFromNative()) {
+                            clearReconnectSettle()
                             backoffMs = CLIENT_RECONNECT_INTERVAL_INITIAL_MS
-                            delay(500)
-                            continue
                         }
+                        delay(500)
+                        continue
                     }
                     Log.i(TAG, "clientConnect session=$sessionId backoff=${backoffMs}ms")
                     tryNativeConnect(CLIENT_RECONNECT_TIMEOUT_MS)
@@ -1677,11 +1713,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             setPackage(packageName)
             putExtra(EXTRA_SIGNAL, signal.coerceIn(0, 255))
             putExtra(EXTRA_WS_CONNECTED, relayTransportConnected())
-            putExtra(
-                EXTRA_WS_CONNECTING,
-                relayTransportConnecting() ||
-                    (desiredConnection.get() && !relayTransportConnected() && !relayPausedForCellularCall.get()),
-            )
+            putExtra(EXTRA_WS_CONNECTING, relayTransportConnecting())
             putExtra(EXTRA_RELAY_PAUSED_PHONE_CALL, relayPausedForCellularCall.get())
             putExtra(EXTRA_UDP_READY, relay().isUdpReady)
             putExtra(EXTRA_PROTOCOL_ERROR, protocolError)
@@ -1701,9 +1733,20 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private fun syncRelayReadyFromNativeIfNeeded() {
         if (!desiredConnection.get() || relayPausedForCellularCall.get()) return
-        if (relay().resyncReadyFromNative()) {
+        if (relay().syncTransportStateFromNative() || relay().resyncReadyFromNative()) {
             broadcastStatus(currentSignalByte())
         }
+    }
+
+    private fun publishRelayStatus() {
+        if (desiredConnection.get() && !relayPausedForCellularCall.get()) {
+            bindProcessToActiveNetwork()
+            relay().syncTransportStateFromNative()
+            if (relayTransportConnected()) {
+                relay().punchNat()
+            }
+        }
+        broadcastStatus(currentSignalByte())
     }
 
     private fun setRepeaterMode(enabled: Boolean) {
@@ -1862,6 +1905,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         lastSignalRefreshAtNs.set(0L)
         enforceAudioRoutePolicy()
         applyRelayPowerProfile()
+        if (focused) {
+            publishRelayStatus()
+        }
         syncPttMediaSession()
     }
 
@@ -2120,27 +2166,117 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     private fun disconnectAndStopService() {
-        relayPausedForCellularCall.set(false)
-        serviceScope.launch(Dispatchers.IO) {
-            tearDownTransportAndAwait(clearUserIntent = true)
-            withContext(Dispatchers.Main) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
+        beginFullShutdown(logTag = "disconnectAndStop", markAppExit = false) {
+            finishServiceForeground()
+            stopSelf()
         }
     }
 
     private fun exitApp() {
-        transmitting.set(false)
-        txJob?.cancel()
-        rogerJob?.cancel()
-        callSignalJob?.cancel()
-        localRogerPlaybackJob?.cancel()
-        localCallPlaybackJob?.cancel()
-        cancelConnection()
-        restoreMediaAudioProfile()
+        beginFullShutdown(logTag = "exitApp", markAppExit = true) {
+            finishServiceForeground()
+            stopSelf()
+            Log.i(TAG, "exitApp: service stopped")
+        }
+    }
+
+    private fun beginFullShutdown(
+        logTag: String,
+        markAppExit: Boolean,
+        onComplete: () -> Unit,
+    ) {
+        if (!fullShutdownStarted.compareAndSet(false, true)) {
+            Log.i(TAG, "$logTag: shutdown already in progress")
+            return
+        }
+        if (markAppExit) {
+            exitRequested.set(true)
+            isAppExiting.set(true)
+        }
+        Log.i(TAG, "$logTag: full shutdown started")
+        Thread({
+            runBlocking(Dispatchers.IO) {
+                performFullShutdown(logTag)
+            }
+            mainHandler.post(onComplete)
+        }, "owalkie-shutdown-$logTag").start()
+    }
+
+    private fun finishServiceForeground() {
+        cancelServiceNotification()
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+    }
+
+    private fun cancelServiceNotification() {
+        runCatching {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            nm.cancel(NOTIFICATION_ID)
+        }
+    }
+
+    private suspend fun performFullShutdown(logTag: String) {
+        Log.i(TAG, "$logTag: performFullShutdown")
+        relayPausedForCellularCall.set(false)
+        desiredConnection.set(false)
+        reconnectSettleUntilMs.set(0L)
+
+        val reconnectJob = clientReconnectJob
+        stopClientReconnectLoop()
+        withTimeoutOrNull(3_000L) { reconnectJob?.join() }
+
+        signalMonitorJob?.cancel()
+        signalMonitorJob = null
+        nativeDisconnectJob?.cancel()
+        withTimeoutOrNull(12_000L) { nativeDisconnectJob?.join() }
+        nativeDisconnectJob = null
+
+        transmitting.set(false)
+        rogerStreaming.set(false)
+        callStreaming.set(false)
+        txJob?.cancel()
+        txJob = null
+        rogerJob?.cancel()
+        rogerJob = null
+        callSignalJob?.cancel()
+        callSignalJob = null
+        localRogerPlaybackJob?.cancel()
+        localRogerPlaybackJob = null
+        localCallPlaybackJob?.cancel()
+        localCallPlaybackJob = null
+        localPttPressPlaybackJob?.cancel()
+        localPttPressPlaybackJob = null
+
+        stopTxCountdownFromServer()
+        resetPttReleaseBurstGuard()
+        syncParallelCollisionVibration(false)
+        clearServerSessionControlState()
+
+        OwalkieNative.ensureLoaded()
+        OwalkieNative.nativeDisconnectAll()
+
+        if (!waitForNativeConnectIdle()) {
+            Log.w(TAG, "$logTag: native connect still in flight after wait; forcing teardown")
+            nativeConnectInFlight.set(false)
+        }
+
+        val detachedSessionId = prepareTransportTeardown(clearUserIntent = true)
+        tearDownNativeRelay(detachedSessionId)
+
+        OwalkieNative.nativeDisconnectAllAndWait(APP_EXIT_SHUTDOWN_WAIT_MS)
+
+        releaseRxPlaybackTrack()
+
+        withContext(Dispatchers.Main) {
+            pttMediaSessionController?.release()
+            pttMediaSessionController = null
+        }
+
+        unregisterNetworkCallback()
+        unregisterTelephonyForRelayPause()
+        restoreMediaAudioProfile()
+
+        serviceScope.cancel()
+        Log.i(TAG, "$logTag: performFullShutdown done")
     }
 
     private fun createRecorder(source: Int, frameSamples: Int, minBuffer: Int): AudioRecord? {
@@ -2281,12 +2417,10 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     override fun onRelayConnectionLost(reason: String?) {
-        val sessionId = relay().activeSessionId
-        if (sessionId != 0L && shouldDeferReconnectAttempt(sessionId)) {
-            if (relay().resyncReadyFromNative()) {
-                Log.i(TAG, "connectionLost ignored during settle reason=$reason")
-                return
-            }
+        if (relay().syncTransportStateFromNative() || relay().resyncReadyFromNative()) {
+            Log.i(TAG, "connectionLost recovered from native reason=$reason")
+            runOnMain { publishRelayStatus() }
+            return
         }
         runOnMain {
             clearServerSessionControlState()

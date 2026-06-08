@@ -201,16 +201,65 @@ class NativeRelayBridge(
         return OwalkieNative.nativePunchNat(id) == OwalkieNative.OK
     }
 
+    fun isNativeSessionReady(): Boolean {
+        val id = managedSessionId
+        return id != 0L &&
+            OwalkieNative.nativeSessionValid(id) != 0 &&
+            OwalkieNative.nativeSessionReady(id) != 0
+    }
+
+    /**
+     * Align Kotlin transport flags with owalkie-core (source of truth).
+     * RX/TX can keep working via JNI while [sessionReady] was cleared by a stale event.
+     */
+    fun syncTransportStateFromNative(): Boolean {
+        val id = managedSessionId
+        if (id == 0L || OwalkieNative.nativeSessionValid(id) == 0) {
+            return false
+        }
+        val nativeReady = OwalkieNative.nativeSessionReady(id) != 0
+        val kotlinReady = sessionReady.get()
+        if (nativeReady && !kotlinReady) {
+            return promoteReadyFromNative(id)
+        }
+        if (!nativeReady && kotlinReady) {
+            Log.w(TAG, "syncTransport: clearing stale kotlin ready session=$id")
+            sessionReady.set(false)
+            connecting.set(true)
+            udpReady.set(false)
+            return true
+        }
+        if (nativeReady) {
+            val sessionInfo = OwalkieNative.getSessionInfo(id) ?: return false
+            var changed = false
+            if (sessionInfo.udpReady != udpReady.get()) {
+                udpReady.set(sessionInfo.udpReady)
+                changed = true
+            }
+            if (sessionInfo.serverSessionId != 0L && sessionInfo.serverSessionId != serverSessionId) {
+                serverSessionId = sessionInfo.serverSessionId
+                host.applyWelcomeFromSessionInfo(sessionInfo)
+                changed = true
+            }
+            return changed
+        }
+        return false
+    }
+
     fun resyncReadyFromNative(): Boolean {
         val id = managedSessionId
         if (id == 0L || sessionReady.get()) {
             return false
         }
-        if (OwalkieNative.nativeSessionReady(id) == 0) {
+        if (!isNativeSessionReady()) {
             return false
         }
-        val sessionInfo = OwalkieNative.getSessionInfo(id)
-        Log.i(TAG, "resyncReadyFromNative session=$id hasInfo=${sessionInfo != null}")
+        return promoteReadyFromNative(id)
+    }
+
+    private fun promoteReadyFromNative(sessionId: Long): Boolean {
+        val sessionInfo = OwalkieNative.getSessionInfo(sessionId)
+        Log.i(TAG, "promoteReadyFromNative session=$sessionId hasInfo=${sessionInfo != null}")
         if (sessionInfo != null) {
             host.applyWelcomeFromSessionInfo(sessionInfo)
             notifyRelayConnected(sessionInfo.serverSessionId, sessionInfo.udpReady)
@@ -249,6 +298,11 @@ class NativeRelayBridge(
                 }
             }
             OwalkieNative.EV_CONNECTION_LOST -> {
+                if (isNativeSessionReady()) {
+                    Log.i(TAG, "CONNECTION_LOST ignored; native still ready info=$info")
+                    syncTransportStateFromNative()
+                    return
+                }
                 connecting.set(true)
                 sessionReady.set(false)
                 udpReady.set(false)
