@@ -338,6 +338,7 @@
             android:layout_width="190dp"
             android:layout_height="190dp"
             android:layout_gravity="center"
+            android:accessibilityLiveRegion="none"
             android:text="@string/ptt_hold" />
 
         <Button

@@ -149,6 +149,9 @@
     <string name="ptt_unavailable">PTT unavailable: no connection</string>
     <string name="ptt_busy_timeout_countdown">PTT in %1$d s</string>
     <string name="ptt_busy_timeout_countdown_accessibility">PTT unlocks in %1$d seconds</string>
+    <string name="ptt_busy_locked_accessibility">PTT is locked while the channel is busy.</string>
+    <string name="ptt_busy_locked_announcement">Locked</string>
+    <string name="ptt_busy_unlocked_announcement">Unlocked</string>
     <string name="status_idle">Status: Idle</string>
     <string name="status_tx">Status: Transmitting</string>
     <string name="status_calling">Status: Calling</string>

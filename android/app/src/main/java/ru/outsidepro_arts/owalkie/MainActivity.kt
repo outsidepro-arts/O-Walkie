@@ -20,6 +20,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.SeekBar
 import android.widget.PopupMenu
@@ -31,6 +32,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
 import androidx.core.content.ContextCompat
+import androidx.core.view.AccessibilityDelegateCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -56,6 +60,14 @@ class MainActivity : ComponentActivity() {
         private const val SCAN_QUERY_TIMEOUT_MS = 4_000L
     }
 
+    private enum class PttButtonAccessibilityBucket {
+        HOLD,
+        TOGGLE,
+        UNAVAILABLE,
+        LOCKED,
+        COUNTDOWN,
+    }
+
     private lateinit var binding: ActivityMainBinding
     private lateinit var serverStore: ServerStore
     private lateinit var pttHardwareKeyStore: PttHardwareKeyStore
@@ -79,6 +91,7 @@ class MainActivity : ComponentActivity() {
     private var busyModeEnabled = false
     private var serverPttLocked = false
     private var pttLockDisplaySec = 0
+    private var pttButtonAccessibilityBucket = PttButtonAccessibilityBucket.HOLD
     private var pttBurstPressBlocked = false
     private var rxActive = false
     private var parallelTxCollision = false
@@ -116,6 +129,7 @@ class MainActivity : ComponentActivity() {
             val prevProtocolIncompatible = protocolIncompatible
             protocolIncompatible = intent.getBooleanExtra(WalkieService.EXTRA_PROTOCOL_ERROR, false)
             busyModeEnabled = intent.getBooleanExtra(WalkieService.EXTRA_BUSY_MODE, false)
+            val prevServerPttLocked = serverPttLocked
             serverPttLocked = intent.getBooleanExtra(WalkieService.EXTRA_PTT_SERVER_LOCKED, false)
             pttLockDisplaySec = intent.getIntExtra(WalkieService.EXTRA_PTT_LOCK_DISPLAY_SEC, 0).coerceAtLeast(0)
             pttBurstPressBlocked = intent.getBooleanExtra(WalkieService.EXTRA_PTT_BURST_PRESS_BLOCKED, false)
@@ -159,6 +173,7 @@ class MainActivity : ComponentActivity() {
             updateStatusChips()
             updateConnectButtonLabel()
             updatePttAvailability()
+            maybeAnnouncePttBusyLockChange(prevServerPttLocked, serverPttLocked)
             syncKeepScreenOnWhileTransmitting()
         }
     }
@@ -227,6 +242,7 @@ class MainActivity : ComponentActivity() {
                 toggleTransmitUi()
             }
         }
+        configurePttButtonAccessibility()
 
         binding.callButton.setOnClickListener {
             if (!wsConnected) return@setOnClickListener
@@ -493,25 +509,83 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun configurePttButtonAccessibility() {
+        ViewCompat.setAccessibilityLiveRegion(binding.pttButton, ViewCompat.ACCESSIBILITY_LIVE_REGION_NONE)
+        ViewCompat.setAccessibilityDelegate(binding.pttButton, object : AccessibilityDelegateCompat() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                // Visible label changes often (countdown, toggle); AT reads our description on demand.
+                info.text = null
+                info.contentDescription = resolvePttButtonAccessibilityDescription()
+            }
+
+            override fun sendAccessibilityEvent(host: View, eventType: Int) {
+                // Countdown ticks update visible text only; suppress auto-announce while focused.
+                if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+                    resolvePttButtonAccessibilityBucket() == PttButtonAccessibilityBucket.COUNTDOWN) {
+                    return
+                }
+                super.sendAccessibilityEvent(host, eventType)
+            }
+        })
+        syncPttButtonAccessibilityDescription()
+    }
+
+    private fun resolvePttButtonAccessibilityBucket(): PttButtonAccessibilityBucket {
+        val blockedByServerPtt = serverPttLocked && !transmitting
+        return when {
+            !binding.pttButton.isEnabled && blockedByServerPtt && pttLockDisplaySec > 0 ->
+                PttButtonAccessibilityBucket.COUNTDOWN
+            !binding.pttButton.isEnabled && blockedByServerPtt ->
+                PttButtonAccessibilityBucket.LOCKED
+            !binding.pttButton.isEnabled ->
+                PttButtonAccessibilityBucket.UNAVAILABLE
+            pttToggleModeEnabled ->
+                PttButtonAccessibilityBucket.TOGGLE
+            else ->
+                PttButtonAccessibilityBucket.HOLD
+        }
+    }
+
+    private fun resolvePttButtonAccessibilityDescription(): CharSequence {
+        return when (resolvePttButtonAccessibilityBucket()) {
+            PttButtonAccessibilityBucket.COUNTDOWN ->
+                getString(R.string.ptt_busy_timeout_countdown_accessibility, pttLockDisplaySec)
+            PttButtonAccessibilityBucket.LOCKED ->
+                getString(R.string.ptt_busy_locked_accessibility)
+            PttButtonAccessibilityBucket.UNAVAILABLE ->
+                getString(R.string.ptt_unavailable)
+            PttButtonAccessibilityBucket.TOGGLE ->
+                getString(R.string.ptt_toggle_accessibility_hint)
+            PttButtonAccessibilityBucket.HOLD ->
+                getString(R.string.ptt_hold_accessibility_hint)
+        }
+    }
+
+    private fun syncPttButtonAccessibilityDescription() {
+        val bucket = resolvePttButtonAccessibilityBucket()
+        if (bucket == pttButtonAccessibilityBucket) return
+        pttButtonAccessibilityBucket = bucket
+        // COUNTDOWN seconds are resolved in the delegate; avoid updating the view property every tick.
+        if (bucket != PttButtonAccessibilityBucket.COUNTDOWN) {
+            binding.pttButton.contentDescription = resolvePttButtonAccessibilityDescription()
+        }
+    }
+
     private fun updatePttLabel() {
         val blockedByServerPtt = serverPttLocked && !transmitting
         if (!binding.pttButton.isEnabled) {
             if (blockedByServerPtt && pttLockDisplaySec > 0) {
                 binding.pttButton.text = getString(R.string.ptt_busy_timeout_countdown, pttLockDisplaySec)
-                binding.pttButton.contentDescription = getString(R.string.ptt_busy_timeout_countdown_accessibility, pttLockDisplaySec)
             } else {
                 binding.pttButton.text = getString(R.string.ptt_unavailable)
-                binding.pttButton.contentDescription = getString(R.string.ptt_unavailable)
             }
-            return
-        }
-        if (pttToggleModeEnabled) {
+        } else if (pttToggleModeEnabled) {
             binding.pttButton.text = getString(if (transmitting) R.string.ptt_stop_talking else R.string.ptt_start_talking)
-            binding.pttButton.contentDescription = getString(R.string.ptt_toggle_accessibility_hint)
         } else {
             binding.pttButton.text = getString(R.string.ptt_hold)
-            binding.pttButton.contentDescription = getString(R.string.ptt_hold_accessibility_hint)
         }
+        syncPttButtonAccessibilityDescription()
     }
 
     private fun refreshPttToggleModeSetting() {
@@ -571,6 +645,17 @@ class MainActivity : ComponentActivity() {
             putExtra(WalkieService.EXTRA_RX_VOLUME_PERCENT, percent)
         }
         startService(intent)
+    }
+
+    private fun maybeAnnouncePttBusyLockChange(wasLocked: Boolean, isLocked: Boolean) {
+        if (wasLocked == isLocked || !wsConnected) return
+        if (!binding.pttButton.isAccessibilityFocused) return
+        val message = if (isLocked) {
+            getString(R.string.ptt_busy_locked_announcement)
+        } else {
+            getString(R.string.ptt_busy_unlocked_announcement)
+        }
+        binding.pttButton.announceForAccessibility(message)
     }
 
     private fun showConfirmation(message: String, targetView: android.view.View = binding.root) {
