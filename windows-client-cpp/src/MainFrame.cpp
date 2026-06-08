@@ -12,13 +12,20 @@
 #include <nlohmann/json.hpp>
 
 #include <wx/button.h>
+#include <wx/bitmap.h>
+#include <wx/brush.h>
 #include <wx/checkbox.h>
 #include <wx/clipbrd.h>
+#include <wx/colour.h>
 #include <wx/choice.h>
+#include <wx/dcmemory.h>
 #include <wx/filename.h>
 #include <wx/gauge.h>
 #include <wx/intl.h>
+#include <wx/log.h>
+#include <wx/menu.h>
 #include <wx/slider.h>
+#include <wx/taskbar.h>
 #include <wx/weakref.h>
 #include <wx/dialog.h>
 #include <wx/listbox.h>
@@ -53,6 +60,23 @@ static bool PatternNameAsciiIEq(const std::string& a, const std::string& b) {
         }
     }
     return true;
+}
+
+static wxIcon CreateDefaultApplicationIcon() {
+    wxBitmap bmp(32, 32);
+    {
+        wxMemoryDC dc(bmp);
+        dc.SetBackground(wxBrush(wxColour(232, 108, 0)));
+        dc.Clear();
+        dc.SetPen(wxPen(*wxWHITE, 2));
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+        dc.DrawRoundedRectangle(6, 8, 20, 14, 3);
+        dc.SetBrush(*wxWHITE);
+        dc.DrawCircle(16, 24, 4);
+    }
+    wxIcon icon;
+    icon.CopyFromBitmap(bmp);
+    return icon;
 }
 
 static std::string OwTranslatePatternDisplayName(const std::string& name) {
@@ -1205,6 +1229,7 @@ public:
         int globalPttVKey,
         int globalPttMods,
         bool showMicLevelIndicator,
+        bool minimizeToTrayOnClose,
         bool pttToggleMode,
         const std::string& uiLanguage,
         double vibrationImitationHz,
@@ -1226,7 +1251,13 @@ public:
             langChoice_->Append(_("English"));
             langChoice_->Append(_("Russian"));
             langChoice_->SetSelection(uiLanguage == "ru" ? 1 : 0);
-            sz->Add(langChoice_, 0, wxEXPAND);
+            sz->Add(langChoice_, 0, wxEXPAND | wxBOTTOM, 10);
+            minimizeToTrayCheck_ = new wxCheckBox(
+                box,
+                wxID_ANY,
+                _("Minimize to system tray when closing the window"));
+            minimizeToTrayCheck_->SetValue(minimizeToTrayOnClose);
+            sz->Add(minimizeToTrayCheck_, 0, wxEXPAND);
             root->Add(sz, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP | wxBOTTOM, 10);
         }
 
@@ -1533,6 +1564,7 @@ public:
     int SelectedGlobalPttVKey() const { return selectedPttVKey_; }
     int SelectedGlobalPttMods() const { return selectedPttMods_; }
     bool ShowMicLevelIndicator() const { return micLevelCheck_ && micLevelCheck_->GetValue(); }
+    bool MinimizeToTrayOnClose() const { return minimizeToTrayCheck_ && minimizeToTrayCheck_->GetValue(); }
     bool PttToggleMode() const { return pttToggleCheck_ && pttToggleCheck_->GetValue(); }
     double SelectedVibrationImitationHz() const { return txCollHzSpin_ ? txCollHzSpin_->GetValue() : 100.0; }
     int SelectedVibrationImitationVolumePercent() const { return txCollVolSlider_ ? txCollVolSlider_->GetValue() : 40; }
@@ -1657,6 +1689,7 @@ private:
     wxButton* pttCaptureBtn_ = nullptr;
     wxButton* pttClearBtn_ = nullptr;
     wxChoice* langChoice_ = nullptr;
+    wxCheckBox* minimizeToTrayCheck_ = nullptr;
     wxCheckBox* pttToggleCheck_ = nullptr;
     wxCheckBox* micLevelCheck_ = nullptr;
     wxSpinCtrlDouble* txCollHzSpin_ = nullptr;
@@ -1686,6 +1719,27 @@ wxString ToWxStatusText(const std::string& msg) {
 
 } // namespace
 
+enum {
+    ID_TRAY_MENU_SHOW = 6001,
+    ID_TRAY_MENU_EXIT = 6002,
+};
+
+class OwalkieTaskBarIcon final : public wxTaskBarIcon {
+public:
+    explicit OwalkieTaskBarIcon(MainFrame* frame) : frame_(frame) {}
+
+    wxMenu* CreatePopupMenu() override {
+        auto* menu = new wxMenu;
+        menu->Append(ID_TRAY_MENU_SHOW, _("Show O-Walkie"));
+        menu->AppendSeparator();
+        menu->Append(ID_TRAY_MENU_EXIT, _("Exit"));
+        return menu;
+    }
+
+private:
+    wxWeakRef<MainFrame> frame_;
+};
+
 MainFrame::MainFrame(const std::string& connectUri)
     : wxFrame(
           nullptr,
@@ -1698,6 +1752,10 @@ MainFrame::MainFrame(const std::string& connectUri)
     BuildUi();
     CreateStatusBar(1);
     SetStatusBarPane(0);
+    const wxIcon appIcon = LoadApplicationIcon();
+    if (appIcon.IsOk()) {
+        SetIcon(appIcon);
+    }
     SetStatus("Disconnected");
     BindUi();
 
@@ -1752,6 +1810,7 @@ MainFrame::MainFrame(const std::string& connectUri)
             weakSelf->ResetPttReleaseBurstGuard();
             weakSelf->RefreshPttUi();
             weakSelf->UpdateProfileControlsEnabled();
+            weakSelf->UpdateTaskBarStatus();
         });
     });
     relay_->SetWelcomeCallback([weakSelf](const WelcomeConfig& cfg) {
@@ -1904,6 +1963,7 @@ MainFrame::MainFrame(const std::string& connectUri)
 }
 
 MainFrame::~MainFrame() {
+    RemoveTaskBarIcon();
     userWantsSession_ = false;
     if (audio_) {
         audio_->PrepareForExit();
@@ -2365,6 +2425,7 @@ void MainFrame::LoadAllSettings() {
                 globalPttMods_ = j.value("ptt_hotkey_mods", 0);
                 pttToggleMode_ = j.value("ptt_toggle_mode", false);
                 showMicLevelIndicator_ = j.value("show_mic_level_indicator", false);
+                minimizeToTrayOnClose_ = j.value("minimize_to_tray_on_close", false);
                 rxVolumePercent_ = j.value("rx_volume_percent", 100);
                 if (j.contains("vibration_imitation_hz")) {
                     vibrationImitationHz_ = j.value("vibration_imitation_hz", 100.0);
@@ -2430,6 +2491,7 @@ void MainFrame::SaveAudioSettings() {
     j["ptt_hotkey_mods"] = globalPttMods_;
     j["ptt_toggle_mode"] = pttToggleMode_;
     j["show_mic_level_indicator"] = showMicLevelIndicator_;
+    j["minimize_to_tray_on_close"] = minimizeToTrayOnClose_;
     j["rx_volume_percent"] = std::clamp(rxVolumePercent_, 0, 200);
     j["vibration_imitation_hz"] = vibrationImitationHz_;
     j["vibration_imitation_volume_percent"] = std::clamp(vibrationImitationVolumePercent_, 0, 100);
@@ -2758,10 +2820,136 @@ void MainFrame::BindUi() {
         audio_->PlayRxVolumePreviewSignal(safe);
     });
     repeaterCheck_->Bind(wxEVT_CHECKBOX, &MainFrame::OnRepeaterToggled, this);
+    Bind(wxEVT_CLOSE_WINDOW, &MainFrame::OnCloseWindow, this);
+}
+
+void MainFrame::OnCloseWindow(wxCloseEvent& event) {
+    if (!applicationExitRequested_ && minimizeToTrayOnClose_ && event.CanVeto()) {
+        event.Veto();
+        Hide();
+        EnsureTaskBarIcon();
+        UpdateTaskBarStatus();
+        return;
+    }
+    RemoveTaskBarIcon();
+    event.Skip();
+}
+
+void MainFrame::ShowFromTray() {
+    Show(true);
+    if (IsIconized()) {
+        Iconize(false);
+    }
+    Raise();
+    SetFocus();
+}
+
+void MainFrame::RequestApplicationExit() {
+    if (applicationExitRequested_) {
+        return;
+    }
+    applicationExitRequested_ = true;
+    // Defer teardown: destroying wxTaskBarIcon inside its popup menu handler triggers
+    // wxWidgets "pushed event handlers must have been removed" assert.
+    CallAfter([this] {
+        RemoveTaskBarIcon();
+        Close(true);
+    });
+}
+
+void MainFrame::OnTrayMenu(wxCommandEvent& event) {
+    switch (event.GetId()) {
+        case ID_TRAY_MENU_SHOW:
+            ShowFromTray();
+            break;
+        case ID_TRAY_MENU_EXIT:
+            RequestApplicationExit();
+            break;
+        default:
+            break;
+    }
+}
+
+void MainFrame::OnTrayDoubleClick(wxTaskBarIconEvent&) {
+    ShowFromTray();
+}
+
+void MainFrame::EnsureTaskBarIcon() {
+    if (taskBarIcon_) {
+        return;
+    }
+    taskBarIcon_ = std::make_unique<OwalkieTaskBarIcon>(this);
+    taskBarIcon_->Bind(wxEVT_MENU, &MainFrame::OnTrayMenu, this);
+    taskBarIcon_->Bind(wxEVT_TASKBAR_LEFT_DCLICK, &MainFrame::OnTrayDoubleClick, this);
+    const wxIcon icon = LoadApplicationIcon();
+    if (!taskBarIcon_->SetIcon(icon, BuildTaskBarTooltip())) {
+        taskBarIcon_->Unbind(wxEVT_MENU, &MainFrame::OnTrayMenu, this);
+        taskBarIcon_->Unbind(wxEVT_TASKBAR_LEFT_DCLICK, &MainFrame::OnTrayDoubleClick, this);
+        taskBarIcon_.reset();
+    }
+}
+
+void MainFrame::RemoveTaskBarIcon() {
+    if (!taskBarIcon_) {
+        return;
+    }
+    taskBarIcon_->Unbind(wxEVT_MENU, &MainFrame::OnTrayMenu, this);
+    taskBarIcon_->Unbind(wxEVT_TASKBAR_LEFT_DCLICK, &MainFrame::OnTrayDoubleClick, this);
+    taskBarIcon_->RemoveIcon();
+    taskBarIcon_.reset();
+}
+
+wxIcon MainFrame::LoadApplicationIcon() const {
+    const wxString exeDir = wxFileName(wxStandardPaths::Get().GetExecutablePath()).GetPath();
+    const wxString iconPath = wxFileName(exeDir, wxT("owalkie.ico")).GetFullPath();
+    if (wxFileExists(iconPath)) {
+        wxLogNull suppressErrors;
+        wxIcon icon;
+        if (icon.LoadFile(iconPath, wxBITMAP_TYPE_ICO) && icon.IsOk()) {
+            return icon;
+        }
+    }
+    return CreateDefaultApplicationIcon();
+}
+
+wxString MainFrame::BuildTrayConnectionStatus() const {
+    if (connected_) {
+        if (audio_ && audio_->IsTransmitting()) {
+            return _("Transmitting");
+        }
+        if (audio_ && audio_->IsSignalStreaming()) {
+            return _("Sending call signal...");
+        }
+        if (serverRxBroadcastActive_) {
+            return _("Receiving");
+        }
+        return _("Connected");
+    }
+    if (userWantsSession_) {
+        return _("Connecting...");
+    }
+    return _("Disconnected");
+}
+
+wxString MainFrame::BuildTaskBarTooltip() const {
+    wxString tooltip = _("O-Walkie Desktop");
+    tooltip += "\n" + BuildTrayConnectionStatus();
+    if (connected_ && activeProfileIndex_ >= 0 && activeProfileIndex_ < static_cast<int>(profiles_.size())) {
+        tooltip += "\n" + wxString::FromUTF8(profiles_[static_cast<size_t>(activeProfileIndex_)].name);
+    }
+    return tooltip;
+}
+
+void MainFrame::UpdateTaskBarStatus() {
+    if (!taskBarIcon_) {
+        return;
+    }
+    taskBarIcon_->SetIcon(LoadApplicationIcon(), BuildTaskBarTooltip());
 }
 
 void MainFrame::SetStatus(const wxString& status) {
     SetStatusText(HumanizeStatus(status), 0);
+    UpdateTaskBarStatus();
 }
 
 wxString MainFrame::HumanizeStatus(const wxString& status) const {
@@ -3272,6 +3460,7 @@ void MainFrame::RefreshPttUi() {
     if (callBtn_) {
         callBtn_->Enable(relayReady && !serverPttLocked_ && !audio_->IsTransmitting() && !audio_->IsSignalStreaming());
     }
+    UpdateTaskBarStatus();
 }
 
 void MainFrame::ResetPttReleaseBurstGuard() {
@@ -3470,6 +3659,7 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
         globalPttVKey_,
         globalPttMods_,
         showMicLevelIndicator_,
+        minimizeToTrayOnClose_,
         pttToggleMode_,
         uiLanguageCode_,
         vibrationImitationHz_,
@@ -3484,6 +3674,7 @@ void MainFrame::OnSettingsClicked(wxCommandEvent&) {
     globalPttVKey_ = dlg.SelectedGlobalPttVKey();
     globalPttMods_ = dlg.SelectedGlobalPttMods();
     showMicLevelIndicator_ = dlg.ShowMicLevelIndicator();
+    minimizeToTrayOnClose_ = dlg.MinimizeToTrayOnClose();
     vibrationImitationHz_ = std::clamp(dlg.SelectedVibrationImitationHz(), 30.0, 500.0);
     vibrationImitationVolumePercent_ = std::clamp(dlg.SelectedVibrationImitationVolumePercent(), 0, 100);
     uiLanguageCode_ = dlg.SelectedUiLanguage();

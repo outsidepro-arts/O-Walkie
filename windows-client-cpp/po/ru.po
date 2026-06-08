@@ -131,6 +131,18 @@ msgstr "Настройки"
 msgid "General"
 msgstr "Общее"
 
+msgid "Minimize to system tray when closing the window"
+msgstr "Сворачивать программу в системный трей при закрытии"
+
+msgid "Show O-Walkie"
+msgstr "Показать O-Walkie"
+
+msgid "Exit"
+msgstr "Выход"
+
+msgid "O-Walkie Desktop"
+msgstr "O-Walkie Desktop"
+
 msgid "Audio"
 msgstr "Аудио"
 

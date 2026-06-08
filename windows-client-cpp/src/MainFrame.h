@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <wx/frame.h>
+#include <wx/taskbar.h>
 #include <wx/timer.h>
 
 #include "AudioEngine.h"
@@ -24,6 +25,8 @@ class wxCheckBox;
 class wxSlider;
 class wxDialog;
 class wxScrollEvent;
+
+class OwalkieTaskBarIcon;
 
 struct ServerProfile {
     std::string name{"Default"};
@@ -51,11 +54,23 @@ public:
     static bool IsBuiltInRogerPatternId(const std::string& id);
     static bool IsBuiltInCallPatternId(const std::string& id);
 
+    void ShowFromTray();
+    void RequestApplicationExit();
+
 private:
     void BuildUi();
     void BindUi();
     void SetStatus(const wxString& status);
     wxString HumanizeStatus(const wxString& status) const;
+    void OnCloseWindow(wxCloseEvent& event);
+    void EnsureTaskBarIcon();
+    void RemoveTaskBarIcon();
+    void UpdateTaskBarStatus();
+    wxString BuildTaskBarTooltip() const;
+    wxString BuildTrayConnectionStatus() const;
+    wxIcon LoadApplicationIcon() const;
+    void OnTrayMenu(wxCommandEvent& event);
+    void OnTrayDoubleClick(wxTaskBarIconEvent& event);
     void OnConnectClicked(wxCommandEvent& event);
     void OnPttDown(wxMouseEvent& event);
     void OnPttUp(wxMouseEvent& event);
@@ -149,6 +164,7 @@ private:
 
     std::unique_ptr<RelayClient> relay_;
     std::unique_ptr<AudioEngine> audio_;
+    std::unique_ptr<OwalkieTaskBarIcon> taskBarIcon_;
     bool connected_ = false;
     bool userWantsSession_ = false;
     std::vector<NamedAudioDevice> inputDevices_;
@@ -163,6 +179,8 @@ private:
     int globalPttMods_ = 0;
     bool pttToggleMode_ = false;
     bool showMicLevelIndicator_ = false;
+    bool minimizeToTrayOnClose_ = false;
+    bool applicationExitRequested_ = false;
     int rxVolumePercent_ = 100;
     double vibrationImitationHz_ = 100.0;
     int vibrationImitationVolumePercent_ = 40;
