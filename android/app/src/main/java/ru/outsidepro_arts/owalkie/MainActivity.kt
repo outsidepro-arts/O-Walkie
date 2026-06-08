@@ -15,6 +15,9 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -58,6 +61,12 @@ class MainActivity : ComponentActivity() {
         const val ACTION_OPEN_BATTERY_SETTINGS = "ru.outsidepro_arts.owalkie.action.OPEN_BATTERY_SETTINGS"
         private const val SCAN_INTERVAL_MS = 10_000L
         private const val SCAN_QUERY_TIMEOUT_MS = 4_000L
+        private const val SCAN_ACTIVITY_FOUND_VIBRATION_MS = 250L
+    }
+
+    private enum class ScanMode {
+        ONE_SHOT,
+        CONTINUOUS,
     }
 
     private enum class PttButtonAccessibilityBucket {
@@ -109,6 +118,9 @@ class MainActivity : ComponentActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var rxVolumePreviewRunnable: Runnable? = null
     private var scanJob: Job? = null
+    private var scanMode: ScanMode? = null
+    private var suppressScanToggleCallback = false
+    private var pendingScanModeSelection = false
     private val scanScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val statusReceiver = object : BroadcastReceiver() {
@@ -280,9 +292,17 @@ class MainActivity : ComponentActivity() {
         binding.compactConnectButton.setOnClickListener {
             handleConnectAction()
         }
-        binding.scanButton.setOnClickListener {
-            toggleScanning()
+        binding.scanButton.setOnCheckedChangeListener { _, isChecked ->
+            if (suppressScanToggleCallback) return@setOnCheckedChangeListener
+            uiSignalPlayer.playSwitch()
+            if (isChecked) {
+                setScanButtonChecked(false)
+                showScanModeMenu()
+            } else {
+                stopScanning(announce = true)
+            }
         }
+        configureScanButtonAccessibility()
         binding.moreButton.setOnClickListener {
             showMoreMenu()
         }
@@ -293,7 +313,7 @@ class MainActivity : ComponentActivity() {
         updateConnectButtonLabel()
         updatePttAvailability()
         updateStatusChips()
-        updateScanButtonLabel()
+        updateScanButtonState()
     }
 
     override fun onStart() {
@@ -1084,21 +1104,110 @@ class MainActivity : ComponentActivity() {
         binding.compactConnectButton.text = label
     }
 
-    private fun toggleScanning() {
-        uiSignalPlayer.playSwitch()
-        if (scanJob?.isActive == true) {
-            stopScanning(announce = true)
-        } else {
-            startScanning()
+    private fun configureScanButtonAccessibility() {
+        ViewCompat.setAccessibilityDelegate(binding.scanButton, object : AccessibilityDelegateCompat() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                // Visible label changes with scan state; AT reads a stable name and on/off state.
+                info.text = null
+                info.contentDescription = getString(R.string.scan_toggle)
+                info.stateDescription = resolveScanButtonAccessibilityStateDescription()
+                info.isCheckable = true
+                info.isChecked = binding.scanButton.isChecked
+            }
+        })
+        syncScanButtonAccessibility()
+    }
+
+    private fun resolveScanButtonAccessibilityStateDescription(): CharSequence {
+        return getString(
+            if (binding.scanButton.isChecked) {
+                R.string.scan_accessibility_state_on
+            } else {
+                R.string.scan_accessibility_state_off
+            },
+        )
+    }
+
+    private fun syncScanButtonAccessibility() {
+        val state = resolveScanButtonAccessibilityStateDescription()
+        binding.scanButton.contentDescription = getString(R.string.scan_toggle)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            binding.scanButton.stateDescription = state
         }
     }
 
-    private fun startScanning() {
-        if (scanJob?.isActive == true) return
+    private fun showScanModeMenu() {
         if (servers.isEmpty()) return
+        pendingScanModeSelection = true
+        val popup = PopupMenu(this, binding.scanButton)
+        popup.menuInflater.inflate(R.menu.scan_mode_menu, popup.menu)
+        popup.setOnMenuItemClickListener { item ->
+            pendingScanModeSelection = false
+            when (item.itemId) {
+                R.id.scan_mode_one_shot -> {
+                    startScanning(ScanMode.ONE_SHOT)
+                    true
+                }
+                R.id.scan_mode_continuous -> {
+                    startScanning(ScanMode.CONTINUOUS)
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.setOnDismissListener {
+            if (pendingScanModeSelection) {
+                pendingScanModeSelection = false
+                setScanButtonChecked(false)
+            }
+        }
+        popup.show()
+    }
+
+    private fun setScanButtonChecked(checked: Boolean) {
+        suppressScanToggleCallback = true
+        binding.scanButton.isChecked = checked
+        suppressScanToggleCallback = false
+        syncScanButtonAccessibility()
+    }
+
+    private fun hasCurrentConnectionActivity(): Boolean = transmitting || rxActive
+
+    private fun playScanActivityFoundVibration() {
+        runCatching {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (getSystemService(VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(VIBRATOR_SERVICE) as? Vibrator
+            } ?: return
+            if (!vibrator.hasVibrator()) return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(
+                    VibrationEffect.createOneShot(
+                        SCAN_ACTIVITY_FOUND_VIBRATION_MS,
+                        VibrationEffect.DEFAULT_AMPLITUDE,
+                    ),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(SCAN_ACTIVITY_FOUND_VIBRATION_MS)
+            }
+        }
+    }
+
+    private fun startScanning(mode: ScanMode) {
+        if (scanJob?.isActive == true) return
+        if (servers.isEmpty()) {
+            setScanButtonChecked(false)
+            return
+        }
+        scanMode = mode
+        setScanButtonChecked(true)
         scanJob = scanScope.launch {
             showConfirmation(getString(R.string.scan_started_announcement))
-            updateScanButtonLabel()
+            updateScanButtonState()
             while (isActive) {
                 if (servers.isEmpty()) {
                     delay(SCAN_INTERVAL_MS)
@@ -1123,34 +1232,49 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 if (foundProfile != null) {
+                    val profile = foundProfile
+                    if (hasCurrentConnectionActivity()) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.scan_found_activity_toast, profile.name),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        playScanActivityFoundVibration()
+                        delay(SCAN_INTERVAL_MS)
+                        continue
+                    }
                     val idx = foundIndex.coerceAtLeast(0).coerceAtMost((servers.size - 1).coerceAtLeast(0))
                     if (servers.isNotEmpty()) {
                         applySelectedServerIndex(idx, announce = true)
                     }
-                    val profile = foundProfile
                     showConfirmation(getString(R.string.scan_found_server_announcement, profile.name))
                     connectToProfileFromScan(profile)
-                    stopScanning(announce = false)
-                    break
+                    if (scanMode == ScanMode.ONE_SHOT) {
+                        stopScanning(announce = false)
+                        break
+                    }
+                    delay(SCAN_INTERVAL_MS)
+                    continue
                 }
                 delay(SCAN_INTERVAL_MS)
             }
-            updateScanButtonLabel()
+            updateScanButtonState()
         }
     }
 
     private fun stopScanning(announce: Boolean) {
         scanJob?.cancel()
         scanJob = null
-        updateScanButtonLabel()
+        scanMode = null
+        setScanButtonChecked(false)
+        updateScanButtonState()
         if (announce) {
             showConfirmation(getString(R.string.scan_stopped_announcement))
         }
     }
 
-    private fun updateScanButtonLabel() {
-        val labelRes = if (scanJob?.isActive == true) R.string.scan_stop else R.string.scan_start
-        binding.scanButton.text = getString(labelRes)
+    private fun updateScanButtonState() {
+        setScanButtonChecked(scanJob?.isActive == true)
         updateStatusChips()
     }
 

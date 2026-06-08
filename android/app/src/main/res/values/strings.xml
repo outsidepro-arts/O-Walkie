@@ -122,11 +122,15 @@
     <string name="saved_server_announcement">Server saved</string>
     <string name="deleted_server_announcement">Server deleted</string>
     <string name="connected_server_announcement">Connecting to selected server</string>
-    <string name="scan_start">Scan</string>
-    <string name="scan_stop">Stop scan</string>
+    <string name="scan_toggle">Scan</string>
+    <string name="scan_accessibility_state_on">On</string>
+    <string name="scan_accessibility_state_off">Off</string>
+    <string name="scan_mode_one_shot">One-time</string>
+    <string name="scan_mode_continuous">Continuous</string>
     <string name="scan_started_announcement">Scanning started</string>
     <string name="scan_stopped_announcement">Scanning stopped</string>
     <string name="scan_found_server_announcement">Activity found on %1$s, connecting</string>
+    <string name="scan_found_activity_toast">Activity detected on %1$s</string>
     <string name="share_connection">Share connection</string>
     <string name="import_connection_from_clipboard">Import from clipboard</string>
     <string name="connection_link_copied">Connection link copied</string>

@@ -122,11 +122,15 @@
     <string name="saved_server_announcement">Сервер сохранен</string>
     <string name="deleted_server_announcement">Сервер удален</string>
     <string name="connected_server_announcement">Подключение к выбранному серверу</string>
-    <string name="scan_start">Сканирование</string>
-    <string name="scan_stop">Остановить сканирование</string>
+    <string name="scan_toggle">Сканирование</string>
+    <string name="scan_accessibility_state_on">Включено</string>
+    <string name="scan_accessibility_state_off">Выключено</string>
+    <string name="scan_mode_one_shot">Одноразовое</string>
+    <string name="scan_mode_continuous">Постоянное</string>
     <string name="scan_started_announcement">Сканирование запущено</string>
     <string name="scan_stopped_announcement">Сканирование остановлено</string>
     <string name="scan_found_server_announcement">Обнаружена активность на %1$s, выполняется подключение</string>
+    <string name="scan_found_activity_toast">Обнаружена активность на «%1$s»</string>
     <string name="share_connection">Поделиться подключением</string>
     <string name="import_connection_from_clipboard">Импорт подключения из буфера</string>
     <string name="connection_link_copied">Ссылка подключения скопирована</string>
