@@ -65,6 +65,7 @@ Client -> server:
 
 - first client message after `welcome` must bind channel:
   - `{"type":"join","channel":"teamA"}`
+- **activity probe** (optional first message instead of `join`, or any later message): `{"type":"has_activity","channel":"teamA"}` → server replies `{"type":"has_activity","channel":"teamA","active":true|false}` and closes the WebSocket without joining a session. Used by Android channel scan via `owalkie_check_channel_activity`.
 - runtime channel switch is disabled; reconnect with new channel instead
 - `{"type":"udp_hello","udpPort":7001}`
 - `{"type":"repeater_mode","enabled":true}`

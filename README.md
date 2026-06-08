@@ -31,9 +31,20 @@ This design gives a more "alive" radio feeling for communication.
 
 ## Project components
 
-- `backend/` - Go relay server (`WebSocket` control plane + `UDP` audio plane).
-- `android/` - Android client (release target).
-- `windows-client/` - Windows WPF client (working prototype for testing, not release target yet).
+- `backend/` — Go relay server (`WebSocket` control plane + `UDP` audio plane).
+- `owalkie-core/` — shared C/C++ relay library (managed sessions, Opus, activity probe, Roger/Call PCM).
+- `android/` — Android client (release target); native relay via JNI → `owalkie-core`.
+- `windows-client-cpp/` — Windows desktop client (`wxWidgets` + miniaudio); working prototype, not a release target yet.
+
+### Client highlights
+
+| Area | Android | Windows (`windows-client-cpp`) |
+|------|---------|--------------------------------|
+| Transport | `owalkie-core` JNI (always on) | `owalkie-core` managed session |
+| Channel scan | Toggle with **one-time** / **continuous** modes; native `has_activity` probe; skips current profile while connected; switches only when idle (no RX/TX), otherwise toast + vibration | — |
+| Busy mode PTT | Server `ptt_lock` / `ptt_unlock`; decorative countdown; TalkBack: countdown on focus, lock/unlock announcements when focused | Server-driven lock; PTT countdown label; unlock follows core state |
+| Background | Foreground service; optional **keep microphone ready** for faster PTT | Optional **minimize to system tray** on close (settings); tray menu Show / Exit |
+| Accessibility | PTT and scan toggle expose stable names and on/off state to TalkBack | Tab order and screen-reader names on main controls |
 
 ## What we publish
 
@@ -42,7 +53,7 @@ Public release artifacts currently include:
 - relay server build (`backend`)
 - Android client build (`android`)
 
-Windows client is available in repository as a prototype and test client.
+Windows client (`windows-client-cpp`) is available in the repository as a prototype and test client.
 
 ## Quick start
 

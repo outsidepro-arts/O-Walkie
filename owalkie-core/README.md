@@ -94,8 +94,8 @@ TLS is not implemented: `owalkie_connect` with `use_tls != 0` or a `wss://` host
 
 ## Integrations
 
-- **Android** — always native relay via `libowalkie_jni.so` → owalkie-core; see [`android/README-ndk.md`](../android/README-ndk.md).
-- **Windows** — `windows-client-cpp` uses managed sessions + PCM `AudioEngine` / `RelayClient`.
+- **Android** — always native relay via `libowalkie_jni.so` → owalkie-core; see [`android/README-ndk.md`](../android/README-ndk.md). Channel scan calls `checkChannelActivity` JNI → `owalkie_check_channel_activity` (short `has_activity` WebSocket probe, no managed session).
+- **Windows** — `windows-client-cpp` uses managed sessions + PCM `AudioEngine` / `RelayClient` (no channel scan yet).
 
 ## Status
 

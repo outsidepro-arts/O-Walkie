@@ -38,15 +38,23 @@ If MSYS2 is not under `C:/dev/msys64`, set CMake cache variable `OWALKIE_MSYS_RO
 ## Current stage
 
 - **Server profiles** in `%AppData%/…/profiles.json` (name, host, ports, channel, repeater); **audio** in `audio.json`. Legacy `connection.json` is migrated once on startup if `profiles.json` is missing.
+- **Transport** via `owalkie-core` managed session (`RelayClient`); PCM capture/playback in `AudioEngine` (miniaudio).
 - **Auto-reconnect** with exponential backoff (about 1.5s → 30s cap) after WS/UDP drop while the session was connected; **Disconnect** cancels retries.
-- Main screen: profile picker + Save/New/Delete, connection fields, repeater, PTT, level meter, miniaudio device list
-- Protocol: WS welcome, `join`, `udp_hello`, `repeater_mode`, UDP keepalive, UDP `tx_eof` burst
-- Welcome-driven Opus/sample rate reconfiguration; reopening playback on timing/device change
+- Main screen: profile picker + Save/New/Delete, connection fields, repeater, PTT, level meter, miniaudio device list.
+- **Busy mode:** PTT lock/unlock from server `ptt_lock` / `ptt_unlock`; decorative countdown on the PTT button; unlock when core reports not locked (no local RX heuristic).
+- **System tray:** optional **Minimize to system tray when closing the window** (General settings, `minimize_to_tray_on_close` in `config.json`). Close (X / Alt+F4) hides to tray; tray menu **Show** / **Exit**; tooltip shows app name, connection status, and profile name when connected.
+- Protocol: WS welcome, `join`, `udp_hello`, `repeater_mode`, UDP keepalive, UDP `tx_eof` burst.
+- Welcome-driven Opus/sample rate reconfiguration; reopening playback on timing/device change.
+
+Not yet (vs Android):
+
+- Channel scan / `has_activity` profile switching
+- Global hotkey PTT
 
 Next:
-1. Multi-profile / settings parity with Android
-2. Reconnect + diagnostics
-3. Richer status (Tx/Rx), optional global hotkey PTT
+
+1. Settings and workflow parity with Android where it still differs
+2. Richer status and diagnostics
 
 ### Keyboard / accessibility notes
 
