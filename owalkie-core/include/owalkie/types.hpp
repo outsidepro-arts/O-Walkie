@@ -21,8 +21,20 @@ enum class Result {
     Internal,
     Unsupported,
     BufferTooSmall,
+    QueueFull,
     /** Valid server message that does not produce a session event (e.g. joined, pong). */
     NoEvent,
+};
+
+/** Ordered uplink command for the per-session TX pipeline. */
+enum class TxSubmitOp {
+    Open = 0,
+    Pcm,
+    Opus,
+    /** Flush partial encode buffer; keep TX open (voice finished, roger may follow). */
+    VoiceEnd,
+    Close,
+    Abort,
 };
 
 enum class EventType {

@@ -42,6 +42,8 @@ owalkie_result toC(owalkie::Result r) {
             return OWALKIE_ERR_BUFFER_TOO_SMALL;
         case owalkie::Result::NotReady:
             return OWALKIE_ERR_NOT_READY;
+        case owalkie::Result::QueueFull:
+            return OWALKIE_ERR_QUEUE_FULL;
         case owalkie::Result::NoEvent:
             return OWALKIE_OK;
     }
@@ -534,30 +536,61 @@ owalkie_result owalkie_get_session_info(
     return OWALKIE_OK;
 }
 
-owalkie_result owalkie_tx_start(owalkie_session_id session_id) {
-    if (session_id == owalkie_invalid_session_id()) {
-        return OWALKIE_ERR_INVALID_ARG;
-    }
-    return toC(owalkie::SessionManager::instance().txStart(session_id));
-}
-
-owalkie_result owalkie_push_tx_pcm(
+owalkie_result owalkie_tx_submit(
     owalkie_session_id session_id,
-    const int16_t* samples,
-    size_t sample_count) {
-    if (session_id == owalkie_invalid_session_id() || !samples || sample_count == 0) {
-        return OWALKIE_ERR_INVALID_ARG;
-    }
-    return toC(owalkie::SessionManager::instance().pushTxPcm(
-        session_id,
-        std::span<const int16_t>(samples, sample_count)));
-}
-
-owalkie_result owalkie_tx_end(owalkie_session_id session_id) {
+    owalkie_tx_op op,
+    const int16_t* pcm,
+    size_t pcm_count,
+    const uint8_t* opus,
+    size_t opus_len) {
     if (session_id == owalkie_invalid_session_id()) {
         return OWALKIE_ERR_INVALID_ARG;
     }
-    return toC(owalkie::SessionManager::instance().txEnd(session_id));
+    owalkie::TxSubmitOp cppOp = owalkie::TxSubmitOp::Abort;
+    switch (op) {
+        case OWALKIE_TX_OPEN:
+            cppOp = owalkie::TxSubmitOp::Open;
+            break;
+        case OWALKIE_TX_PCM:
+            cppOp = owalkie::TxSubmitOp::Pcm;
+            break;
+        case OWALKIE_TX_OPUS:
+            cppOp = owalkie::TxSubmitOp::Opus;
+            break;
+        case OWALKIE_TX_VOICE_END:
+            cppOp = owalkie::TxSubmitOp::VoiceEnd;
+            break;
+        case OWALKIE_TX_CLOSE:
+            cppOp = owalkie::TxSubmitOp::Close;
+            break;
+        case OWALKIE_TX_ABORT:
+            cppOp = owalkie::TxSubmitOp::Abort;
+            break;
+        default:
+            return OWALKIE_ERR_INVALID_ARG;
+    }
+    if (cppOp == owalkie::TxSubmitOp::Pcm && (!pcm || pcm_count == 0)) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    if (cppOp == owalkie::TxSubmitOp::Opus && (!opus || opus_len == 0)) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return toC(owalkie::SessionManager::instance().submitTx(
+        session_id,
+        cppOp,
+        pcm && pcm_count > 0 ? std::span<const int16_t>(pcm, pcm_count) : std::span<const int16_t>{},
+        opus && opus_len > 0 ? std::span<const uint8_t>(opus, opus_len) : std::span<const uint8_t>{}));
+}
+
+int owalkie_tx_wait_idle(owalkie_session_id session_id, int timeout_ms) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return 0;
+    }
+    return owalkie::SessionManager::instance().waitTxQueueIdle(
+        session_id,
+        timeout_ms > 0 ? timeout_ms : 0)
+        ? 1
+        : 0;
 }
 
 owalkie_result owalkie_set_repeater_mode(owalkie_session_id session_id, int enabled) {
@@ -646,11 +679,16 @@ owalkie_result owalkie_get_session_info(
     size_t) {
     return OWALKIE_ERR_UNSUPPORTED;
 }
-owalkie_result owalkie_tx_start(owalkie_session_id) { return OWALKIE_ERR_UNSUPPORTED; }
-owalkie_result owalkie_push_tx_pcm(owalkie_session_id, const int16_t*, size_t) {
+owalkie_result owalkie_tx_submit(
+    owalkie_session_id,
+    owalkie_tx_op,
+    const int16_t*,
+    size_t,
+    const uint8_t*,
+    size_t) {
     return OWALKIE_ERR_UNSUPPORTED;
 }
-owalkie_result owalkie_tx_end(owalkie_session_id) { return OWALKIE_ERR_UNSUPPORTED; }
+int owalkie_tx_wait_idle(owalkie_session_id, int) { return 0; }
 owalkie_result owalkie_set_repeater_mode(owalkie_session_id, int) {
     return OWALKIE_ERR_UNSUPPORTED;
 }

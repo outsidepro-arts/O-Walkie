@@ -147,22 +147,26 @@ class NativeRelayBridge(
         serverSessionId = 0L
     }
 
-    fun txStart(): Boolean {
+    fun txOpen(): Boolean = txSubmit(OwalkieNative.TX_OPEN, null)
+
+    fun txPcm(pcm: ShortArray): Boolean = txSubmit(OwalkieNative.TX_PCM, pcm)
+
+    fun txVoiceEnd(): Boolean = txSubmit(OwalkieNative.TX_VOICE_END, null)
+
+    fun txClose(): Boolean = txSubmit(OwalkieNative.TX_CLOSE, null)
+
+    fun txAbort(): Boolean = txSubmit(OwalkieNative.TX_ABORT, null)
+
+    fun waitTxIdle(timeoutMs: Int = 500): Boolean {
         val id = managedSessionId
-        if (id == 0L) return false
-        return OwalkieNative.nativeTxStart(id) == OwalkieNative.OK
+        if (id == 0L) return true
+        return OwalkieNative.nativeTxWaitIdle(id, timeoutMs)
     }
 
-    fun pushTxPcm(pcm: ShortArray): Boolean {
-        val id = managedSessionId
-        if (id == 0L || pcm.isEmpty()) return false
-        return OwalkieNative.nativePushTxPcm(id, pcm) == OwalkieNative.OK
-    }
-
-    fun txEnd(): Boolean {
+    private fun txSubmit(op: Int, pcm: ShortArray?): Boolean {
         val id = managedSessionId
         if (id == 0L) return false
-        return OwalkieNative.nativeTxEnd(id) == OwalkieNative.OK
+        return OwalkieNative.nativeTxSubmit(id, op, pcm) == OwalkieNative.OK
     }
 
     fun setRepeater(enabled: Boolean) {

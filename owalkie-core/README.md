@@ -62,9 +62,9 @@ int byte = owalkie_get_uplink_signal_byte();            // max(wifi, cell), defa
 ```
 
 ```c
-owalkie_tx_start(session_id);
-owalkie_push_tx_pcm(session_id, pcm_samples, sample_count);
-owalkie_tx_end(session_id);  // UDP EOF burst + local TX end
+owalkie_tx_submit(session_id, OWALKIE_TX_OPEN, NULL, 0, NULL, 0);
+owalkie_tx_submit(session_id, OWALKIE_TX_PCM, pcm_samples, sample_count, NULL, 0);
+owalkie_tx_submit(session_id, OWALKIE_TX_CLOSE, NULL, 0, NULL, 0);  // flush + UDP EOF burst
 ```
 
 After `OWALKIE_EV_CONNECTED`, prefer `owalkie_get_session_info` for welcome/transport flags (Android JNI uses this; no JSON round-trip). The connected event may still carry `u.welcome.config`, but string pointers are only valid for the callback.

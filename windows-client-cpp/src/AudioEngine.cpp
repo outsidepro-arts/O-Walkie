@@ -614,26 +614,6 @@ void AudioEngine::TxPumpLoop() {
                 continue;
             }
 
-            const int64_t frameNs = static_cast<int64_t>(packetMs_) * 1'000'000LL;
-            const int64_t nowNs = CurrentSteadyNs();
-            if (txNextFrameAtNs_ <= 0) {
-                txNextFrameAtNs_ = nowNs;
-            }
-            const int64_t sleepNs = txNextFrameAtNs_ - nowNs;
-            if (sleepNs > 0) {
-                lk.unlock();
-                std::this_thread::sleep_for(std::chrono::nanoseconds(sleepNs));
-                lk.lock();
-                if (txPumpStop_) {
-                    break;
-                }
-                if (!transmitting_.load(std::memory_order_relaxed)) {
-                    continue;
-                }
-            } else if (sleepNs < -frameNs * 2) {
-                txNextFrameAtNs_ = CurrentSteadyNs();
-            }
-
             if (static_cast<int>(captureFifo_.size()) < frame) {
                 continue;
             }
@@ -646,7 +626,6 @@ void AudioEngine::TxPumpLoop() {
 
             framePcm.assign(captureFifo_.begin(), captureFifo_.begin() + frame);
             captureFifo_.erase(captureFifo_.begin(), captureFifo_.begin() + frame);
-            txNextFrameAtNs_ += frameNs;
 
             pcmCb = onPcmFrame_;
             levelCb = onLevel_;
@@ -1152,11 +1131,6 @@ bool AudioEngine::StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal) {
         return false;
     }
 
-    const int64_t frameNs = static_cast<int64_t>(frameMs) * 1'000'000LL;
-    int64_t nextFrameAtNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                std::chrono::steady_clock::now().time_since_epoch())
-                                .count();
-
     std::vector<int16_t> frame(static_cast<size_t>(frameSamples), 0);
     size_t offset = 0;
     while (offset < pcmSignal.size()) {
@@ -1171,20 +1145,6 @@ bool AudioEngine::StreamGeneratedSignal(const std::vector<int16_t>& pcmSignal) {
 
         if (onPcmFrame_) {
             onPcmFrame_(frame.data(), frame.size());
-        }
-        if (offset < pcmSignal.size()) {
-            nextFrameAtNs += frameNs;
-            const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                      std::chrono::steady_clock::now().time_since_epoch())
-                                      .count();
-            const int64_t sleepNs = nextFrameAtNs - nowNs;
-            if (sleepNs > 0) {
-                const int64_t sleepMs = std::max<int64_t>(1, sleepNs / 1'000'000LL);
-                std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
-            } else if (sleepNs < -frameNs * 2) {
-                // If scheduling drift grew too much, re-anchor pacing from current time.
-                nextFrameAtNs = nowNs;
-            }
         }
     }
     return true;

@@ -19,7 +19,17 @@ typedef enum owalkie_result {
     OWALKIE_ERR_UNSUPPORTED = 7,
     OWALKIE_ERR_BUFFER_TOO_SMALL = 8,
     OWALKIE_ERR_NOT_READY = 9,
+    OWALKIE_ERR_QUEUE_FULL = 10,
 } owalkie_result;
+
+typedef enum owalkie_tx_op {
+    OWALKIE_TX_OPEN = 0,
+    OWALKIE_TX_PCM = 1,
+    OWALKIE_TX_OPUS = 2,
+    OWALKIE_TX_VOICE_END = 3,
+    OWALKIE_TX_CLOSE = 4,
+    OWALKIE_TX_ABORT = 5,
+} owalkie_tx_op;
 
 typedef uint64_t owalkie_session_id;
 inline owalkie_session_id owalkie_invalid_session_id(void) { return 0; }
@@ -240,15 +250,20 @@ owalkie_result owalkie_get_session_info(
     char* opus_application_buf,
     size_t opus_application_buf_size);
 
-owalkie_result owalkie_tx_start(owalkie_session_id session_id);
-
-owalkie_result owalkie_push_tx_pcm(
+/**
+ * Enqueue an ordered uplink TX command (OPEN / PCM / OPUS / CLOSE / ABORT).
+ * PCM and OPUS payloads are ignored unless @p op matches. CLOSE sends UDP EOF burst.
+ */
+owalkie_result owalkie_tx_submit(
     owalkie_session_id session_id,
-    const int16_t* samples,
-    size_t sample_count);
+    owalkie_tx_op op,
+    const int16_t* pcm,
+    size_t pcm_count,
+    const uint8_t* opus,
+    size_t opus_len);
 
-/** Ends local TX and sends UDP EOF burst. */
-owalkie_result owalkie_tx_end(owalkie_session_id session_id);
+/** Wait until queued TX commands are processed (before roger / CLOSE). */
+int owalkie_tx_wait_idle(owalkie_session_id session_id, int timeout_ms);
 owalkie_result owalkie_set_repeater_mode(owalkie_session_id session_id, int enabled);
 void owalkie_set_power_profile(owalkie_session_id session_id, owalkie_power_profile profile);
 

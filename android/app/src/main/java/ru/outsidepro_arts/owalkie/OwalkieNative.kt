@@ -24,6 +24,14 @@ object OwalkieNative {
 
     const val OK = 0
     const val ERR_NOT_READY = 9
+    const val ERR_QUEUE_FULL = 10
+
+    const val TX_OPEN = 0
+    const val TX_PCM = 1
+    const val TX_OPUS = 2
+    const val TX_VOICE_END = 3
+    const val TX_CLOSE = 4
+    const val TX_ABORT = 5
 
     private var loaded = false
 
@@ -118,9 +126,8 @@ object OwalkieNative {
     }
 
     external fun nativeSetRepeater(sessionId: Long, enabled: Boolean)
-    external fun nativeTxStart(sessionId: Long): Int
-    external fun nativePushTxPcm(sessionId: Long, pcm: ShortArray): Int
-    external fun nativeTxEnd(sessionId: Long): Int
+    external fun nativeTxSubmit(sessionId: Long, op: Int, pcm: ShortArray?): Int
+    external fun nativeTxWaitIdle(sessionId: Long, timeoutMs: Int): Boolean
     external fun nativeSetPowerProfile(sessionId: Long, profile: Int)
     external fun nativePunchNat(sessionId: Long): Int
     external fun nativeBindProcessNetwork(networkHandle: Long): Int

@@ -272,27 +272,36 @@ WelcomeConfig RelayClient::CurrentConfig() const {
     return cfg_;
 }
 
-bool RelayClient::TxStart() {
+bool RelayClient::TxOpen() {
     if (!IsConnected()) {
         return false;
     }
-    return owalkie::SessionManager::instance().txStart(sessionId_) == owalkie::Result::Ok;
+    return owalkie::SessionManager::instance().submitTx(sessionId_, owalkie::TxSubmitOp::Open) ==
+        owalkie::Result::Ok;
 }
 
-void RelayClient::PushTxPcm(const int16_t* samples, size_t count) {
+void RelayClient::TxPcm(const int16_t* samples, size_t count) {
     if (!IsConnected() || !samples || count == 0) {
         return;
     }
-    (void)owalkie::SessionManager::instance().pushTxPcm(
+    (void)owalkie::SessionManager::instance().submitTx(
         sessionId_,
+        owalkie::TxSubmitOp::Pcm,
         std::span<const int16_t>(samples, count));
 }
 
-void RelayClient::TxEnd() {
+void RelayClient::TxClose() {
     if (sessionId_ == owalkie::kInvalidSessionId) {
         return;
     }
-    (void)owalkie::SessionManager::instance().txEnd(sessionId_);
+    (void)owalkie::SessionManager::instance().submitTx(sessionId_, owalkie::TxSubmitOp::Close);
+}
+
+void RelayClient::TxAbort() {
+    if (sessionId_ == owalkie::kInvalidSessionId) {
+        return;
+    }
+    (void)owalkie::SessionManager::instance().submitTx(sessionId_, owalkie::TxSubmitOp::Abort);
 }
 
 void RelayClient::SetRepeaterMode(bool enabled) {

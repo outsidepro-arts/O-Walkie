@@ -46,9 +46,12 @@ public:
     bool isSessionReady(SessionId id) const;
     Result getSessionInfo(SessionId id, SessionState* out_state, bool* out_ready) const;
 
-    Result txStart(SessionId id);
-    Result pushTxPcm(SessionId id, std::span<const int16_t> samples);
-    Result txEnd(SessionId id);
+    Result submitTx(
+        SessionId id,
+        TxSubmitOp op,
+        std::span<const int16_t> pcm = {},
+        std::span<const uint8_t> opus = {});
+    bool waitTxQueueIdle(SessionId id, int timeoutMs);
     Result setRepeaterMode(SessionId id, bool enabled);
     void setPowerProfile(SessionId id, PowerProfile profile);
     Result punchNat(SessionId id);

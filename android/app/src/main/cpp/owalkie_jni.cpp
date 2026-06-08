@@ -505,40 +505,55 @@ Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeGetSessionInfoConfig(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeTxStart(JNIEnv*, jobject, jlong sessionId) {
-    if (sessionId <= 0) {
-        return static_cast<jint>(owalkie::Result::InvalidArg);
-    }
-    return static_cast<jint>(owalkie_tx_start(static_cast<owalkie_session_id>(sessionId)));
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativePushTxPcm(
+Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeTxSubmit(
     JNIEnv* env,
     jobject,
     jlong sessionId,
+    jint op,
     jshortArray pcm) {
-    if (sessionId <= 0 || !pcm) {
-        return static_cast<jint>(owalkie::Result::InvalidArg);
+    if (sessionId <= 0) {
+        return static_cast<jint>(OWALKIE_ERR_INVALID_ARG);
     }
-    const jsize len = env->GetArrayLength(pcm);
-    if (len <= 0) {
-        return static_cast<jint>(owalkie::Result::InvalidArg);
+    const auto txOp = static_cast<owalkie_tx_op>(op);
+    if (txOp == OWALKIE_TX_PCM) {
+        if (!pcm) {
+            return static_cast<jint>(OWALKIE_ERR_INVALID_ARG);
+        }
+        const jsize len = env->GetArrayLength(pcm);
+        if (len <= 0) {
+            return static_cast<jint>(OWALKIE_ERR_INVALID_ARG);
+        }
+        std::vector<int16_t> buf(static_cast<size_t>(len));
+        env->GetShortArrayRegion(pcm, 0, len, reinterpret_cast<jshort*>(buf.data()));
+        return static_cast<jint>(owalkie_tx_submit(
+            static_cast<owalkie_session_id>(sessionId),
+            txOp,
+            buf.data(),
+            buf.size(),
+            nullptr,
+            0));
     }
-    std::vector<int16_t> buf(static_cast<size_t>(len));
-    env->GetShortArrayRegion(pcm, 0, len, reinterpret_cast<jshort*>(buf.data()));
-    return static_cast<jint>(owalkie_push_tx_pcm(
+    return static_cast<jint>(owalkie_tx_submit(
         static_cast<owalkie_session_id>(sessionId),
-        buf.data(),
-        buf.size()));
+        txOp,
+        nullptr,
+        0,
+        nullptr,
+        0));
 }
 
-extern "C" JNIEXPORT jint JNICALL
-Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeTxEnd(JNIEnv*, jobject, jlong sessionId) {
+extern "C" JNIEXPORT jboolean JNICALL
+Java_ru_outsidepro_1arts_owalkie_OwalkieNative_nativeTxWaitIdle(
+    JNIEnv*,
+    jobject,
+    jlong sessionId,
+    jint timeoutMs) {
     if (sessionId <= 0) {
-        return static_cast<jint>(owalkie::Result::InvalidArg);
+        return JNI_FALSE;
     }
-    return static_cast<jint>(owalkie_tx_end(static_cast<owalkie_session_id>(sessionId)));
+    return owalkie_tx_wait_idle(static_cast<owalkie_session_id>(sessionId), timeoutMs) != 0
+        ? JNI_TRUE
+        : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

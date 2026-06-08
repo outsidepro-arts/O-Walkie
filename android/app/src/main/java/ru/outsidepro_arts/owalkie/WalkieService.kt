@@ -145,6 +145,13 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         private const val DEFAULT_PACKET_MS = 20
         private const val PROTOCOL_VERSION = 2
         private const val ROGER_TAIL_MS = 40
+        /** After PTT release, keep reading the mic so uplink speech is not cut by HAL latency. */
+        private const val TX_MIC_TAIL_DRAIN_MIN_MS = 80
+        private const val TX_MIC_TAIL_DRAIN_PACKET_MULTIPLIER = 4
+        /** Extra HAL buffer drain after the timed tail (non-blocking reads). */
+        private const val TX_MIC_HAL_DRAIN_MAX_MS = 150
+        private const val TX_VOICE_FRAME_THRESHOLD = 280
+        private const val TX_PIPELINE_IDLE_WAIT_MS = 600
         /** Quiet period before burst counter / block clears; refreshed on each release and while blocked on each press attempt. */
         private const val PTT_RELEASE_BURST_TIMER_MS = 1000L
         private const val PTT_RELEASE_BURST_BLOCK_THRESHOLD = 3
@@ -242,6 +249,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private val transmitting = AtomicBoolean(false)
     private val txLoopRunning = AtomicBoolean(false)
+    private val txUplinkOpened = AtomicBoolean(false)
+    private val captureTailUntilNs = AtomicLong(0L)
+    private val pttReleaseCompletionPending = AtomicBoolean(false)
     private val rogerStreaming = AtomicBoolean(false)
     private val callStreaming = AtomicBoolean(false)
     private val sessionId = AtomicLong(0L)
@@ -941,11 +951,11 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         if (previousInboundNs > 0L && nowNs > previousInboundNs) {
             lastObservedUdpGapMs.set((nowNs - previousInboundNs) / 1_000_000L)
         }
-        val txActive = transmitting.get() || rogerStreaming.get() || callStreaming.get()
+        val txActive = outgoingStreamActive()
         if (txActive) {
             lastRxDuringParallelTxNs.set(nowNs)
         }
-        if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
+        if (outgoingStreamActive()) {
             return
         }
         val scaled = applyRxVolume(pcm)
@@ -1062,7 +1072,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private fun refreshParallelTxCollisionState() {
         val nowNs = System.nanoTime()
-        val txOn = transmitting.get() || rogerStreaming.get() || callStreaming.get()
+        val txOn = outgoingStreamActive()
         val last = lastRxDuringParallelTxNs.get()
         val active = txOn && last != 0L && (nowNs - last) <= PARALLEL_TX_RX_STALE_NS
         val prev = parallelTxCollisionActive.get()
@@ -1085,15 +1095,15 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         lastRxDuringParallelTxNs.set(0L)
         stopTxCountdownFromServer()
         if (transmitting.getAndSet(true)) return
+        txUplinkOpened.set(false)
+        captureTailUntilNs.set(0L)
+        pttReleaseCompletionPending.set(false)
         relay().setPowerActiveTx()
-        if (!relay().txStart()) {
-            transmitting.set(false)
-            broadcastStatus(currentSignalByte())
-            return
-        }
         if (pttReleaseBurstPressBlocked.get()) {
             transmitting.set(false)
-            relay().txEnd()
+            if (relay().txOpen()) {
+                relay().txClose()
+            }
             schedulePttReleaseBurstDecay()
             broadcastStatus(currentSignalByte())
             return
@@ -1106,14 +1116,12 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         }
         if (!txLoopRunning.compareAndSet(false, true)) {
             transmitting.set(false)
-            relay().txEnd()
             broadcastStatus(currentSignalByte())
             return
         }
         if (txJob?.isActive == true) {
             txLoopRunning.set(false)
             transmitting.set(false)
-            relay().txEnd()
             broadcastStatus(currentSignalByte())
             return
         }
@@ -1131,18 +1139,33 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         if (!transmitting.getAndSet(false)) return
         stopTxCountdownFromServer()
         recordPttReleaseBurstGuard()
+        pttReleaseCompletionPending.set(true)
+        captureTailUntilNs.set(System.nanoTime() + micCaptureTailDrainNs())
+        if (!txLoopRunning.get()) {
+            completePttReleaseAfterCapture()
+        }
+    }
+
+    private fun completePttReleaseAfterCapture() {
+        if (!pttReleaseCompletionPending.getAndSet(false)) return
         if (rogerStreaming.getAndSet(true)) return
         localRogerPlaybackJob?.cancel()
         rogerJob = serviceScope.launch(Dispatchers.Default) {
             try {
-                val rogerPcm = generateRogerFromSelectedPattern(currentCodecSampleRate())
                 val localRogerPcm = generateRogerFromSelectedPattern(LOCAL_PLAYBACK_SAMPLE_RATE)
                 val localPlaybackPcm = prependSignal(localPttReleasePcm, localRogerPcm)
                 localRogerPlaybackJob = serviceScope.launch(Dispatchers.IO) {
                     playLocalRogerPcm(localPlaybackPcm, LOCAL_PLAYBACK_SAMPLE_RATE)
                 }
-                streamRogerBeep(rogerPcm)
-                relay().txEnd()
+                if (txUplinkOpened.getAndSet(false)) {
+                    relay().txVoiceEnd()
+                    relay().waitTxIdle(TX_PIPELINE_IDLE_WAIT_MS)
+                    val rogerPcm = generateRogerFromSelectedPattern(currentCodecSampleRate())
+                    streamRogerBeep(rogerPcm)
+                    relay().waitTxIdle(TX_PIPELINE_IDLE_WAIT_MS)
+                    relay().txClose()
+                    syncRelayPowerAfterTx()
+                }
             } finally {
                 rogerStreaming.set(false)
                 releaseVoiceProfileIfIdle()
@@ -1165,9 +1188,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 localCallPlaybackJob = serviceScope.launch(Dispatchers.IO) {
                     playLocalSignalPcm(localCallPcm, LOCAL_PLAYBACK_SAMPLE_RATE, CALL_LOCAL_GAIN_DB)
                 }
-                relay().txStart()
+                relay().txOpen()
                 streamGeneratedSignal(callPcm)
-                relay().txEnd()
+                relay().txClose()
             } finally {
                 callStreaming.set(false)
                 releaseVoiceProfileIfIdle()
@@ -1237,6 +1260,100 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         return servers.firstOrNull { it.name == selectedName } ?: servers.first()
     }
 
+    private fun outgoingStreamActive(): Boolean {
+        return transmitting.get() ||
+            txLoopRunning.get() ||
+            rogerStreaming.get() ||
+            callStreaming.get()
+    }
+
+    private fun micCaptureTailDrainNs(): Long {
+        val tailMs = maxOf(
+            TX_MIC_TAIL_DRAIN_MIN_MS,
+            currentPacketMs() * TX_MIC_TAIL_DRAIN_PACKET_MULTIPLIER,
+        )
+        return tailMs * 1_000_000L
+    }
+
+    private fun micCaptureActive(): Boolean {
+        if (transmitting.get()) return true
+        val tailUntilNs = captureTailUntilNs.get()
+        return tailUntilNs > 0L && System.nanoTime() < tailUntilNs
+    }
+
+    private fun openTxUplinkIfNeeded(): Boolean {
+        if (txUplinkOpened.get()) return true
+        if (!relay().txOpen()) return false
+        txUplinkOpened.set(true)
+        return true
+    }
+
+    private fun frameHasVoice(frame: ShortArray, sampleCount: Int): Boolean {
+        val limit = sampleCount.coerceAtMost(frame.size)
+        for (i in 0 until limit) {
+            if (kotlin.math.abs(frame[i].toInt()) >= TX_VOICE_FRAME_THRESHOLD) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun submitTxPcmFrame(frame: ShortArray, sampleCount: Int, frameSamples: Int) {
+        if (sampleCount <= 0) return
+        if (sampleCount == frameSamples) {
+            relay().txPcm(frame)
+            return
+        }
+        val padded = ShortArray(frameSamples)
+        System.arraycopy(frame, 0, padded, 0, sampleCount)
+        relay().txPcm(padded)
+    }
+
+    private fun appendCapturedSamples(
+        recorder: AudioRecord,
+        readBuffer: ShortArray,
+        txBuffer: ShortArray,
+        frameSamples: Int,
+        txFillInitial: Int,
+        blocking: Boolean,
+    ): Int {
+        var txFill = txFillInitial
+        val deadlineNs = System.nanoTime() + TX_MIC_HAL_DRAIN_MAX_MS * 1_000_000L
+        while (true) {
+            val read = if (blocking) {
+                recorder.read(readBuffer, 0, readBuffer.size, AudioRecord.READ_BLOCKING)
+            } else {
+                if (System.nanoTime() >= deadlineNs) break
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) break
+                recorder.read(readBuffer, 0, readBuffer.size, AudioRecord.READ_NON_BLOCKING)
+            }
+            if (read <= 0) {
+                break
+            }
+            var srcPos = 0
+            while (srcPos < read) {
+                val toCopy = minOf(frameSamples - txFill, read - srcPos)
+                System.arraycopy(readBuffer, srcPos, txBuffer, txFill, toCopy)
+                txFill += toCopy
+                srcPos += toCopy
+                if (txFill == frameSamples) {
+                    if (!txUplinkOpened.get()) {
+                        if (!frameHasVoice(txBuffer, frameSamples)) {
+                            txFill = 0
+                            break
+                        }
+                        if (!openTxUplinkIfNeeded()) return -1
+                    }
+                    currentSignalByte()
+                    submitTxPcmFrame(txBuffer, frameSamples, frameSamples)
+                    txFill = 0
+                }
+            }
+            if (blocking) break
+        }
+        return txFill
+    }
+
     private suspend fun runCaptureLoop() = withContext(Dispatchers.IO) {
         val frameSamples = currentFrameSamples()
         val minBuffer = AudioRecord.getMinBufferSize(
@@ -1255,6 +1372,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             minBuffer = minBuffer,
         ) ?: run {
             transmitting.set(false)
+            captureTailUntilNs.set(0L)
+            completePttReleaseAfterCapture()
             broadcastStatus(currentSignalByte())
             return@withContext
         }
@@ -1263,36 +1382,55 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         val readBuffer = ShortArray(frameSamples)
         val txBuffer = ShortArray(frameSamples)
         var txFill = 0
-        val frameNs = currentPacketMs().toLong() * 1_000_000L
-        var nextFrameAtNs = System.nanoTime()
+        var captureFailed = false
         try {
             recorder.startRecording()
-            while (transmitting.get() && isActive) {
-                val read = recorder.read(readBuffer, 0, readBuffer.size, AudioRecord.READ_BLOCKING)
-                if (read <= 0) continue
-                var srcPos = 0
-                while (srcPos < read) {
-                    val toCopy = minOf(frameSamples - txFill, read - srcPos)
-                    System.arraycopy(readBuffer, srcPos, txBuffer, txFill, toCopy)
-                    txFill += toCopy
-                    srcPos += toCopy
-                    if (txFill == frameSamples) {
-                        val sleepNs = nextFrameAtNs - System.nanoTime()
-                        if (sleepNs > 0L) {
-                            delay((sleepNs / 1_000_000L).coerceAtLeast(1L))
-                        } else if (sleepNs < -frameNs * 2) {
-                            nextFrameAtNs = System.nanoTime()
-                        }
-                        currentSignalByte()
-                        relay().pushTxPcm(txBuffer)
-                        txFill = 0
-                        nextFrameAtNs += frameNs
-                    }
+            while (isActive && micCaptureActive()) {
+                txFill = appendCapturedSamples(
+                    recorder = recorder,
+                    readBuffer = readBuffer,
+                    txBuffer = txBuffer,
+                    frameSamples = frameSamples,
+                    txFillInitial = txFill,
+                    blocking = true,
+                )
+                if (txFill < 0) {
+                    captureFailed = true
+                    break
+                }
+            }
+            if (!captureFailed && txUplinkOpened.get()) {
+                txFill = appendCapturedSamples(
+                    recorder = recorder,
+                    readBuffer = readBuffer,
+                    txBuffer = txBuffer,
+                    frameSamples = frameSamples,
+                    txFillInitial = txFill,
+                    blocking = false,
+                )
+                if (txFill < 0) {
+                    captureFailed = true
+                } else if (txFill > 0) {
+                    submitTxPcmFrame(txBuffer, txFill, frameSamples)
+                    txFill = 0
                 }
             }
             recorder.stop()
         } finally {
             recorder.release()
+            captureTailUntilNs.set(0L)
+            if (captureFailed) {
+                pttReleaseCompletionPending.set(false)
+                if (txUplinkOpened.getAndSet(false)) {
+                    relay().txAbort()
+                    syncRelayPowerAfterTx()
+                }
+            } else if (pttReleaseCompletionPending.get()) {
+                completePttReleaseAfterCapture()
+            } else if (txUplinkOpened.getAndSet(false)) {
+                relay().txAbort()
+                syncRelayPowerAfterTx()
+            }
             drainPendingUdpNetworkRecreate()
         }
     }
@@ -1304,8 +1442,6 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private suspend fun streamGeneratedSignal(pcmSignal: ShortArray) {
         var offset = 0
         val frameSamples = currentFrameSamples()
-        val frameNs = currentPacketMs().toLong() * 1_000_000L
-        var nextFrameAtNs = System.nanoTime()
         while (offset < pcmSignal.size) {
             val frame = ShortArray(frameSamples)
             val end = (offset + frameSamples).coerceAtMost(pcmSignal.size)
@@ -1314,16 +1450,8 @@ class WalkieService : Service(), NativeRelayBridge.Host {
                 System.arraycopy(pcmSignal, offset, frame, 0, count)
             }
             currentSignalByte()
-            relay().pushTxPcm(frame)
+            submitTxPcmFrame(frame, count, frameSamples)
             offset = end
-            nextFrameAtNs += frameNs
-            val sleepNs = nextFrameAtNs - System.nanoTime()
-            if (sleepNs > 0L) {
-                delay((sleepNs / 1_000_000L).coerceAtLeast(1L))
-            } else if (sleepNs < -frameNs * 2) {
-                // If scheduler/CPU lag caused severe drift, restart pacing from now.
-                nextFrameAtNs = System.nanoTime()
-            }
         }
     }
 
@@ -1632,7 +1760,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         if (relayTransportConnecting()) {
             return
         }
-        if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
+        if (outgoingStreamActive()) {
             pendingUdpNetworkRecreate.set(true)
             return
         }
@@ -1642,7 +1770,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private fun drainPendingUdpNetworkRecreate() {
         if (!pendingUdpNetworkRecreate.getAndSet(false)) return
         if (!desiredConnection.get()) return
-        if (transmitting.get() || rogerStreaming.get() || callStreaming.get()) {
+        if (outgoingStreamActive()) {
             pendingUdpNetworkRecreate.set(true)
             return
         }
@@ -1680,12 +1808,14 @@ class WalkieService : Service(), NativeRelayBridge.Host {
 
     private fun forceAbortAllOutgoingForPttLock() {
         stopTxCountdownFromServer()
-        val hadStream = transmitting.get() || rogerStreaming.get() || callStreaming.get()
-        if (transmitting.get()) {
-            transmitting.set(false)
-            txJob?.cancel()
-            txLoopRunning.set(false)
+        val hadRogerOrCall = rogerStreaming.get() || callStreaming.get()
+        if (transmitting.getAndSet(false)) {
+            captureTailUntilNs.set(0L)
+            pttReleaseCompletionPending.set(false)
         }
+        txJob?.cancel()
+        txJob = null
+        txLoopRunning.set(false)
         if (rogerStreaming.getAndSet(false)) {
             rogerJob?.cancel()
             rogerJob = null
@@ -1700,8 +1830,9 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         localCallPlaybackJob = null
         localPttPressPlaybackJob?.cancel()
         localPttPressPlaybackJob = null
-        if (hadStream) {
-            sendTxEof()
+        if (hadRogerOrCall) {
+            txUplinkOpened.set(false)
+            relay().txAbort()
         }
         releaseVoiceProfileIfIdle()
     }
@@ -1721,7 +1852,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
             putExtra(EXTRA_PTT_SERVER_LOCKED, serverPttLocked.get())
             putExtra(EXTRA_PTT_LOCK_DISPLAY_SEC, pttLockDisplaySec.get().coerceAtLeast(0))
             putExtra(EXTRA_RX_ACTIVE, serverRxBroadcastActive.get())
-            putExtra(EXTRA_TX_ACTIVE, transmitting.get() || rogerStreaming.get() || callStreaming.get())
+            putExtra(EXTRA_TX_ACTIVE, outgoingStreamActive())
             putExtra(EXTRA_PARALLEL_TX_COLLISION, parallelTxCollisionActive.get())
             putExtra(EXTRA_CALL_ACTIVE, callStreaming.get())
             putExtra(EXTRA_PTT_BURST_PRESS_BLOCKED, pttReleaseBurstPressBlocked.get())
@@ -1755,7 +1886,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     }
 
     private fun sendTxEof() {
-        relay().txEnd()
+        relay().txClose()
         syncRelayPowerAfterTx()
     }
 
@@ -1767,7 +1898,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
     private fun applyRelayPowerProfile() {
         val relay = relay()
         when {
-            transmitting.get() || rogerStreaming.get() || callStreaming.get() -> relay.setPowerActiveTx()
+            outgoingStreamActive() -> relay.setPowerActiveTx()
             desiredConnection.get() -> relay.setPowerForeground()
             else -> relay.setPowerBackground()
         }
@@ -2318,7 +2449,7 @@ class WalkieService : Service(), NativeRelayBridge.Host {
         if (shouldHoldBluetoothCommunicationProfile()) {
             return
         }
-        if (!transmitting.get() && !rogerStreaming.get() && !callStreaming.get()) {
+        if (!outgoingStreamActive()) {
             restoreMediaAudioProfile()
         }
     }

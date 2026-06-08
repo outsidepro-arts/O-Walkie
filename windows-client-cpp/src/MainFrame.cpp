@@ -1840,7 +1840,13 @@ MainFrame::MainFrame(const std::string& connectUri)
     });
 
     audio_->SetPcmFrameCallback([this](const int16_t* samples, size_t count) {
-        relay_->PushTxPcm(samples, count);
+        if (!txUplinkOpened_.load(std::memory_order_relaxed)) {
+            if (!relay_->TxOpen()) {
+                return;
+            }
+            txUplinkOpened_.store(true, std::memory_order_relaxed);
+        }
+        relay_->TxPcm(samples, count);
     });
     audio_->SetStatusCallback([this](const std::string& msg) {
         this->CallAfter([this, msg] {
@@ -3164,10 +3170,14 @@ void MainFrame::OnCallSignalClicked(wxCommandEvent&) {
         callBtn_->Enable(false);
     }
     SetStatus("Sending call signal");
-    const bool txOpened = relay_->TxStart();
+    const bool txOpened = relay_->TxOpen();
+    if (txOpened) {
+        txUplinkOpened_.store(true, std::memory_order_relaxed);
+    }
     const bool ok = txOpened && audio_->StreamCallSignal();
     if (ok) {
-        relay_->TxEnd();
+        relay_->TxClose();
+        txUplinkOpened_.store(false, std::memory_order_relaxed);
         audio_->ScheduleRxResumeHoldoff();
         SetStatus("Connected");
     } else {
@@ -3191,12 +3201,8 @@ void MainFrame::BeginPttTx() {
         return;
     }
     audio_->PlayPttPressSignal();
-    if (!relay_->TxStart()) {
-        RefreshPttUi();
-        return;
-    }
+    txUplinkOpened_.store(false, std::memory_order_relaxed);
     if (!audio_->StartTransmit()) {
-        relay_->TxEnd();
         RefreshPttUi();
         return;
     }
@@ -3221,7 +3227,8 @@ void MainFrame::EndPttTx() {
     audio_->StopTransmit();
     audio_->ScheduleRxResumeHoldoff();
     audio_->StreamRogerSignal();
-    relay_->TxEnd();
+    relay_->TxClose();
+    txUplinkOpened_.store(false, std::memory_order_relaxed);
     SetStatus("Connected");
     RefreshPttUi();
 }
@@ -3391,7 +3398,8 @@ void MainFrame::ForceAbortOutgoingForServerPttLock() {
         audio_->StopTransmit();
     }
     if (had) {
-        relay_->TxEnd();
+        relay_->TxAbort();
+        txUplinkOpened_.store(false, std::memory_order_relaxed);
     }
     audio_->ScheduleRxResumeHoldoff();
 }

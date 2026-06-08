@@ -51,9 +51,10 @@ public:
     bool IsConnected() const;
     WelcomeConfig CurrentConfig() const;
 
-    bool TxStart();
-    void PushTxPcm(const int16_t* samples, size_t count);
-    void TxEnd();
+    bool TxOpen();
+    void TxPcm(const int16_t* samples, size_t count);
+    void TxClose();
+    void TxAbort();
     void SetRepeaterMode(bool enabled);
 
     void SetStatusCallback(StatusCallback cb) { onStatus_ = std::move(cb); }

@@ -269,6 +269,26 @@ struct Session::Impl {
     std::mutex decodeMu;
     std::vector<int16_t> txPcmBuffer;
 
+    struct TxQueueItem {
+        TxSubmitOp op = TxSubmitOp::Abort;
+        std::vector<int16_t> pcm;
+        std::vector<uint8_t> opusBytes;
+    };
+
+    static constexpr size_t kTxQueueCapacity = 48;
+    static constexpr int kTxQueueSubmitWaitMs = 400;
+    static constexpr int64_t kTxOpenWatchdogNs = 2LL * kNsPerSec;
+
+    std::mutex txQueueMu;
+    std::condition_variable txQueueCv;
+    std::deque<TxQueueItem> txQueue;
+    std::thread txWorkerThread;
+    std::atomic<bool> txWorkerStop{false};
+    std::atomic<bool> txWorkerRunning{false};
+    std::atomic<bool> txWorkerProcessing{false};
+    int64_t txOpenAtNs = 0;
+    int64_t txLastActivityNs = 0;
+
     std::thread wsThread;
     std::thread udpThread;
     std::thread keepaliveThread;
@@ -667,7 +687,234 @@ struct Session::Impl {
         ioc.restart();
     }
 
+    void abortTxInternal() {
+        {
+            std::lock_guard<std::mutex> lg(txQueueMu);
+            txQueue.clear();
+        }
+        {
+            std::lock_guard<std::mutex> lg(encodeMu);
+            txPcmBuffer.clear();
+        }
+        if (clientTxOpen.exchange(false)) {
+            endLocalTxIfNeeded();
+        }
+        txOpenAtNs = 0;
+        txLastActivityNs = 0;
+    }
+
+    void stopTxPipeline() {
+        {
+            std::lock_guard<std::mutex> lg(txQueueMu);
+            txWorkerStop.store(true);
+        }
+        txQueueCv.notify_all();
+        if (txWorkerThread.joinable()) {
+            if (txWorkerThread.get_id() != std::this_thread::get_id()) {
+                txWorkerThread.join();
+            } else {
+                txWorkerThread.detach();
+            }
+        }
+        txWorkerRunning.store(false);
+        txWorkerStop.store(false);
+        {
+            std::lock_guard<std::mutex> lg(txQueueMu);
+            txQueue.clear();
+        }
+        abortTxInternal();
+    }
+
+    void ensureTxWorkerStarted() {
+        if (txWorkerRunning.load()) {
+            return;
+        }
+        std::lock_guard<std::mutex> lg(txQueueMu);
+        if (txWorkerRunning.load()) {
+            return;
+        }
+        txWorkerStop.store(false);
+        txWorkerThread = std::thread([this] { txWorkerLoop(); });
+        txWorkerRunning.store(true);
+    }
+
+    void paceTxFrame(int64_t& nextPaceAtNs) {
+        const int packetMs = welcome.packetMs > 0 ? welcome.packetMs : 20;
+        const int64_t frameNs = static_cast<int64_t>(packetMs) * kNsPerMs;
+        const int64_t now = nowNs();
+        if (nextPaceAtNs <= 0) {
+            nextPaceAtNs = now;
+        }
+        const int64_t sleepNs = nextPaceAtNs - now;
+        if (sleepNs > 0) {
+            interruptibleSleepMs((sleepNs + kNsPerMs - 1) / kNsPerMs);
+        } else if (sleepNs < -frameNs * 2) {
+            nextPaceAtNs = nowNs();
+        }
+        nextPaceAtNs += frameNs;
+    }
+
+    void processTxItem(const TxQueueItem& item, int64_t& nextPaceAtNs) {
+        switch (item.op) {
+            case TxSubmitOp::Open:
+                if (clientTxOpen.load()) {
+                    (void)txEndInternal();
+                }
+                (void)txStartInternal();
+                txOpenAtNs = nowNs();
+                txLastActivityNs = txOpenAtNs;
+                nextPaceAtNs = 0;
+                break;
+            case TxSubmitOp::Pcm:
+                if (!clientTxOpen.load()) {
+                    break;
+                }
+                paceTxFrame(nextPaceAtNs);
+                (void)feedTxPcmInternal(item.pcm);
+                txLastActivityNs = nowNs();
+                break;
+            case TxSubmitOp::Opus:
+                if (!clientTxOpen.load()) {
+                    break;
+                }
+                paceTxFrame(nextPaceAtNs);
+                (void)sendTxOpusInternal(item.opusBytes);
+                txLastActivityNs = nowNs();
+                break;
+            case TxSubmitOp::VoiceEnd:
+                if (clientTxOpen.load()) {
+                    flushTxPcmBuffer();
+                }
+                txLastActivityNs = nowNs();
+                break;
+            case TxSubmitOp::Close:
+                (void)txEndInternal();
+                txOpenAtNs = 0;
+                txLastActivityNs = 0;
+                nextPaceAtNs = 0;
+                break;
+            case TxSubmitOp::Abort:
+                abortTxInternal();
+                nextPaceAtNs = 0;
+                break;
+        }
+    }
+
+    void txWorkerLoop() {
+        int64_t nextPaceAtNs = 0;
+        for (;;) {
+            TxQueueItem item;
+            bool haveItem = false;
+            {
+                std::unique_lock<std::mutex> lock(txQueueMu);
+                txQueueCv.wait_for(lock, std::chrono::milliseconds(200), [this] {
+                    return txWorkerStop.load() || !txQueue.empty();
+                });
+                if (txWorkerStop.load() && txQueue.empty()) {
+                    break;
+                }
+                if (txQueue.empty()) {
+                    if (clientTxOpen.load() && txOpenAtNs > 0) {
+                        const int64_t now = nowNs();
+                        if (now - txLastActivityNs > kTxOpenWatchdogNs) {
+                            lock.unlock();
+                            (void)txEndInternal();
+                            txOpenAtNs = 0;
+                            txLastActivityNs = 0;
+                            nextPaceAtNs = 0;
+                        }
+                    }
+                    continue;
+                }
+                item = std::move(txQueue.front());
+                txQueue.pop_front();
+                haveItem = true;
+            }
+            if (!haveItem) {
+                continue;
+            }
+            txWorkerProcessing.store(true);
+            processTxItem(item, nextPaceAtNs);
+            txWorkerProcessing.store(false);
+            txQueueCv.notify_all();
+        }
+    }
+
+    bool waitTxQueueIdleInternal(int timeoutMs) {
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(timeoutMs > 0 ? timeoutMs : 0);
+        auto quiescent = [this]() {
+            return txQueue.empty() && !txWorkerProcessing.load();
+        };
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::lock_guard<std::mutex> lg(txQueueMu);
+                if (quiescent()) {
+                    return true;
+                }
+            }
+            std::unique_lock<std::mutex> lock(txQueueMu);
+            txQueueCv.wait_for(lock, std::chrono::milliseconds(5), [&] { return quiescent(); });
+        }
+        std::lock_guard<std::mutex> lg(txQueueMu);
+        return quiescent();
+    }
+
+    Result submitTxInternal(
+        TxSubmitOp op,
+        std::span<const int16_t> pcm,
+        std::span<const uint8_t> opus) {
+        if (op != TxSubmitOp::Abort && (!connected.load() || welcome.sessionId == 0)) {
+            return Result::NotConnected;
+        }
+        if (op == TxSubmitOp::Pcm && pcm.empty()) {
+            return Result::InvalidArg;
+        }
+        if (op == TxSubmitOp::Opus && opus.empty()) {
+            return Result::InvalidArg;
+        }
+        if (stopRequested.load() && op != TxSubmitOp::Abort) {
+            return Result::NotConnected;
+        }
+
+        TxQueueItem item;
+        item.op = op;
+        if (op == TxSubmitOp::Pcm) {
+            item.pcm.assign(pcm.begin(), pcm.end());
+        } else if (op == TxSubmitOp::Opus) {
+            item.opusBytes.assign(opus.begin(), opus.end());
+        }
+
+        {
+            std::unique_lock<std::mutex> lock(txQueueMu);
+            if (txWorkerStop.load() && op != TxSubmitOp::Abort) {
+                return Result::NotConnected;
+            }
+            if (op == TxSubmitOp::Pcm) {
+                const auto waitDeadline = std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(kTxQueueSubmitWaitMs);
+                while (txQueue.size() >= kTxQueueCapacity &&
+                       std::chrono::steady_clock::now() < waitDeadline) {
+                    txQueueCv.wait_for(lock, std::chrono::milliseconds(5), [this] {
+                        return txQueue.size() < kTxQueueCapacity || txWorkerStop.load();
+                    });
+                }
+                if (txQueue.size() >= kTxQueueCapacity) {
+                    return Result::QueueFull;
+                }
+            }
+            if (op == TxSubmitOp::Open) {
+                txQueue.clear();
+            }
+            txQueue.push_back(std::move(item));
+        }
+        ensureTxWorkerStarted();
+        txQueueCv.notify_one();
+        return Result::Ok;
+    }
+
     void clearTransportState() {
+        stopTxPipeline();
         releaseWsStream();
         {
             std::lock_guard<std::mutex> lg(udpMu);
@@ -1508,6 +1755,9 @@ struct Session::Impl {
         if (!connected.load() || welcome.sessionId == 0) {
             return Result::NotConnected;
         }
+        if (!clientTxOpen.load()) {
+            return Result::NotReady;
+        }
         if (opus.empty()) {
             return Result::InvalidArg;
         }
@@ -1657,24 +1907,15 @@ void Session::cancelOngoingConnect() {
     impl_->cancelOngoingConnectInternal();
 }
 
-Result Session::txStart() {
-    return impl_->txStartInternal();
+Result Session::submitTx(
+    TxSubmitOp op,
+    std::span<const int16_t> pcm,
+    std::span<const uint8_t> opus) {
+    return impl_->submitTxInternal(op, pcm, opus);
 }
 
-Result Session::pushTxPcm(std::span<const int16_t> samples) {
-    return impl_->feedTxPcmInternal(samples);
-}
-
-Result Session::txEnd() {
-    return impl_->txEndInternal();
-}
-
-Result Session::sendTxOpus(std::span<const uint8_t> opus) {
-    return impl_->sendTxOpusInternal(opus);
-}
-
-Result Session::sendTxEofBurst() {
-    return impl_->sendTxEofBurstInternal();
+bool Session::waitTxQueueIdle(int timeoutMs) {
+    return impl_->waitTxQueueIdleInternal(timeoutMs);
 }
 
 Result Session::setRepeaterMode(bool enabled) {

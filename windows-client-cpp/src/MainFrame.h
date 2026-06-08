@@ -183,6 +183,7 @@ private:
     std::atomic<int> pttReleaseBurstCount_{0};
     std::atomic<bool> pttReleaseBurstBlocked_{false};
     std::atomic<uint64_t> txCountdownTicket_{0};
+    std::atomic<bool> txUplinkOpened_{false};
     bool busyModeEnabled_ = false;
     bool serverRxBroadcastActive_ = false;
     bool serverPttLocked_ = false;

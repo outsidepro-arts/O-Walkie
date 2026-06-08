@@ -45,12 +45,13 @@ public:
     void clearConnectionLostSignaled();
     void cancelOngoingConnect();
 
-    Result txStart();
-    Result pushTxPcm(std::span<const int16_t> samples);
-    Result txEnd();
-
-    Result sendTxOpus(std::span<const uint8_t> opus);
-    Result sendTxEofBurst();
+    /** Enqueue an uplink TX command (processed in order on a session worker thread). */
+    Result submitTx(
+        TxSubmitOp op,
+        std::span<const int16_t> pcm = {},
+        std::span<const uint8_t> opus = {});
+    /** Wait until the TX command queue is empty and the worker is idle. */
+    bool waitTxQueueIdle(int timeoutMs);
     Result setRepeaterMode(bool enabled);
     Result resetUdpTransport();
     void setPowerProfile(PowerProfile profile);

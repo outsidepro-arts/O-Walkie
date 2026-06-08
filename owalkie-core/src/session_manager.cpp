@@ -467,19 +467,11 @@ Result SessionManager::getSessionInfo(SessionId id, SessionState* out_state, boo
     return Result::Ok;
 }
 
-Result SessionManager::txStart(SessionId id) {
-    std::lock_guard<std::mutex> lock(mu_);
-    Session* session = sessionLocked(id);
-    if (!session) {
-        return Result::InvalidArg;
-    }
-    if (!session->isSessionReady()) {
-        return Result::NotReady;
-    }
-    return session->txStart();
-}
-
-Result SessionManager::pushTxPcm(SessionId id, std::span<const int16_t> samples) {
+Result SessionManager::submitTx(
+    SessionId id,
+    TxSubmitOp op,
+    std::span<const int16_t> pcm,
+    std::span<const uint8_t> opus) {
     Session* session = nullptr;
     {
         std::lock_guard<std::mutex> lock(mu_);
@@ -488,19 +480,19 @@ Result SessionManager::pushTxPcm(SessionId id, std::span<const int16_t> samples)
             return Result::InvalidArg;
         }
     }
-    if (!session->isSessionReady()) {
+    if (op != TxSubmitOp::Abort && !session->isSessionReady()) {
         return Result::NotReady;
     }
-    return session->pushTxPcm(samples);
+    return session->submitTx(op, pcm, opus);
 }
 
-Result SessionManager::txEnd(SessionId id) {
+bool SessionManager::waitTxQueueIdle(SessionId id, int timeoutMs) {
     std::lock_guard<std::mutex> lock(mu_);
     Session* session = sessionLocked(id);
     if (!session) {
-        return Result::InvalidArg;
+        return true;
     }
-    return session->txEnd();
+    return session->waitTxQueueIdle(timeoutMs);
 }
 
 Result SessionManager::setRepeaterMode(SessionId id, bool enabled) {
