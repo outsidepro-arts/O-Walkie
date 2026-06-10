@@ -40,6 +40,14 @@ if(ANDROID)
             "Android session transport disabled (no vcpkg NDK deps for ${VCPKG_TARGET_TRIPLET}). "
             "Run android/scripts/build-ndk-deps.ps1 or set OWALKIE_FLUTTER_FULL_SESSION=ON after installing deps.")
     endif()
+elseif(APPLE)
+    set(OWALKIE_CORE_USE_FETCH_JSON ON CACHE BOOL "" FORCE)
+    if(DEFINED ENV{OWALKIE_FLUTTER_FULL_SESSION} AND "$ENV{OWALKIE_FLUTTER_FULL_SESSION}" STREQUAL "ON")
+        message(WARNING
+            "OWALKIE_FLUTTER_FULL_SESSION=ON on iOS: install vcpkg ios deps first (see flutter-client/ios/README.md). "
+            "Building utilities-only until deps are wired.")
+    endif()
+    set(OWALKIE_CORE_BUILD_SESSION OFF CACHE BOOL "" FORCE)
 else()
     set(OWALKIE_CORE_USE_FETCH_JSON ON CACHE BOOL "" FORCE)
     if(WIN32 AND DEFINED ENV{VCPKG_ROOT} AND NOT "$ENV{VCPKG_ROOT}" STREQUAL "")
@@ -51,12 +59,21 @@ endif()
 
 add_subdirectory("${OWALKIE_REPO_ROOT}/owalkie-core" "${CMAKE_BINARY_DIR}/owalkie-core-build")
 
-add_library(owalkie_core SHARED
-    miniaudio_impl.cpp
-    owalkie_flutter_audio.cpp
-    owalkie_flutter_bridge.cpp
-    owalkie_flutter_relay.cpp
-)
+if(APPLE)
+    add_library(owalkie_core STATIC
+        miniaudio_impl.cpp
+        owalkie_flutter_audio.cpp
+        owalkie_flutter_bridge.cpp
+        owalkie_flutter_relay.cpp
+    )
+else()
+    add_library(owalkie_core SHARED
+        miniaudio_impl.cpp
+        owalkie_flutter_audio.cpp
+        owalkie_flutter_bridge.cpp
+        owalkie_flutter_relay.cpp
+    )
+endif()
 
 set_target_properties(owalkie_core PROPERTIES
     OUTPUT_NAME "owalkie_core"
@@ -80,6 +97,14 @@ endif()
 
 if(ANDROID)
     target_link_libraries(owalkie_core PRIVATE log)
+endif()
+
+if(APPLE)
+    target_link_libraries(owalkie_core PRIVATE
+        "-framework AudioToolbox"
+        "-framework AVFoundation"
+        "-framework CoreAudio"
+    )
 endif()
 
 if(WIN32)

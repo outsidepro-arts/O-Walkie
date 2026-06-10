@@ -24,8 +24,9 @@ Go relay and `owalkie-core` protocol stay unchanged.
 ## Plugin: `owalkie_core`
 
 - **Now:** session transport + miniaudio RX/TX in native code; Dart **background isolate** (`session_worker.dart`) owns all FFI calls; UI talks via `SessionService` + `SendPort`.
-- **Android (default):** utilities-only (`OWALKIE_CORE_BUILD_SESSION=OFF`) so the shell APK builds without vcpkg NDK deps. Full session: run `android/scripts/build-ndk-deps.ps1`, then build with `OWALKIE_FLUTTER_FULL_SESSION=ON`.
-- **Windows (default):** utilities-only until `vcpkg install boost-beast opus --triplet x64-windows`; then set session ON in `src/CMakeLists.txt` or add a similar env flag.
+- **Android (default):** utilities-only unless vcpkg NDK deps installed; full session: `android/scripts/build-ndk-deps.ps1` + `OWALKIE_FLUTTER_FULL_SESSION=ON`.
+- **Windows (default):** session ON when `VCPKG_ROOT` set and `boost-beast`/`opus` installed for `x64-windows`.
+- **iOS (scaffold):** Xcode project + CocoaPods CMake static lib; **utilities-only** until vcpkg iOS triplets wired (`flutter-client/ios/README.md`).
 - **Next:** extend `ffigen` to `include/owalkie_core.h` managed-session API; register native callbacks → Dart `SendPort` (dedicated isolate, mirror `NativeRelayBridge`).
 
 Suggested future plugins (pub.dev):
@@ -81,6 +82,7 @@ cd D:\progworkspace\Vibecoding\O-Walkie\flutter-client
 flutter pub get
 flutter build apk --debug
 flutter build windows
+# iOS (macOS): tool/build_ios.sh --simulator
 ```
 
 Android NDK deps: same as Kotlin client (`android/scripts/build-ndk-deps.ps1` if vcpkg triplets missing).

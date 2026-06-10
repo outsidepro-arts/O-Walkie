@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:owalkie_core/owalkie_core.dart';
 
 import '../../l10n/app_strings.dart';
-import '../../platform/android_platform.dart';
+import '../../platform/native_platform.dart';
 import 'home_screen_state.dart';
 
 final homeScreenControllerProvider =
@@ -30,8 +30,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (_session != null) {
       return;
     }
-    if (AndroidPlatform.isAndroid) {
-      final micOk = await AndroidPlatform.ensureMicrophonePermission();
+    if (NativePlatform.isMobile) {
+      final micOk = await NativePlatform.ensureMicrophonePermission();
       if (!micOk) {
         state = state.copyWith(
           lastError: 'Microphone permission is required for push-to-talk.',
@@ -73,10 +73,10 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           :final connecting,
           :final error,
         ):
-        if (connected && AndroidPlatform.isAndroid) {
-          unawaited(AndroidPlatform.prepareAudioSession());
-        } else if (!connected && !connecting && AndroidPlatform.isAndroid) {
-          unawaited(AndroidPlatform.releaseAudioSession());
+        if (connected && NativePlatform.isMobile) {
+          unawaited(NativePlatform.prepareAudioSession());
+        } else if (!connected && !connecting && NativePlatform.isMobile) {
+          unawaited(NativePlatform.releaseAudioSession());
         }
         state = state.copyWith(
           isConnected: connected,
@@ -182,7 +182,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (!state.isConnected || state.txActive) {
       return;
     }
-    if (AndroidPlatform.isAndroid) {
+    if (NativePlatform.isMobile) {
       unawaited(_pttDownAsync());
       return;
     }
@@ -190,7 +190,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   Future<void> _pttDownAsync() async {
-    final micOk = await AndroidPlatform.ensureMicrophonePermission();
+    final micOk = await NativePlatform.ensureMicrophonePermission();
     if (!micOk) {
       state = state.copyWith(
         lastError: 'Microphone permission is required for push-to-talk.',

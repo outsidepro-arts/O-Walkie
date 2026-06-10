@@ -1,10 +1,11 @@
-# Builds Flutter client for Windows (dist bundle) and Android (debug APK + optional ADB install).
+# Builds Flutter client for Windows (dist bundle), Android (debug APK), and documents iOS (macOS only).
 param(
     [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [ValidateSet("Debug", "Release")]
     [string]$WindowsConfiguration = "Release",
     [switch]$SkipWindows,
     [switch]$SkipAndroid,
+    [switch]$SkipIosHint,
     [switch]$NoInstall,
     [switch]$PrepareAndroidNdk
 )
@@ -137,6 +138,10 @@ try {
     if (-not $SkipWindows) {
         $dist = Join-Path $ProjectRoot "build\dist\windows-$($WindowsConfiguration.ToLower())"
         Write-Host "Windows dist: $dist\owalkie_app.exe"
+    }
+    if (-not $SkipIosHint) {
+        Write-Host ""
+        Write-Host "iOS: build on macOS with tool/build_ios.sh (see ios/README.md)" -ForegroundColor Yellow
     }
 } finally {
     Pop-Location

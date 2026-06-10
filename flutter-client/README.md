@@ -34,6 +34,8 @@ powershell -File tool\build_all.ps1 -PrepareAndroidNdk
 
 Android **applicationId**: `ru.outsidepro_arts.owalkie.flutter` (launcher: **O-Walkie Flutter**) — installs next to native `ru.outsidepro_arts.owalkie`.
 
+**iOS** bundle ID: `ru.outsideproarts.owalkie.flutter` — see [ios/README.md](ios/README.md) (build on macOS; session scaffold utilities-only until vcpkg ios deps).
+
 Android builds **auto-enable session transport** when vcpkg NDK deps are installed (`android/scripts/build-ndk-deps.ps1`). `build_all.ps1` sets `OWALKIE_FLUTTER_FULL_SESSION=ON` and clears native CMake cache before each Android build.
 
 ### Individual targets
