@@ -43,4 +43,20 @@ function(owalkie_assert_vcpkg_installed)
             "Missing vcpkg packages for ${_triplet} under ${_vcpkg_root}.\n"
             "Run: android/scripts/build-ndk-deps.ps1")
     endif()
+    if(NOT EXISTS "${_prefix}/share/boost_headers/boost_headers-config.cmake")
+        message(FATAL_ERROR
+            "Incomplete vcpkg Boost for ${_triplet} (boost_headers missing).\n"
+            "Re-run: android/scripts/build-ndk-deps.ps1")
+    endif()
+endfunction()
+
+function(owalkie_vcpkg_session_ready out_var)
+    owalkie_vcpkg_triplet(_triplet)
+    owalkie_resolve_vcpkg_root(_vcpkg_root)
+    set(_prefix "${_vcpkg_root}/installed/${_triplet}")
+    if(EXISTS "${_prefix}/share/boost_headers/boost_headers-config.cmake")
+        set(${out_var} ON PARENT_SCOPE)
+    else()
+        set(${out_var} OFF PARENT_SCOPE)
+    endif()
 endfunction()

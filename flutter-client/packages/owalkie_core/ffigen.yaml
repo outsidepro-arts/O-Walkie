@@ -1,0 +1,14 @@
+name: OwalkieCoreBindings
+description: |
+  Bindings for `src/owalkie_flutter_bridge.h`.
+
+  Regenerate with `dart run ffigen --config ffigen.yaml`.
+output: 'lib/owalkie_core_bindings_generated.dart'
+headers:
+  entry-points:
+    - 'src/owalkie_flutter_bridge.h'
+  include-directives:
+    - 'src/owalkie_flutter_bridge.h'
+comments:
+  style: any
+  length: full
