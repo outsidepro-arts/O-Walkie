@@ -13,6 +13,15 @@ Feature phases and plugin choices: [ROADMAP.md](ROADMAP.md).
 
 No user setting for “screen PTT toggle-only mode” (unlike legacy Kotlin checkbox).
 
+## Text fields and TalkBack
+
+Connection fields keep text in `TextEditingController` until Save/Connect (like Kotlin
+inputs). Do **not** sync every `onChanged` into Riverpod — that caused controller
+rewrites and fragmented duplication with TalkBack braille input.
+
+Use `labelText` + `helperText` only (no `hintText` in semantics) to reduce risk of
+label/hint being merged into committed text ([flutter#113457](https://github.com/flutter/flutter/issues/113457)).
+
 ## Layout
 
 ```

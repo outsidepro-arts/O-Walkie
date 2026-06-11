@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../a11y/a11y.dart';
+import '../../domain/server_profile.dart';
 import '../../l10n/a11y_strings.dart';
 import '../../l10n/app_strings.dart';
 import 'home_screen_controller.dart';
@@ -35,17 +36,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     _portCtrl = TextEditingController(text: '${draft.port}');
     _channelCtrl = TextEditingController(text: draft.channel);
     ref.listenManual(
-      homeScreenControllerProvider.select((s) => s.draftProfile),
+      homeScreenControllerProvider.select((s) => s.selectedServerIndex),
       (previous, next) {
         if (previous == next) {
           return;
         }
-        _nameCtrl.text = next.name;
-        _hostCtrl.text = next.host;
-        _portCtrl.text = '${next.port}';
-        _channelCtrl.text = next.channel;
+        _loadControllersFromProfile(
+          ref.read(homeScreenControllerProvider).profile,
+        );
       },
     );
+  }
+
+  void _loadControllersFromProfile(ServerProfile profile) {
+    _nameCtrl.text = profile.name;
+    _hostCtrl.text = profile.host;
+    _portCtrl.text = '${profile.port}';
+    _channelCtrl.text = profile.channel;
   }
 
   @override
@@ -186,7 +193,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       onChanged: state.canSelectProfiles
                           ? (index) {
                               if (index != null) {
-                                _syncProfile();
                                 controller.selectProfile(index);
                               }
                             }
@@ -236,16 +242,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       hostCtrl: _hostCtrl,
                       portCtrl: _portCtrl,
                       channelCtrl: _channelCtrl,
-                      onChanged: _syncProfile,
                     ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
                         Expanded(
                           child: OutlinedButton(
-                            onPressed: () {
+                            onPressed: () async {
                               _syncProfile();
-                              controller.saveCurrentProfile();
+                              await controller.saveCurrentProfile();
+                              _loadControllersFromProfile(
+                                ref.read(homeScreenControllerProvider).profile,
+                              );
                             },
                             child: const Text(AppStrings.saveServer),
                           ),
@@ -518,14 +526,12 @@ class _ConnectionDetailsForm extends StatelessWidget {
     required this.hostCtrl,
     required this.portCtrl,
     required this.channelCtrl,
-    required this.onChanged,
   });
 
   final TextEditingController nameCtrl;
   final TextEditingController hostCtrl;
   final TextEditingController portCtrl;
   final TextEditingController channelCtrl;
-  final VoidCallback onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -534,9 +540,8 @@ class _ConnectionDetailsForm extends StatelessWidget {
       children: [
         _LabeledField(
           label: AppStrings.serverNameLabel,
-          hint: AppStrings.serverNameHint,
+          helper: AppStrings.serverNameHint,
           controller: nameCtrl,
-          onChanged: (_) => onChanged(),
         ),
         const SizedBox(height: 8),
         Row(
@@ -546,10 +551,9 @@ class _ConnectionDetailsForm extends StatelessWidget {
               flex: 3,
               child: _LabeledField(
                 label: AppStrings.serverHostLabel,
-                hint: AppStrings.serverHostHint,
+                helper: AppStrings.serverHostHint,
                 controller: hostCtrl,
                 textInputAction: TextInputAction.next,
-                onChanged: (_) => onChanged(),
               ),
             ),
             const SizedBox(width: 8),
@@ -557,21 +561,18 @@ class _ConnectionDetailsForm extends StatelessWidget {
               flex: 2,
               child: _LabeledField(
                 label: AppStrings.portLabel,
-                hint: AppStrings.portHint,
                 controller: portCtrl,
                 keyboardType: TextInputType.number,
                 textInputAction: TextInputAction.next,
-                onChanged: (_) => onChanged(),
               ),
             ),
           ],
         ),
         _LabeledField(
           label: AppStrings.channelLabel,
-          hint: AppStrings.channelHint,
+          helper: AppStrings.channelHint,
           controller: channelCtrl,
           textInputAction: TextInputAction.done,
-          onChanged: (_) => onChanged(),
         ),
       ],
     );
@@ -581,30 +582,30 @@ class _ConnectionDetailsForm extends StatelessWidget {
 class _LabeledField extends StatelessWidget {
   const _LabeledField({
     required this.label,
-    required this.hint,
     required this.controller,
+    this.helper,
     this.keyboardType,
     this.textInputAction,
-    this.onChanged,
   });
 
   final String label;
-  final String hint;
+  final String? helper;
   final TextEditingController controller;
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
-  final ValueChanged<String>? onChanged;
 
   @override
   Widget build(BuildContext context) {
+    // labelText only — avoid labelText+hintText in semantics (TalkBack braille
+    // setText may concatenate them; flutter/flutter#113457).
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
       textInputAction: textInputAction,
-      onChanged: onChanged,
       decoration: InputDecoration(
         labelText: label,
-        hintText: hint,
+        helperText: helper,
+        helperMaxLines: 2,
       ),
     );
   }
