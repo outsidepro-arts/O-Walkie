@@ -7,6 +7,7 @@ export 'session_service.dart';
 export 'src/link_signal.dart';
 export 'src/session_event_type.dart';
 export 'src/session_messages.dart';
+export 'ui_sound_library.dart';
 
 /// Thin Dart facade over the O-Walkie native core (FFI plugin).
 ///

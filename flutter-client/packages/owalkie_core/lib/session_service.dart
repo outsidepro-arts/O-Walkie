@@ -106,6 +106,16 @@ class SessionService {
     ));
   }
 
+  void loadSoundBank({
+    required List<int> pttPress,
+    required List<int> pttRelease,
+  }) {
+    _workerPort?.send(SessionSoundBankCommand(
+      pttPress: pttPress,
+      pttRelease: pttRelease,
+    ));
+  }
+
   void setRxVolumePercent(int percent) {
     _workerPort?.send(SessionSetRxVolumeCommand(percent));
   }

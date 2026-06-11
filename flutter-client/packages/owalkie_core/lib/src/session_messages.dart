@@ -51,6 +51,17 @@ final class SessionPlayLocalCommand extends SessionCommand {
   final int sampleRate;
 }
 
+/// PTT WAV samples loaded on main isolate (worker cannot use [rootBundle]).
+final class SessionSoundBankCommand extends SessionCommand {
+  const SessionSoundBankCommand({
+    required this.pttPress,
+    required this.pttRelease,
+  });
+
+  final List<int> pttPress;
+  final List<int> pttRelease;
+}
+
 final class SessionSetRxVolumeCommand extends SessionCommand {
   const SessionSetRxVolumeCommand(this.percent);
 

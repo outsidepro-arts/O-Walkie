@@ -47,9 +47,11 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   StreamSubscription<Uri>? _deepLinkSub;
   bool _scanLoopActive = false;
   ScanMode? _scanMode;
+  Timer? _rxVolumePreviewTimer;
   static const _scanInterval = Duration(seconds: 10);
   static const _scanQueryTimeoutMs = 4000;
   static const _scanActivityVibrationMs = 200;
+  static const _rxVolumePreviewDelay = Duration(milliseconds: 120);
 
   ServerStore get _store => ref.read(serverStoreProvider);
   PhoneCallPauseStore get _phoneCallPauseStore =>
@@ -429,7 +431,12 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     final next = (state.selectedServerIndex - 1 + state.profiles.length) %
         state.profiles.length;
+    if (next == state.selectedServerIndex) {
+      return;
+    }
+    UiSignalPlayer.playSwitch(_session);
     selectProfile(next);
+    unawaited(_reconnectIfUserRequestedConnection());
   }
 
   void nextProfile() {
@@ -440,7 +447,12 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       return;
     }
     final next = (state.selectedServerIndex + 1) % state.profiles.length;
+    if (next == state.selectedServerIndex) {
+      return;
+    }
+    UiSignalPlayer.playSwitch(_session);
     selectProfile(next);
+    unawaited(_reconnectIfUserRequestedConnection());
   }
 
   Future<void> saveCurrentProfile() async {
@@ -503,6 +515,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       _session = service;
       _sessionSub = service.messages.listen(_onSessionMessage);
       service.setRxVolumePercent(state.rxVolumePercent);
+      await UiSignalPlayer.ensureLoaded();
+      UiSignalPlayer.loadSoundBank(service);
     } catch (e) {
       state = state.copyWith(
         sessionSupported: false,
@@ -694,12 +708,54 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     final value = percent.clamp(0, 200);
     state = state.copyWith(rxVolumePercent: value);
     _session?.setRxVolumePercent(value);
+    _scheduleRxVolumePreview(value);
+  }
+
+  void finishRxVolumePreview(int percent) {
+    _cancelRxVolumePreview();
+    UiSignalPlayer.playVolumePreview(_session, percent.clamp(0, 200));
+  }
+
+  void _scheduleRxVolumePreview(int percent) {
+    _cancelRxVolumePreview();
+    _rxVolumePreviewTimer = Timer(_rxVolumePreviewDelay, () {
+      UiSignalPlayer.playVolumePreview(_session, percent);
+    });
+  }
+
+  void _cancelRxVolumePreview() {
+    _rxVolumePreviewTimer?.cancel();
+    _rxVolumePreviewTimer = null;
+  }
+
+  Future<void> _reconnectIfUserRequestedConnection() async {
+    if (!state.isConnected && !state.isConnecting && !state.relayPausedForPhoneCall) {
+      return;
+    }
+    await _ensureSession();
+    final session = _session;
+    if (session == null) {
+      return;
+    }
+    final profile = state.draftProfile;
+    if (profile.host.trim().isEmpty) {
+      return;
+    }
+    session.disconnect();
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    session.connect(
+      host: profile.host.trim(),
+      port: profile.port,
+      channel: profile.channel,
+      repeater: profile.repeater,
+    );
   }
 
   void startScanning(ScanMode mode) {
     if (_scanLoopActive || state.profiles.isEmpty) {
       return;
     }
+    UiSignalPlayer.playSwitch(_session);
     if (state.isConnected || state.isConnecting || state.relayPausedForPhoneCall) {
       // Scan is allowed while connected (skips current profile).
     }
@@ -716,6 +772,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   void stopScanning({bool announce = true}) {
     if (!_scanLoopActive && !state.scanActive) {
       return;
+    }
+    if (announce) {
+      UiSignalPlayer.playSwitch(_session);
     }
     _scanLoopActive = false;
     _scanMode = null;
@@ -883,6 +942,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (state.profiles.length <= 1 || step == 0) {
       return;
     }
+    UiSignalPlayer.playSwitch(_session);
     final wasActive =
         state.isConnected || state.isConnecting || state.relayPausedForPhoneCall;
     if (wasActive) {
@@ -958,6 +1018,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (session == null || !state.sessionSupported) {
       return;
     }
+    UiSignalPlayer.playSwitch(session);
     if (state.isConnected || state.isConnecting || state.relayPausedForPhoneCall) {
       state = state.copyWith(relayPausedForPhoneCall: false);
       session.disconnect();
@@ -1048,6 +1109,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
 
   void _dispose() {
     _cancelTxCountdown();
+    _cancelRxVolumePreview();
     _pttBurstGuard.onBlockedChanged = null;
     _pttBurstGuard.reset();
     unawaited(Haptics.parallelTxCollision(active: false));

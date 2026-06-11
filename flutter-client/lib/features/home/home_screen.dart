@@ -172,9 +172,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final connectionChip = state.connectionDisplayChip;
     final pttUiEnabled = pttUiEnabledFor(state);
 
-    return Semantics(
-      explicitChildNodes: true,
-      child: Scaffold(
+    return Scaffold(
         body: SafeArea(
           child: FocusTraversalGroup(
             child: SingleChildScrollView(
@@ -362,6 +360,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   _RxVolumeSection(
                     percent: state.rxVolumePercent,
                     onChanged: controller.setRxVolume,
+                    onChangeEnd: controller.finishRxVolumePreview,
                   ),
                   const SizedBox(height: 16),
                   _PttArea(
@@ -395,12 +394,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
           ),
         ),
-      ),
     );
   }
 }
 
-class _HeaderRow extends StatelessWidget {
+class _HeaderRow extends StatefulWidget {
   const _HeaderRow({
     required this.repeaterEnabled,
     required this.onRepeaterToggled,
@@ -408,6 +406,63 @@ class _HeaderRow extends StatelessWidget {
 
   final bool repeaterEnabled;
   final ValueChanged<bool> onRepeaterToggled;
+
+  @override
+  State<_HeaderRow> createState() => _HeaderRowState();
+}
+
+class _HeaderRowState extends State<_HeaderRow> {
+  final _moreButtonKey = GlobalKey();
+
+  Future<void> _showMoreMenu() async {
+    final buttonContext = _moreButtonKey.currentContext;
+    if (buttonContext == null) {
+      return;
+    }
+
+    final box = buttonContext.findRenderObject()! as RenderBox;
+    final overlay =
+        Overlay.of(buttonContext).context.findRenderObject()! as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        box.localToGlobal(Offset.zero, ancestor: overlay),
+        box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    final value = await showMenu<String>(
+      context: buttonContext,
+      position: position,
+      popUpAnimationStyle: AnimationStyle.noAnimation,
+      items: [
+        CheckedPopupMenuItem(
+          value: 'repeater',
+          checked: widget.repeaterEnabled,
+          child: Text(AppStrings.menuRepeaterMode),
+        ),
+        PopupMenuItem(
+          value: 'settings',
+          child: Text(AppStrings.menuSettings),
+        ),
+      ],
+    );
+
+    if (!mounted || value == null) {
+      return;
+    }
+
+    switch (value) {
+      case 'repeater':
+        widget.onRepeaterToggled(!widget.repeaterEnabled);
+      case 'settings':
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            context.push('/settings');
+          }
+        });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -424,38 +479,10 @@ class _HeaderRow extends StatelessWidget {
             ),
           ),
         ),
-        Semantics(
-          button: true,
-          label: AppStrings.menuMore,
-          excludeSemantics: true,
-          child: PopupMenuButton<String>(
-            onSelected: (value) {
-              if (value == 'repeater') {
-                onRepeaterToggled(!repeaterEnabled);
-              } else if (value == 'settings') {
-                context.push('/settings');
-              }
-            },
-            itemBuilder: (context) => [
-              CheckedPopupMenuItem(
-                value: 'repeater',
-                checked: repeaterEnabled,
-                child: Text(AppStrings.menuRepeaterMode),
-              ),
-              PopupMenuItem(
-                value: 'settings',
-                child: Text(AppStrings.menuSettings),
-              ),
-            ],
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                border: Border.all(color: Theme.of(context).colorScheme.outline),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(AppStrings.menuMore),
-            ),
-          ),
+        OutlinedButton(
+          key: _moreButtonKey,
+          onPressed: _showMoreMenu,
+          child: Text(AppStrings.menuMore),
         ),
       ],
     );
@@ -719,10 +746,15 @@ class _LabeledField extends StatelessWidget {
 }
 
 class _RxVolumeSection extends StatefulWidget {
-  const _RxVolumeSection({required this.percent, required this.onChanged});
+  const _RxVolumeSection({
+    required this.percent,
+    required this.onChanged,
+    required this.onChangeEnd,
+  });
 
   final int percent;
   final ValueChanged<int> onChanged;
+  final ValueChanged<int> onChangeEnd;
 
   @override
   State<_RxVolumeSection> createState() => _RxVolumeSectionState();
@@ -741,6 +773,7 @@ class _RxVolumeSectionState extends State<_RxVolumeSection> {
 
   void _onChangeEnd(double value) {
     final percent = value.round();
+    widget.onChangeEnd(percent);
     A11yAnnounce.whenFocused(
       context,
       focused: _a11yFocused,

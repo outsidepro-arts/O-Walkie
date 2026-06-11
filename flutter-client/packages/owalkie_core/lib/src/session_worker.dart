@@ -41,6 +41,8 @@ class _SessionWorker {
   bool _publishedConnecting = false;
   bool _publishedReconnecting = false;
   Timer? _pollTimer;
+  List<int> _pttPressPcm = const [];
+  List<int> _pttReleasePcm = const [];
 
   static const _initialBackoffMs = 1500;
   static const _maxBackoffMs = 8000;
@@ -88,6 +90,9 @@ class _SessionWorker {
         unawaited(_sendCall(points, repeatCount));
       case SessionPlayLocalCommand(:final samples, :final sampleRate):
         _playLocalUi(samples, sampleRate);
+      case SessionSoundBankCommand(:final pttPress, :final pttRelease):
+        _pttPressPcm = pttPress;
+        _pttReleasePcm = pttRelease;
       case SessionSetRxVolumeCommand(:final percent):
         _relay.setRxVolumePercent(percent);
       case SessionSetRepeaterCommand(:final enabled):
@@ -320,6 +325,9 @@ class _SessionWorker {
     }
     final rc = _relay.pttDown(_sessionId);
     _localTxActive = rc == 0;
+    if (_localTxActive && _pttPressPcm.isNotEmpty) {
+      _playLocalUi(_pttPressPcm, _localPlaybackRate);
+    }
     _mainPort.send(SessionWorkerMessage.pttResult(
       active: _localTxActive,
       resultCode: rc,
@@ -366,6 +374,14 @@ class _SessionWorker {
         sampleRate: _localPlaybackRate,
         tailMs: _rogerTailMs,
       );
+      if (local != null && _pttReleasePcm.isNotEmpty) {
+        final merged = Int16List(_pttReleasePcm.length + local.length);
+        for (var i = 0; i < _pttReleasePcm.length; i++) {
+          merged[i] = _pttReleasePcm[i];
+        }
+        merged.setRange(_pttReleasePcm.length, merged.length, local);
+        local = merged;
+      }
     }
     final rc = _relay.pttUpWithRoger(
       sessionId: _sessionId,

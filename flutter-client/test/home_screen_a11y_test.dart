@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:owalkie_app/l10n/a11y_strings.dart';
@@ -40,6 +41,36 @@ void main() {
     handle.dispose();
   });
 
+  testWidgets('More button receives keyboard focus via tab traversal',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(await buildTestApp());
+    await tester.pumpAndSettle();
+
+    final moreButton =
+        find.widgetWithText(OutlinedButton, AppStrings.menuMore);
+    expect(moreButton, findsOneWidget);
+
+    var moreFocused = false;
+    for (var i = 0; i < 80; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      final primary = FocusManager.instance.primaryFocus;
+      if (primary?.context != null &&
+          find
+              .ancestor(
+                of: find.byWidget(primary!.context!.widget),
+                matching: moreButton,
+              )
+              .evaluate()
+              .isNotEmpty) {
+        moreFocused = true;
+        break;
+      }
+    }
+
+    expect(moreFocused, isTrue);
+  });
+
   testWidgets('settings screen About section is reachable with semantics',
       (WidgetTester tester) async {
     final handle = tester.ensureSemantics();
@@ -47,7 +78,7 @@ void main() {
     await tester.pumpWidget(await buildTestApp());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.tap(find.widgetWithText(OutlinedButton, AppStrings.menuMore));
     await tester.pumpAndSettle();
     await tester.tap(find.text(AppStrings.menuSettings).last);
     await tester.pumpAndSettle();
