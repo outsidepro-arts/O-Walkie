@@ -4,7 +4,6 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   app_links
-  hotkey_manager_windows
   screen_retriever_windows
   share_plus
   tray_manager

@@ -34,8 +34,15 @@ abstract final class NativePlatform {
 
   static bool get isWindows => Platform.isWindows;
 
-  static Stream<String> get platformEvents =>
-      _eventsChannel.receiveBroadcastStream().map((event) => event.toString());
+  /// Android/iOS only. Desktop uses platform-specific channels (e.g. Windows global PTT).
+  static Stream<String> get platformEvents {
+    if (!isMobile) {
+      return const Stream<String>.empty();
+    }
+    return _eventsChannel
+        .receiveBroadcastStream()
+        .map((event) => event.toString());
+  }
 
   static Future<bool> hasMicrophonePermission() async {
     if (!isMobile) {

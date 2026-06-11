@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -13,8 +12,10 @@ import '../../data/windows_settings_store.dart';
 import '../../features/home/home_screen_controller.dart';
 import '../../platform/native_platform.dart';
 import '../../platform/windows/desktop_shell.dart';
+import '../../platform/windows/windows_global_ptt.dart';
 import '../../data/signal_pattern_store.dart';
 import '../../domain/signal_pattern.dart';
+import '../../domain/windows_ptt_binding.dart';
 import '../../l10n/app_strings.dart';
 
 const _githubUrl = 'https://github.com/outsidepro-arts/O-Walkie';
@@ -38,7 +39,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _mediaButtonPtt = true;
   bool _externalControl = false;
   HardwarePttBinding _hardwarePttBinding = const HardwarePttBinding.unassigned();
-  HotKey? _globalPttHotKey;
+  WindowsPttBinding? _globalPttBinding;
   bool _minimizeToTray = false;
 
   @override
@@ -59,7 +60,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final hardwareBinding = await NativePlatform.getHardwarePttBinding();
     final externalControlEnabled = await externalControl.isEnabled();
     final windowsStore = ref.read(windowsSettingsStoreProvider);
-    final globalHotKey = windowsStore.loadHotKey();
+    final globalBinding = windowsStore.loadBinding();
     final minimizeToTray = windowsStore.minimizeToTrayOnClose();
     if (!mounted) {
       return;
@@ -76,7 +77,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _mediaButtonPtt = mediaButtonPtt.isEnabled();
       _externalControl = externalControlEnabled;
       _hardwarePttBinding = hardwareBinding;
-      _globalPttHotKey = globalHotKey;
+      _globalPttBinding = globalBinding;
       _minimizeToTray = minimizeToTray;
     });
   }
@@ -142,23 +143,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (!NativePlatform.isWindows) {
       return;
     }
-    final recorded = await showDialog<HotKey?>(
+    final recorded = await showDialog<WindowsPttBinding?>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) => const _GlobalPttHotkeyDialog(),
     );
     if (!mounted || recorded == null) {
       return;
     }
-    await ref.read(desktopShellProvider).setGlobalPttHotKey(recorded);
-    setState(() => _globalPttHotKey = recorded);
+    await ref.read(desktopShellProvider).setGlobalPttBinding(recorded);
+    setState(() => _globalPttBinding = recorded);
   }
 
   Future<void> _clearGlobalPttHotkey() async {
-    await ref.read(desktopShellProvider).setGlobalPttHotKey(null);
+    await ref.read(desktopShellProvider).setGlobalPttBinding(null);
     if (!mounted) {
       return;
     }
-    setState(() => _globalPttHotKey = null);
+    setState(() => _globalPttBinding = null);
   }
 
   Future<void> _showHardwarePttDialog() async {
@@ -298,9 +300,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             ListTile(
               title: const Text(AppStrings.settingsGlobalPttHotkey),
-              subtitle: _globalPttHotKey == null
-                  ? const Text(AppStrings.settingsGlobalPttHotkeyUnassigned)
-                  : HotKeyVirtualView(hotKey: _globalPttHotKey!),
+              subtitle: Text(
+                _globalPttBinding?.displayName ??
+                    AppStrings.settingsGlobalPttHotkeyUnassigned,
+              ),
               trailing: Wrap(
                 spacing: 4,
                 children: [
@@ -308,7 +311,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onPressed: _showGlobalPttHotkeyDialog,
                     child: const Text(AppStrings.settingsGlobalPttHotkeyAssign),
                   ),
-                  if (_globalPttHotKey != null)
+                  if (_globalPttBinding != null)
                     TextButton(
                       onPressed: _clearGlobalPttHotkey,
                       child: const Text(AppStrings.settingsGlobalPttHotkeyClear),
@@ -451,7 +454,35 @@ class _GlobalPttHotkeyDialog extends StatefulWidget {
 }
 
 class _GlobalPttHotkeyDialogState extends State<_GlobalPttHotkeyDialog> {
-  HotKey? _hotKey;
+  StreamSubscription<String>? _captureSub;
+  String _status = AppStrings.settingsGlobalPttHotkeyDialogWaiting;
+
+  @override
+  void initState() {
+    super.initState();
+    _beginCapture();
+  }
+
+  Future<void> _beginCapture() async {
+    _captureSub = WindowsGlobalPtt.events.listen((event) async {
+      if (event != WindowsGlobalPtt.capturedEvent || !mounted) {
+        return;
+      }
+      final binding = await WindowsGlobalPtt.takeCaptureResult();
+      if (!mounted || binding == null) {
+        return;
+      }
+      Navigator.of(context).pop(binding);
+    });
+    await WindowsGlobalPtt.startCapture();
+  }
+
+  @override
+  void dispose() {
+    unawaited(WindowsGlobalPtt.cancelCapture());
+    unawaited(_captureSub?.cancel());
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -463,27 +494,13 @@ class _GlobalPttHotkeyDialogState extends State<_GlobalPttHotkeyDialog> {
         children: [
           const Text(AppStrings.settingsGlobalPttHotkeyDialogHint),
           const SizedBox(height: 16),
-          HotKeyRecorder(
-            onHotKeyRecorded: (hotKey) {
-              setState(() => _hotKey = hotKey);
-            },
-          ),
-          if (_hotKey != null) ...[
-            const SizedBox(height: 12),
-            HotKeyVirtualView(hotKey: _hotKey!),
-          ],
+          Text(_status),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text(AppStrings.rogerCancel),
-        ),
-        TextButton(
-          onPressed: _hotKey == null
-              ? null
-              : () => Navigator.of(context).pop(_hotKey),
-          child: const Text('OK'),
         ),
       ],
     );

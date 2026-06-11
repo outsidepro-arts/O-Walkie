@@ -4,13 +4,13 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' hide MenuItem;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../data/windows_settings_store.dart';
-import '../../features/home/home_screen_controller.dart';
+import '../../domain/windows_ptt_binding.dart';
 import '../../l10n/app_strings.dart';
+import 'windows_global_ptt.dart';
 
 final desktopShellProvider = Provider<DesktopShell>((ref) {
   final shell = DesktopShell(ref);
@@ -18,7 +18,7 @@ final desktopShellProvider = Provider<DesktopShell>((ref) {
   return shell;
 });
 
-/// System tray, window close behavior, and global PTT hotkey on Windows.
+/// System tray, window close behavior, and global PTT hook on Windows.
 class DesktopShell with TrayListener, WindowListener {
   DesktopShell(this._ref);
 
@@ -26,9 +26,6 @@ class DesktopShell with TrayListener, WindowListener {
   bool _initialized = false;
   bool _exiting = false;
   bool _minimizeToTray = false;
-  HotKey? _registeredHotKey;
-  VoidCallback? _globalPttHandler;
-
   bool get isActive => Platform.isWindows && !kIsWeb;
 
   Future<void> init() async {
@@ -36,9 +33,6 @@ class DesktopShell with TrayListener, WindowListener {
       return;
     }
     _initialized = true;
-    _globalPttHandler = () {
-      _ref.read(homeScreenControllerProvider.notifier).togglePttLatch();
-    };
 
     final store = _ref.read(windowsSettingsStoreProvider);
     _minimizeToTray = store.minimizeToTrayOnClose();
@@ -59,39 +53,29 @@ class DesktopShell with TrayListener, WindowListener {
       ),
     );
 
-    await applyStoredHotKey();
   }
 
-  Future<void> applyStoredHotKey() async {
-    final hotKey = _ref.read(windowsSettingsStoreProvider).loadHotKey();
-    await setGlobalPttHotKey(hotKey, persist: false);
+  Future<void> applyStoredBinding() async {
+    final binding = _ref.read(windowsSettingsStoreProvider).loadBinding();
+    await setGlobalPttBinding(binding, persist: false);
   }
 
-  Future<void> setGlobalPttHotKey(HotKey? hotKey, {bool persist = true}) async {
+  Future<void> setGlobalPttBinding(
+    WindowsPttBinding? binding, {
+    bool persist = true,
+  }) async {
     if (!isActive) {
       return;
     }
-    if (_registeredHotKey != null) {
-      await hotKeyManager.unregister(_registeredHotKey!);
-      _registeredHotKey = null;
-    }
-    if (hotKey != null) {
-      final scoped = HotKey(
-        identifier: hotKey.identifier,
-        key: hotKey.key,
-        modifiers: hotKey.modifiers,
-        scope: HotKeyScope.system,
-      );
-      await hotKeyManager.register(
-        scoped,
-        keyDownHandler: (_) {
-          scheduleMicrotask(() => _globalPttHandler?.call());
-        },
-      );
-      _registeredHotKey = scoped;
+    if (binding == null || !binding.assigned) {
+      await WindowsGlobalPtt.clearBinding();
+      await WindowsGlobalPtt.uninstallHook();
+    } else {
+      await WindowsGlobalPtt.setBinding(binding);
+      await WindowsGlobalPtt.installHook();
     }
     if (persist) {
-      await _ref.read(windowsSettingsStoreProvider).saveHotKey(hotKey);
+      await _ref.read(windowsSettingsStoreProvider).saveBinding(binding);
     }
   }
 
@@ -110,11 +94,7 @@ class DesktopShell with TrayListener, WindowListener {
       return;
     }
     _exiting = true;
-    if (_registeredHotKey != null) {
-      await hotKeyManager.unregister(_registeredHotKey!);
-      _registeredHotKey = null;
-    }
-    await hotKeyManager.unregisterAll();
+    await WindowsGlobalPtt.uninstallHook();
     trayManager.removeListener(this);
     windowManager.removeListener(this);
     await windowManager.setPreventClose(false);

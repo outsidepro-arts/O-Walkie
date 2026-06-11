@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
@@ -35,16 +37,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     _portCtrl = TextEditingController(text: '${draft.port}');
     _channelCtrl = TextEditingController(text: draft.channel);
     ref.listenManual(
-      homeScreenControllerProvider.select((s) => s.selectedServerIndex),
+      homeScreenControllerProvider.select((s) => s.draftProfile),
       (previous, next) {
         if (previous == next) {
           return;
         }
-        _loadControllersFromProfile(
-          ref.read(homeScreenControllerProvider).profile,
-        );
+        _loadControllersFromProfile(next);
       },
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _loadControllersFromProfile(
+        ref.read(homeScreenControllerProvider).draftProfile,
+      );
+    });
     ref.listenManual(
       homeScreenControllerProvider.select((s) => s.statusMessage),
       (previous, next) {
@@ -260,6 +268,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           ? (index) {
                               if (index != null) {
                                 controller.selectProfile(index);
+                                _loadControllersFromProfile(
+                                  ref
+                                      .read(homeScreenControllerProvider)
+                                      .profiles[index],
+                                );
                               }
                             }
                           : null,
@@ -289,8 +302,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       connectHint: connectHint,
                       onConnect: canConnect
                           ? () {
-                              _syncProfile();
-                              controller.toggleConnection();
+                              unawaited(controller.connectToSelectedProfile());
                             }
                           : null,
                       onPrevious: state.canSwitchProfiles

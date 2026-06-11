@@ -2,7 +2,6 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -15,7 +14,6 @@ Future<void> main() async {
 
   if (Platform.isWindows && Platform.environment['FLUTTER_TEST'] != 'true') {
     await windowManager.ensureInitialized();
-    await hotKeyManager.unregisterAll();
     const windowOptions = WindowOptions(
       size: Size(480, 840),
       minimumSize: Size(400, 600),

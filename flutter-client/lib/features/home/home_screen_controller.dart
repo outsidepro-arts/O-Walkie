@@ -24,6 +24,8 @@ import '../../platform/haptics.dart';
 import '../../platform/native_platform.dart';
 import '../../platform/screen_wake.dart';
 import '../../platform/ui_signal_player.dart';
+import '../../platform/windows/desktop_shell.dart';
+import '../../platform/windows/windows_global_ptt.dart';
 import 'home_screen_state.dart';
 import 'session_event_mapper.dart';
 
@@ -36,6 +38,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   SessionService? _session;
   StreamSubscription<SessionWorkerMessage>? _sessionSub;
   StreamSubscription<String>? _platformSub;
+  StreamSubscription<String>? _windowsPttSub;
   final PttBurstGuard _pttBurstGuard = PttBurstGuard();
   Timer? _txCountdownTimer;
   bool _parallelTxVibrating = false;
@@ -63,10 +66,26 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   HomeScreenState build() {
     ref.onDispose(_dispose);
     if (Platform.environment['FLUTTER_TEST'] != 'true') {
-      _platformSub ??= NativePlatform.platformEvents.listen(_onPlatformEvent);
+      if (NativePlatform.isMobile) {
+        _platformSub ??= NativePlatform.platformEvents.listen(_onPlatformEvent);
+      }
+      if (Platform.isWindows) {
+        _windowsPttSub ??=
+            WindowsGlobalPtt.events.listen(_onWindowsGlobalPttEvent);
+      }
       unawaited(_bootstrap());
     }
     return const HomeScreenState();
+  }
+
+  void _onWindowsGlobalPttEvent(String event) {
+    if (event == WindowsGlobalPtt.downEvent) {
+      scheduleMicrotask(pttDown);
+      return;
+    }
+    if (event == WindowsGlobalPtt.upEvent) {
+      scheduleMicrotask(pttUp);
+    }
   }
 
   void _onPlatformEvent(String event) {
@@ -161,6 +180,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   Future<void> _bootstrap() async {
     await _loadProfiles();
     await _ensureSession();
+    if (Platform.isWindows) {
+      await ref.read(desktopShellProvider).applyStoredBinding();
+    }
     _audioInterruption ??= AudioInterruptionManager(
       onInterruptBegin: _pauseRelayForPhoneCall,
       onInterruptEnd: _resumeRelayAfterPhoneCall,
@@ -358,13 +380,33 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (index < 0 || index >= state.profiles.length) {
       return;
     }
+    _applySelectedProfile(index);
+  }
+
+  void syncDraftFromSelectedProfile() {
+    if (state.profiles.isEmpty) {
+      return;
+    }
+    final index = state.selectedServerIndex.clamp(0, state.profiles.length - 1);
+    _applySelectedProfile(index, persistSelection: false);
+  }
+
+  void _applySelectedProfile(int index, {bool persistSelection = true}) {
+    final profile = state.profiles[index];
     state = state.copyWith(
       selectedServerIndex: index,
-      draftProfile: state.profiles[index],
+      draftProfile: profile,
       clearError: true,
       clearStatusMessage: true,
     );
-    unawaited(_store.setLastSelectedName(state.draftProfile.name));
+    if (persistSelection) {
+      unawaited(_store.setLastSelectedName(profile.name));
+    }
+  }
+
+  Future<void> connectToSelectedProfile() async {
+    syncDraftFromSelectedProfile();
+    await toggleConnection();
   }
 
   void previousProfile() {
@@ -992,6 +1034,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     unawaited(ScreenWake.setTransmitting(false));
     _platformSub?.cancel();
     _platformSub = null;
+    _windowsPttSub?.cancel();
+    _windowsPttSub = null;
     _deepLinkSub?.cancel();
     _deepLinkSub = null;
     stopScanning(announce: false);

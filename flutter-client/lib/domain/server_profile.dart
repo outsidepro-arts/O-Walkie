@@ -13,6 +13,19 @@ class ServerProfile {
   final String channel;
   final bool repeater;
 
+  @override
+  bool operator ==(Object other) {
+    return other is ServerProfile &&
+        other.name == name &&
+        other.host == host &&
+        other.port == port &&
+        other.channel == channel &&
+        other.repeater == repeater;
+  }
+
+  @override
+  int get hashCode => Object.hash(name, host, port, channel, repeater);
+
   ServerProfile copyWith({
     String? name,
     String? host,

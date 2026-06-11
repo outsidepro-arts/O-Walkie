@@ -75,7 +75,9 @@ abstract final class AppStrings {
   static const settingsGlobalPttHotkeyClear = 'Clear';
   static const settingsGlobalPttHotkeyDialogTitle = 'Press global PTT hotkey';
   static const settingsGlobalPttHotkeyDialogHint =
-      'Press toggles transmit (works when app is in background).';
+      'Hold to transmit; release to stop (works when app is in background).';
+  static const settingsGlobalPttHotkeyDialogWaiting =
+      'Press any key or key combination (Ctrl/Alt/Shift).';
   static const settingsMinimizeToTray =
       'Minimize to system tray when closing the window';
   static const trayMenuShow = 'Show O-Walkie';

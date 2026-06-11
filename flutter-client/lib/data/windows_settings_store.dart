@@ -1,26 +1,27 @@
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../domain/windows_ptt_binding.dart';
 import 'shared_preferences_provider.dart';
 
 final windowsSettingsStoreProvider = Provider<WindowsSettingsStore>((ref) {
   return WindowsSettingsStore(ref.watch(sharedPreferencesProvider));
 });
 
-/// Windows desktop preferences (global PTT hotkey, minimize-to-tray).
+/// Windows desktop preferences (global PTT binding, minimize-to-tray).
 class WindowsSettingsStore {
   WindowsSettingsStore(this._prefs);
 
-  static const _hotKeyKey = 'windows_global_ptt_hotkey';
+  static const _bindingKey = 'windows_global_ptt_binding';
+  static const _legacyHotKeyKey = 'windows_global_ptt_hotkey';
   static const _minimizeToTrayKey = 'windows_minimize_to_tray_on_close';
 
   final SharedPreferences _prefs;
 
-  HotKey? loadHotKey() {
-    final raw = _prefs.getString(_hotKeyKey);
+  WindowsPttBinding? loadBinding() {
+    final raw = _prefs.getString(_bindingKey);
     if (raw == null || raw.isEmpty) {
       return null;
     }
@@ -29,18 +30,20 @@ class WindowsSettingsStore {
       if (json is! Map<String, dynamic>) {
         return null;
       }
-      return HotKey.fromJson(json);
+      final binding = WindowsPttBinding.fromJson(json);
+      return binding.assigned ? binding : null;
     } catch (_) {
       return null;
     }
   }
 
-  Future<void> saveHotKey(HotKey? hotKey) async {
-    if (hotKey == null) {
-      await _prefs.remove(_hotKeyKey);
+  Future<void> saveBinding(WindowsPttBinding? binding) async {
+    if (binding == null || !binding.assigned) {
+      await _prefs.remove(_bindingKey);
       return;
     }
-    await _prefs.setString(_hotKeyKey, jsonEncode(hotKey.toJson()));
+    await _prefs.setString(_bindingKey, jsonEncode(binding.toJson()));
+    await _prefs.remove(_legacyHotKeyKey);
   }
 
   bool minimizeToTrayOnClose() => _prefs.getBool(_minimizeToTrayKey) ?? false;

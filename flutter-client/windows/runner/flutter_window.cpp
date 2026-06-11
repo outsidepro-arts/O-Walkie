@@ -3,6 +3,8 @@
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "global_ptt_hook.h"
+#include "global_ptt_plugin.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -25,6 +27,7 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  RegisterGlobalPttPlugin(flutter_controller_->engine(), GetHandle());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -40,6 +43,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  GlobalPttPlugin::Instance().Unregister();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -51,6 +55,20 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  switch (message) {
+    case WM_OWALKIE_PTT_DOWN:
+      GlobalPttPlugin::Instance().OnPttDown();
+      return 0;
+    case WM_OWALKIE_PTT_UP:
+      GlobalPttPlugin::Instance().OnPttUp();
+      return 0;
+    case WM_OWALKIE_PTT_CAPTURED:
+      GlobalPttPlugin::Instance().OnCaptured();
+      return 0;
+    default:
+      break;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
