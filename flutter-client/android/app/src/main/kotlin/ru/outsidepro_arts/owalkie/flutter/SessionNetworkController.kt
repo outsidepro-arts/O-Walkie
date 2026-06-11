@@ -10,7 +10,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.telephony.TelephonyManager
+import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Mirrors [ru.outsidepro_arts.owalkie.WalkieService] network bind + signal reporting:
@@ -24,7 +26,9 @@ class SessionNetworkController(context: Context) {
     private var callbackRegistered = false
     private var activeNetwork: Network? = null
     private val lastNetworkValidated = AtomicBoolean(false)
+    private val lastHandoffNetworkHandle = AtomicLong(Long.MIN_VALUE)
     private var lastSignalRefreshAtMs = 0L
+    private var validatedLostRunnable: Runnable? = null
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -73,6 +77,7 @@ class SessionNetworkController(context: Context) {
             return
         }
         running = true
+        seedHandoffHandleFromActiveNetwork()
         registerNetworkCallback()
         handler.post(signalRunnable)
     }
@@ -83,8 +88,11 @@ class SessionNetworkController(context: Context) {
         }
         running = false
         handler.removeCallbacks(signalRunnable)
+        validatedLostRunnable?.let { handler.removeCallbacks(it) }
+        validatedLostRunnable = null
         unregisterNetworkCallback()
         lastNetworkValidated.set(false)
+        lastHandoffNetworkHandle.set(Long.MIN_VALUE)
         activeNetwork = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             runCatching { connectivityManager.bindProcessToNetwork(null) }
@@ -146,29 +154,64 @@ class SessionNetworkController(context: Context) {
             return
         }
         val validated = networkCapabilitiesValidated(caps)
-        if (validated == lastNetworkValidated.get()) {
+        if (validated) {
+            validatedLostRunnable?.let { handler.removeCallbacks(it) }
+            validatedLostRunnable = null
+            if (lastNetworkValidated.getAndSet(true)) {
+                return
+            }
+            onNetworkValidated(reason)
             return
         }
-        lastNetworkValidated.set(validated)
-        if (validated) {
-            onNetworkValidated(reason)
-        } else {
-            PlatformEvents.emit(PlatformEvents.EVENT_NETWORK_LOST)
+        if (!lastNetworkValidated.get()) {
+            return
         }
+        scheduleValidatedLost(reason)
     }
 
-    private fun onNetworkValidated(reason: String) {
-        bindProcessToActiveNetwork()
-        PlatformEvents.emit(PlatformEvents.EVENT_NETWORK_VALIDATED)
-        refreshSignalsIfDue(force = true)
+    private fun scheduleValidatedLost(reason: String) {
+        validatedLostRunnable?.let { handler.removeCallbacks(it) }
+        val runnable = Runnable {
+            validatedLostRunnable = null
+            if (lastNetworkValidated.getAndSet(false)) {
+                Log.i(TAG, "networkValidated=false ($reason/debounced)")
+                PlatformEvents.emit(PlatformEvents.EVENT_NETWORK_LOST)
+            }
+        }
+        validatedLostRunnable = runnable
+        handler.postDelayed(runnable, VALIDATED_LOST_DEBOUNCE_MS)
     }
 
-    private fun bindProcessToActiveNetwork() {
+    private fun seedHandoffHandleFromActiveNetwork() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return
         }
+        val network = connectivityManager.activeNetwork ?: return
+        lastHandoffNetworkHandle.set(network.networkHandle)
+        Log.i(TAG, "seedHandoffHandle handle=${network.networkHandle}")
+    }
+
+    private fun onNetworkValidated(reason: String) {
+        val handle = bindProcessToActiveNetwork()
+        val previous = lastHandoffNetworkHandle.get()
+        if (handle == previous && previous != Long.MIN_VALUE) {
+            Log.i(TAG, "networkValidated skipped same handle=$handle ($reason)")
+            refreshSignalsIfDue(force = true)
+            return
+        }
+        lastHandoffNetworkHandle.set(handle)
+        Log.i(TAG, "networkHandoff handle=$handle reason=$reason")
+        PlatformEvents.emit("${PlatformEvents.EVENT_NETWORK_VALIDATED}:$handle")
+        refreshSignalsIfDue(force = true)
+    }
+
+    private fun bindProcessToActiveNetwork(): Long {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return 0L
+        }
         val network = activeNetwork ?: connectivityManager.activeNetwork
         runCatching { connectivityManager.bindProcessToNetwork(network) }
+        return network?.networkHandle ?: 0L
     }
 
     private fun refreshSignalsIfDue(force: Boolean = false) {
@@ -199,9 +242,11 @@ class SessionNetworkController(context: Context) {
     }
 
     companion object {
+        private const val TAG = "OwalkieFlutterNet"
         private const val SIGNAL_WIFI = 0
         private const val SIGNAL_CELL = 1
         private const val SIGNAL_POLL_INTERVAL_MS = 5000L
         private const val SIGNAL_REFRESH_INTERVAL_MS = 50_000L
+        private const val VALIDATED_LOST_DEBOUNCE_MS = 1500L
     }
 }

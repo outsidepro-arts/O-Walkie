@@ -100,6 +100,16 @@ final class SessionClearSignalCommand extends SessionCommand {
   final int mode;
 }
 
+final class SessionBindProcessNetworkCommand extends SessionCommand {
+  const SessionBindProcessNetworkCommand(this.networkHandle);
+
+  final int networkHandle;
+}
+
+final class SessionNetworkHandoffCommand extends SessionCommand {
+  const SessionNetworkHandoffCommand();
+}
+
 /// Messages session worker → main isolate.
 sealed class SessionWorkerMessage {
   const SessionWorkerMessage();

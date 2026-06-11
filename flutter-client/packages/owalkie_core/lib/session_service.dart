@@ -116,6 +116,14 @@ class SessionService {
 
   void punchNat() => _workerPort?.send(const SessionPunchNatCommand());
 
+  void bindProcessNetwork(int networkHandle) {
+    _workerPort?.send(SessionBindProcessNetworkCommand(networkHandle));
+  }
+
+  void recoverAfterNetworkHandoff() {
+    _workerPort?.send(const SessionNetworkHandoffCommand());
+  }
+
   void reportSignal({required int mode, required int value}) {
     _workerPort?.send(SessionReportSignalCommand(mode: mode, value: value));
   }

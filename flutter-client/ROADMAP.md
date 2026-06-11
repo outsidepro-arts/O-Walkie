@@ -153,18 +153,18 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 **Implementation:** `WalkieForegroundService.kt`, `PlatformEvents` EventChannel, `NativePlatform.startSessionForeground` wired from `HomeScreenController` on connect/disconnect.
 
-### 4b. Network and reconnect *(implemented — device test pending)*
+### 4b. Network and reconnect *(done)*
 
 | Task | Solution |
 |------|----------|
 | Network validated / lost | Kotlin `SessionNetworkController` + `ConnectivityManager.NetworkCallback` |
-| Process network bind | `ConnectivityManager.bindProcessToNetwork` (API 23+) |
+| Process network bind | `android_setprocnetwork` preConnect hook + `bindProcessToNetwork` |
 | Uplink signal byte | Wifi RSSI + cell level → FFI `owalkie_report_signal` |
-| NAT punch on handoff | FFI `owalkie_punch_nat` on validated network (deferred during TX/call) |
+| NAT punch / UDP recover | FFI `punch_nat` + `recover_udp_transport` on real network handoff |
 
-**Implementation:** `SessionNetworkController.kt`, FFI `owalkie_flutter_punch_nat` / `report_signal` / `clear_signal`, wired from `HomeScreenController` platform events.
+**Implementation:** persistent client reconnect loop, handle-based handoff debouncing, `SessionNetworkController` logging (`OwalkieFlutterNet`).
 
-### 4c. Audio routing and interruptions
+### 4c. Audio routing and interruptions *(in progress)*
 
 | Task | Solution |
 |------|----------|
@@ -185,7 +185,7 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 - [x] Connect → home button → mic stays alive 2+ min; ongoing notification visible
 - [x] Notification disconnect action works
 - [x] Battery optimization prompt opens system screen
-- [ ] Switch Wi‑Fi ↔ mobile → reconnect without app restart
+- [x] Switch Wi‑Fi ↔ mobile → reconnect without app restart
 - [ ] Incoming phone call pauses TX/RX; resume after call
 - [ ] BT headset: route + media play/pause toggles latch; hardware PTT hold works
 - [ ] Battery optimization prompt opens system screen

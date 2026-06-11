@@ -648,6 +648,13 @@ owalkie_result owalkie_punch_nat(owalkie_session_id session_id) {
     return toC(owalkie::SessionManager::instance().punchNat(session_id));
 }
 
+owalkie_result owalkie_recover_udp_transport(owalkie_session_id session_id) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return toC(owalkie::SessionManager::instance().recoverUdpTransport(session_id));
+}
+
 owalkie_result owalkie_report_signal(owalkie_signal_mode mode, int value) {
     owalkie::link_signal::Mode cpp = owalkie::link_signal::Mode::Wifi;
     switch (mode) {
@@ -724,6 +731,9 @@ owalkie_result owalkie_set_repeater_mode(owalkie_session_id, int) {
 }
 void owalkie_set_power_profile(owalkie_session_id, owalkie_power_profile) {}
 owalkie_result owalkie_punch_nat(owalkie_session_id) { return OWALKIE_ERR_UNSUPPORTED; }
+owalkie_result owalkie_recover_udp_transport(owalkie_session_id) {
+    return OWALKIE_ERR_UNSUPPORTED;
+}
 owalkie_result owalkie_report_signal(owalkie_signal_mode, int) { return OWALKIE_ERR_UNSUPPORTED; }
 owalkie_result owalkie_clear_signal(owalkie_signal_mode) { return OWALKIE_ERR_UNSUPPORTED; }
 int owalkie_get_uplink_signal_byte(void) { return 255; }

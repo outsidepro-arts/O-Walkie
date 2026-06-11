@@ -55,6 +55,8 @@ public:
     Result setRepeaterMode(SessionId id, bool enabled);
     void setPowerProfile(SessionId id, PowerProfile profile);
     Result punchNat(SessionId id);
+    /** Recreate UDP sockets on the current process network (e.g. after Android handoff). */
+    Result recoverUdpTransport(SessionId id);
     /** Platform hook invoked before each blocking connect (e.g. Android network bind). */
     void setPreConnectHook(std::function<void()> hook);
 

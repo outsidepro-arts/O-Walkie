@@ -96,7 +96,7 @@ if(ANDROID AND OWALKIE_CORE_BUILD_SESSION)
 endif()
 
 if(ANDROID)
-    target_link_libraries(owalkie_core PRIVATE log)
+    target_link_libraries(owalkie_core PRIVATE log android)
 endif()
 
 if(APPLE)

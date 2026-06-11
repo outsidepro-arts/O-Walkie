@@ -287,6 +287,8 @@ void owalkie_set_power_profile(owalkie_session_id session_id, owalkie_power_prof
 
 /** Optional one-shot UDP NAT punch (keepalive/recovery runs automatically). */
 owalkie_result owalkie_punch_nat(owalkie_session_id session_id);
+/** Recreate UDP transport after network handoff while WS session stays up. */
+owalkie_result owalkie_recover_udp_transport(owalkie_session_id session_id);
 
 /** Report link metrics; core maps to uplink signal byte 0..255 for all sessions. */
 owalkie_result owalkie_report_signal(owalkie_signal_mode mode, int value);

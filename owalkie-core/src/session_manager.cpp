@@ -523,6 +523,15 @@ Result SessionManager::punchNat(SessionId id) {
     return session->punchUdpNat();
 }
 
+Result SessionManager::recoverUdpTransport(SessionId id) {
+    std::lock_guard<std::mutex> lock(mu_);
+    Session* session = sessionLocked(id);
+    if (!session) {
+        return Result::InvalidArg;
+    }
+    return session->resetUdpTransport();
+}
+
 void SessionManager::setPreConnectHook(std::function<void()> hook) {
     std::lock_guard<std::mutex> lock(mu_);
     preConnectHook_ = std::move(hook);

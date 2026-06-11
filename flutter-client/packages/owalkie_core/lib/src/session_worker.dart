@@ -29,12 +29,19 @@ class _SessionWorker {
 
   int _sessionId = 0;
   bool _desiredConnected = false;
-  bool _connectLoopRunning = false;
+  bool _clientReconnectRunning = false;
   bool _hadConnected = false;
+  bool _localTxActive = false;
+  bool _pendingNetworkRecover = false;
+  int _lastRecoverAtMs = 0;
+  bool _publishedConnected = false;
+  bool _publishedConnecting = false;
+  bool _publishedReconnecting = false;
   Timer? _pollTimer;
 
   static const _initialBackoffMs = 1500;
   static const _maxBackoffMs = 8000;
+  static const _networkRecoverMinIntervalMs = 3000;
   static const _localPlaybackRate = 44100;
   static const _rogerTailMs = 40;
   static const _callLocalGain = 0.316;
@@ -92,6 +99,10 @@ class _SessionWorker {
         _relay.reportSignal(mode: mode, value: value);
       case SessionClearSignalCommand(:final mode):
         _relay.clearSignal(mode);
+      case SessionBindProcessNetworkCommand(:final networkHandle):
+        _relay.bindProcessNetwork(networkHandle);
+      case SessionNetworkHandoffCommand():
+        _recoverAfterNetworkHandoff();
     }
   }
 
@@ -102,14 +113,42 @@ class _SessionWorker {
     _relay.punchNat(_sessionId);
   }
 
+  void _recoverAfterNetworkHandoff() {
+    if (!_desiredConnected || _sessionId == 0) {
+      return;
+    }
+    if (_localTxActive) {
+      _pendingNetworkRecover = true;
+      return;
+    }
+    _pendingNetworkRecover = false;
+    if (_relay.sessionReady(_sessionId)) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (now - _lastRecoverAtMs < _networkRecoverMinIntervalMs) {
+        return;
+      }
+      _lastRecoverAtMs = now;
+      _relay.recoverUdp(_sessionId);
+      _relay.punchNat(_sessionId);
+      return;
+    }
+    _ensureClientReconnectLoop();
+  }
+
+  void _drainPendingNetworkRecover() {
+    if (!_pendingNetworkRecover || _localTxActive) {
+      return;
+    }
+    _recoverAfterNetworkHandoff();
+  }
+
   void _startConnect(SessionConnectCommand cmd) {
     _desiredConnected = true;
     if (_sessionId != 0 && _relay.sessionValid(_sessionId)) {
-      if (!_relay.sessionReady(_sessionId)) {
-        _ensureConnectLoop();
-      } else {
+      if (_relay.sessionReady(_sessionId)) {
         _publishState(connected: true, connecting: false);
       }
+      _ensureClientReconnectLoop();
       return;
     }
     if (_sessionId != 0) {
@@ -129,23 +168,31 @@ class _SessionWorker {
     }
     _sessionId = id;
     _publishState(connected: false, connecting: true);
-    _ensureConnectLoop();
+    _ensureClientReconnectLoop();
   }
 
-  void _ensureConnectLoop() {
-    if (_connectLoopRunning) {
+  void _ensureClientReconnectLoop() {
+    if (_clientReconnectRunning) {
       return;
     }
-    _connectLoopRunning = true;
-    unawaited(_connectLoop());
+    _clientReconnectRunning = true;
+    unawaited(_clientReconnectLoop());
   }
 
-  Future<void> _connectLoop() async {
+  Future<void> _clientReconnectLoop() async {
     var backoffMs = _initialBackoffMs;
-    while (_desiredConnected && _sessionId != 0 && _relay.sessionValid(_sessionId)) {
+    while (_desiredConnected) {
+      if (_sessionId == 0 || !_relay.sessionValid(_sessionId)) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        continue;
+      }
       if (_relay.sessionReady(_sessionId)) {
-        _publishState(connected: true, connecting: false);
-        break;
+        backoffMs = _initialBackoffMs;
+        if (!_publishedConnected || _publishedConnecting || _publishedReconnecting) {
+          _publishState(connected: true, connecting: false, reconnecting: false);
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        continue;
       }
       _publishState(
         connected: false,
@@ -155,13 +202,14 @@ class _SessionWorker {
       _relay.connect(_sessionId, timeoutMs: 3500);
       await Future<void>.delayed(const Duration(milliseconds: 400));
       if (_relay.sessionReady(_sessionId)) {
-        _publishState(connected: true, connecting: false);
-        break;
+        backoffMs = _initialBackoffMs;
+        _publishState(connected: true, connecting: false, reconnecting: false);
+        continue;
       }
       await Future<void>.delayed(Duration(milliseconds: backoffMs));
       backoffMs = math.min((backoffMs * 1.5).round(), _maxBackoffMs);
     }
-    _connectLoopRunning = false;
+    _clientReconnectRunning = false;
     if (!_desiredConnected) {
       _publishState(connected: false, connecting: false);
     }
@@ -170,6 +218,8 @@ class _SessionWorker {
   void _disconnect() {
     _desiredConnected = false;
     _hadConnected = false;
+    _localTxActive = false;
+    _pendingNetworkRecover = false;
     final id = _sessionId;
     if (id != 0) {
       _relay.pttUp(id);
@@ -205,8 +255,9 @@ class _SessionWorker {
       return;
     }
     final rc = _relay.pttDown(_sessionId);
+    _localTxActive = rc == 0;
     _mainPort.send(SessionWorkerMessage.pttResult(
-      active: rc == 0,
+      active: _localTxActive,
       resultCode: rc,
     ));
   }
@@ -258,10 +309,12 @@ class _SessionWorker {
       rogerLocal: local,
       localSampleRate: _localPlaybackRate,
     );
+    _localTxActive = false;
     _mainPort.send(SessionWorkerMessage.pttResult(
       active: false,
       resultCode: rc,
     ));
+    _drainPendingNetworkRecover();
   }
 
   void _playLocalUi(List<int> samples, int sampleRate) {
@@ -330,7 +383,7 @@ class _SessionWorker {
         case OwalkieEventType.connectionLost:
           _publishState(connected: false, connecting: true, reconnecting: true);
           if (_desiredConnected) {
-            _ensureConnectLoop();
+            _ensureClientReconnectLoop();
           }
         case OwalkieEventType.protocolError:
           _desiredConnected = false;
@@ -377,6 +430,16 @@ class _SessionWorker {
     String? error,
     bool clearError = false,
   }) {
+    if (error == null &&
+        !clearError &&
+        connected == _publishedConnected &&
+        connecting == _publishedConnecting &&
+        reconnecting == _publishedReconnecting) {
+      return;
+    }
+    _publishedConnected = connected;
+    _publishedConnecting = connecting;
+    _publishedReconnecting = reconnecting;
     _mainPort.send(SessionWorkerMessage.transportState(
       sessionId: _sessionId,
       connected: connected,

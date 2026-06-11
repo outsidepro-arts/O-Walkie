@@ -200,6 +200,16 @@ class SessionRelayBindings {
     'owalkie_flutter_punch_nat',
   );
 
+  late final int Function(int) _recoverUdp =
+      _lib.lookupFunction<ffi.Int32 Function(ffi.Int64), int Function(int)>(
+    'owalkie_flutter_recover_udp',
+  );
+
+  late final void Function(int) _bindProcessNetwork =
+      _lib.lookupFunction<ffi.Void Function(ffi.Int64), void Function(int)>(
+    'owalkie_flutter_bind_process_network',
+  );
+
   late final int Function(int, int) _reportSignal =
       _lib.lookupFunction<ffi.Int32 Function(ffi.Int32, ffi.Int32), int Function(int, int)>(
     'owalkie_flutter_report_signal',
@@ -269,6 +279,10 @@ class SessionRelayBindings {
       _setRepeater(sessionId, enabled ? 1 : 0);
 
   int punchNat(int sessionId) => _punchNat(sessionId);
+
+  int recoverUdp(int sessionId) => _recoverUdp(sessionId);
+
+  void bindProcessNetwork(int networkHandle) => _bindProcessNetwork(networkHandle);
 
   int reportSignal({required int mode, required int value}) =>
       _reportSignal(mode, value);

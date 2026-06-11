@@ -127,8 +127,11 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_check_channel_activity(
 
 /** Optional UDP NAT punch after network handoff (mode 0=wifi, 1=cell for report/clear). */
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_punch_nat(int64_t session_id);
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_recover_udp(int64_t session_id);
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_report_signal(int32_t mode, int32_t value);
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_clear_signal(int32_t mode);
+/** Android only: store network handle + bind process before connect (no-op elsewhere). */
+FFI_PLUGIN_EXPORT void owalkie_flutter_bind_process_network(int64_t network_handle);
 
 #ifdef __cplusplus
 }

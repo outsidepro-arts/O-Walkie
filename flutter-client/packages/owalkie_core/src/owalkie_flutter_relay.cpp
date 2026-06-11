@@ -2,6 +2,7 @@
 #include "owalkie_flutter_audio.h"
 
 #include "owalkie_core.h"
+#include "owalkie/session_manager.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -13,7 +14,40 @@
 #include <thread>
 #include <vector>
 
+#if defined(__ANDROID__)
+#include <android/multinetwork.h>
+#include <android/log.h>
+#endif
+
 #ifdef OWALKIE_CORE_HAS_SESSION
+
+#if defined(__ANDROID__)
+namespace {
+
+std::atomic<long long> g_android_network_handle{0};
+std::atomic<bool> g_android_pre_connect_hook_installed{false};
+
+void ensure_android_pre_connect_hook() {
+    bool expected = false;
+    if (!g_android_pre_connect_hook_installed.compare_exchange_strong(expected, true)) {
+        return;
+    }
+    owalkie::SessionManager::instance().setPreConnectHook([]() {
+        const long long stored = g_android_network_handle.load(std::memory_order_relaxed);
+        const net_handle_t handle =
+            stored == 0LL ? NETWORK_UNSPECIFIED : static_cast<net_handle_t>(stored);
+        const int rc = android_setprocnetwork(handle);
+        __android_log_print(
+            ANDROID_LOG_INFO,
+            "OwalkieFlutter",
+            "preConnect android_setprocnetwork handle=%lld rc=%d",
+            static_cast<long long>(stored),
+            rc);
+    });
+}
+
+} // namespace
+#endif
 
 namespace {
 
@@ -527,6 +561,38 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_punch_nat(int64_t session_id) {
 #else
     (void)session_id;
     return OWALKIE_ERR_UNSUPPORTED;
+#endif
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_recover_udp(int64_t session_id) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    if (session_id == 0) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return static_cast<int32_t>(
+        owalkie_recover_udp_transport(static_cast<owalkie_session_id>(session_id)));
+#else
+    (void)session_id;
+    return OWALKIE_ERR_UNSUPPORTED;
+#endif
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_bind_process_network(int64_t network_handle) {
+#if defined(__ANDROID__)
+    g_android_network_handle.store(network_handle, std::memory_order_relaxed);
+    ensure_android_pre_connect_hook();
+    const net_handle_t handle = network_handle == 0LL
+        ? NETWORK_UNSPECIFIED
+        : static_cast<net_handle_t>(network_handle);
+    const int rc = android_setprocnetwork(handle);
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        "OwalkieFlutter",
+        "bindProcessNetwork handle=%lld rc=%d",
+        network_handle,
+        rc);
+#else
+    (void)network_handle;
 #endif
 }
 

@@ -1,11 +1,15 @@
 package ru.outsidepro_arts.owalkie.flutter
 
+import android.os.Handler
+import android.os.Looper
 import io.flutter.plugin.common.EventChannel
 
 object PlatformEvents {
     const val EVENT_NOTIFICATION_DISCONNECT = "notification_disconnect"
     const val EVENT_NETWORK_VALIDATED = "network_validated"
     const val EVENT_NETWORK_LOST = "network_lost"
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
     private var sink: EventChannel.EventSink? = null
@@ -19,7 +23,9 @@ object PlatformEvents {
     }
 
     fun emit(event: String) {
-        sink?.success(event)
+        mainHandler.post {
+            sink?.success(event)
+        }
     }
 
     fun emitSignalReport(mode: Int, value: Int) {
