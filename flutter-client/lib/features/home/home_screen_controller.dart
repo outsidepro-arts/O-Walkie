@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:owalkie_core/owalkie_core.dart';
 
 import '../../data/server_store.dart';
+import '../../domain/profile_save.dart';
 import '../../domain/server_profile.dart';
 import '../../l10n/app_strings.dart';
 import '../../platform/native_platform.dart';
@@ -50,9 +51,11 @@ class HomeScreenController extends Notifier<HomeScreenState> {
         index = found;
       }
     }
+    final profile = list[index];
     state = state.copyWith(
       profiles: list,
       selectedServerIndex: index,
+      draftProfile: profile,
       clearError: true,
     );
   }
@@ -84,10 +87,11 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     state = state.copyWith(
       selectedServerIndex: index,
+      draftProfile: state.profiles[index],
       clearError: true,
       clearStatusMessage: true,
     );
-    unawaited(_store.setLastSelectedName(state.profile.name));
+    unawaited(_store.setLastSelectedName(state.draftProfile.name));
   }
 
   void previousProfile() {
@@ -114,17 +118,23 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   Future<void> saveCurrentProfile() async {
-    final index = state.selectedServerIndex;
-    if (index < 0 || index >= state.profiles.length) {
+    final validation = validateProfileDraft(state.draftProfile);
+    if (validation != null) {
+      state = state.copyWith(lastError: validation, clearStatusMessage: true);
       return;
     }
-    final list = [...state.profiles];
-    list[index] = state.profile;
-    await _persistProfiles(list);
+    final result = applyProfileSave(
+      profiles: state.profiles,
+      draft: state.draftProfile,
+    );
+    await _persistProfiles(result.profiles);
     state = state.copyWith(
-      profiles: list,
+      profiles: result.profiles,
+      selectedServerIndex: result.selectedIndex,
+      draftProfile: result.profiles[result.selectedIndex],
       statusMessage: AppStrings.profileSaved,
       clearError: true,
+      clearStatusMessage: false,
     );
   }
 
@@ -143,6 +153,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     state = state.copyWith(
       profiles: list,
       selectedServerIndex: newIndex,
+      draftProfile: list[newIndex],
       clearError: true,
       clearStatusMessage: true,
     );
@@ -252,9 +263,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void setRepeaterMode(bool enabled) {
-    state = state.withProfileAt(
-      state.selectedServerIndex,
-      state.profile.copyWith(repeater: enabled),
+    state = state.copyWith(
+      draftProfile: state.draftProfile.copyWith(repeater: enabled),
     );
     _session?.setRepeaterMode(enabled);
   }
@@ -265,14 +275,15 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     String? portText,
     String? channel,
   }) {
-    final parsedPort = int.tryParse(portText ?? '') ?? state.profile.port;
-    final updated = state.profile.copyWith(
-      name: name ?? state.profile.name,
-      host: host ?? state.profile.host,
-      port: parsedPort,
-      channel: channel ?? state.profile.channel,
+    final parsedPort = int.tryParse(portText ?? '') ?? state.draftProfile.port;
+    state = state.copyWith(
+      draftProfile: state.draftProfile.copyWith(
+        name: name ?? state.draftProfile.name,
+        host: host ?? state.draftProfile.host,
+        port: parsedPort,
+        channel: channel ?? state.draftProfile.channel,
+      ),
     );
-    state = state.withProfileAt(state.selectedServerIndex, updated);
   }
 
   Future<void> toggleConnection() async {

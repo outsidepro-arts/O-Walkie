@@ -85,7 +85,7 @@ Prerequisites: relay in LAN, Android APK or Windows dist with session enabled, s
 
 ### Acceptance tests (Phase 1)
 
-- [ ] Add 2+ profiles, **Save** → force-stop app → profiles and fields restored
+- [ ] Add 2+ profiles: **new name → Save adds**; **same name → Save updates** (Kotlin parity) → force-stop → restored
 - [ ] Dropdown / Prev / Next switch profile (blocked while connected, or disconnect first)
 - [ ] **Delete** removes profile (cannot delete last one)
 - [ ] **More → Settings** opens About; app version visible; GitHub link opens browser

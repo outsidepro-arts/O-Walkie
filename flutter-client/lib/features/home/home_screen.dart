@@ -29,22 +29,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    final profile = ref.read(homeScreenControllerProvider).profile;
-    _nameCtrl = TextEditingController(text: profile.name);
-    _hostCtrl = TextEditingController(text: profile.host);
-    _portCtrl = TextEditingController(text: '${profile.port}');
-    _channelCtrl = TextEditingController(text: profile.channel);
+    final draft = ref.read(homeScreenControllerProvider).draftProfile;
+    _nameCtrl = TextEditingController(text: draft.name);
+    _hostCtrl = TextEditingController(text: draft.host);
+    _portCtrl = TextEditingController(text: '${draft.port}');
+    _channelCtrl = TextEditingController(text: draft.channel);
     ref.listenManual(
-      homeScreenControllerProvider.select((s) => s.selectedServerIndex),
+      homeScreenControllerProvider.select((s) => s.draftProfile),
       (previous, next) {
         if (previous == next) {
           return;
         }
-        final profile = ref.read(homeScreenControllerProvider).profile;
-        _nameCtrl.text = profile.name;
-        _hostCtrl.text = profile.host;
-        _portCtrl.text = '${profile.port}';
-        _channelCtrl.text = profile.channel;
+        _nameCtrl.text = next.name;
+        _hostCtrl.text = next.host;
+        _portCtrl.text = '${next.port}';
+        _channelCtrl.text = next.channel;
       },
     );
   }
@@ -165,7 +164,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   Semantics(
                     label: A11yStrings.serverProfilePicker,
                     hint: A11yStrings.serverProfilePickerHint,
-                    enabled: state.canSwitchProfiles,
+                    enabled: state.canSelectProfiles,
                     child: DropdownButtonFormField<int>(
                       value: state.selectedServerIndex
                           .clamp(0, state.profiles.length - 1),
@@ -184,9 +183,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             ),
                           ),
                       ],
-                      onChanged: state.canSwitchProfiles
+                      onChanged: state.canSelectProfiles
                           ? (index) {
                               if (index != null) {
+                                _syncProfile();
                                 controller.selectProfile(index);
                               }
                             }

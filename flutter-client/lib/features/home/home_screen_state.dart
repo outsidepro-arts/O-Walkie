@@ -6,6 +6,7 @@ class HomeScreenState {
     this.connectionDetailsExpanded = true,
     this.profiles = const [ServerProfile()],
     this.selectedServerIndex = 0,
+    this.draftProfile = const ServerProfile(),
     this.rxVolumePercent = 100,
     this.scanActive = false,
     this.isConnecting = false,
@@ -28,6 +29,8 @@ class HomeScreenState {
   final bool connectionDetailsExpanded;
   final List<ServerProfile> profiles;
   final int selectedServerIndex;
+  /// Unsaved connection form values (Kotlin: input fields until Save).
+  final ServerProfile draftProfile;
   final int rxVolumePercent;
   final bool scanActive;
   final bool isConnecting;
@@ -46,21 +49,19 @@ class HomeScreenState {
   final String? statusInfo;
   final String? statusMessage;
 
-  ServerProfile get profile {
-    if (profiles.isEmpty) {
-      return const ServerProfile();
-    }
-    final index = selectedServerIndex.clamp(0, profiles.length - 1);
-    return profiles[index];
-  }
+  /// Active form profile (draft, not necessarily persisted yet).
+  ServerProfile get profile => draftProfile;
 
-  bool get canSwitchProfiles =>
-      !isConnected && !isConnecting && profiles.length > 1;
+  bool get canSelectProfiles =>
+      !isConnected && !isConnecting && profiles.isNotEmpty;
+
+  bool get canSwitchProfiles => canSelectProfiles && profiles.length > 1;
 
   HomeScreenState copyWith({
     bool? connectionDetailsExpanded,
     List<ServerProfile>? profiles,
     int? selectedServerIndex,
+    ServerProfile? draftProfile,
     int? rxVolumePercent,
     bool? scanActive,
     bool? isConnecting,
@@ -87,6 +88,7 @@ class HomeScreenState {
           connectionDetailsExpanded ?? this.connectionDetailsExpanded,
       profiles: profiles ?? this.profiles,
       selectedServerIndex: selectedServerIndex ?? this.selectedServerIndex,
+      draftProfile: draftProfile ?? this.draftProfile,
       rxVolumePercent: rxVolumePercent ?? this.rxVolumePercent,
       scanActive: scanActive ?? this.scanActive,
       isConnecting: isConnecting ?? this.isConnecting,
@@ -106,14 +108,5 @@ class HomeScreenState {
       statusMessage:
           clearStatusMessage ? null : (statusMessage ?? this.statusMessage),
     );
-  }
-
-  HomeScreenState withProfileAt(int index, ServerProfile profile) {
-    final list = [...profiles];
-    if (index < 0 || index >= list.length) {
-      return this;
-    }
-    list[index] = profile;
-    return copyWith(profiles: list);
   }
 }
