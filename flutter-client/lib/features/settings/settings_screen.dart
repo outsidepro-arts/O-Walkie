@@ -3,13 +3,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/audio_settings_store.dart';
 import '../../data/orientation_store.dart';
+import '../../data/windows_settings_store.dart';
 import '../../features/home/home_screen_controller.dart';
 import '../../platform/native_platform.dart';
+import '../../platform/windows/desktop_shell.dart';
 import '../../data/signal_pattern_store.dart';
 import '../../domain/signal_pattern.dart';
 import '../../l10n/app_strings.dart';
@@ -35,6 +38,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _mediaButtonPtt = true;
   bool _externalControl = false;
   HardwarePttBinding _hardwarePttBinding = const HardwarePttBinding.unassigned();
+  HotKey? _globalPttHotKey;
+  bool _minimizeToTray = false;
 
   @override
   void initState() {
@@ -53,6 +58,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final externalControl = ref.read(externalControlStoreProvider);
     final hardwareBinding = await NativePlatform.getHardwarePttBinding();
     final externalControlEnabled = await externalControl.isEnabled();
+    final windowsStore = ref.read(windowsSettingsStoreProvider);
+    final globalHotKey = windowsStore.loadHotKey();
+    final minimizeToTray = windowsStore.minimizeToTrayOnClose();
     if (!mounted) {
       return;
     }
@@ -68,6 +76,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _mediaButtonPtt = mediaButtonPtt.isEnabled();
       _externalControl = externalControlEnabled;
       _hardwarePttBinding = hardwareBinding;
+      _globalPttHotKey = globalHotKey;
+      _minimizeToTray = minimizeToTray;
     });
   }
 
@@ -118,6 +128,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return 'Scan code ${_hardwarePttBinding.scanCode}';
     }
     return 'Key code ${_hardwarePttBinding.keyCode}';
+  }
+
+  Future<void> _setMinimizeToTray(bool? enabled) async {
+    if (enabled == null) {
+      return;
+    }
+    await ref.read(desktopShellProvider).setMinimizeToTrayOnClose(enabled);
+    setState(() => _minimizeToTray = enabled);
+  }
+
+  Future<void> _showGlobalPttHotkeyDialog() async {
+    if (!NativePlatform.isWindows) {
+      return;
+    }
+    final recorded = await showDialog<HotKey?>(
+      context: context,
+      builder: (dialogContext) => const _GlobalPttHotkeyDialog(),
+    );
+    if (!mounted || recorded == null) {
+      return;
+    }
+    await ref.read(desktopShellProvider).setGlobalPttHotKey(recorded);
+    setState(() => _globalPttHotKey = recorded);
+  }
+
+  Future<void> _clearGlobalPttHotkey() async {
+    await ref.read(desktopShellProvider).setGlobalPttHotKey(null);
+    if (!mounted) {
+      return;
+    }
+    setState(() => _globalPttHotKey = null);
   }
 
   Future<void> _showHardwarePttDialog() async {
@@ -249,6 +290,38 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               onChanged: _setExternalControl,
             ),
           ],
+          if (NativePlatform.isWindows) ...[
+            const SizedBox(height: 24),
+            Text(
+              AppStrings.settingsWindows,
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            ListTile(
+              title: const Text(AppStrings.settingsGlobalPttHotkey),
+              subtitle: _globalPttHotKey == null
+                  ? const Text(AppStrings.settingsGlobalPttHotkeyUnassigned)
+                  : HotKeyVirtualView(hotKey: _globalPttHotKey!),
+              trailing: Wrap(
+                spacing: 4,
+                children: [
+                  TextButton(
+                    onPressed: _showGlobalPttHotkeyDialog,
+                    child: const Text(AppStrings.settingsGlobalPttHotkeyAssign),
+                  ),
+                  if (_globalPttHotKey != null)
+                    TextButton(
+                      onPressed: _clearGlobalPttHotkey,
+                      child: const Text(AppStrings.settingsGlobalPttHotkeyClear),
+                    ),
+                ],
+              ),
+            ),
+            SwitchListTile(
+              title: const Text(AppStrings.settingsMinimizeToTray),
+              value: _minimizeToTray,
+              onChanged: _setMinimizeToTray,
+            ),
+          ],
           const SizedBox(height: 24),
           Text(
             AppStrings.rogerSignalLabel,
@@ -367,6 +440,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ScreenOrientationMode.portrait => AppStrings.orientationPortrait,
       ScreenOrientationMode.landscape => AppStrings.orientationLandscape,
     };
+  }
+}
+
+class _GlobalPttHotkeyDialog extends StatefulWidget {
+  const _GlobalPttHotkeyDialog();
+
+  @override
+  State<_GlobalPttHotkeyDialog> createState() => _GlobalPttHotkeyDialogState();
+}
+
+class _GlobalPttHotkeyDialogState extends State<_GlobalPttHotkeyDialog> {
+  HotKey? _hotKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text(AppStrings.settingsGlobalPttHotkeyDialogTitle),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(AppStrings.settingsGlobalPttHotkeyDialogHint),
+          const SizedBox(height: 16),
+          HotKeyRecorder(
+            onHotKeyRecorded: (hotKey) {
+              setState(() => _hotKey = hotKey);
+            },
+          ),
+          if (_hotKey != null) ...[
+            const SizedBox(height: 12),
+            HotKeyVirtualView(hotKey: _hotKey!),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text(AppStrings.rogerCancel),
+        ),
+        TextButton(
+          onPressed: _hotKey == null
+              ? null
+              : () => Navigator.of(context).pop(_hotKey),
+          child: const Text('OK'),
+        ),
+      ],
+    );
   }
 }
 

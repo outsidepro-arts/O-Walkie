@@ -22,6 +22,9 @@ dependencies:
   audio_session: ^0.2.3
   app_links: ^7.1.2
   share_plus: ^12.0.2
+  hotkey_manager: ^0.2.3
+  tray_manager: ^0.5.3
+  window_manager: ^0.5.1
 
 dev_dependencies:
   flutter_test:
@@ -30,3 +33,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/tray_icon.ico

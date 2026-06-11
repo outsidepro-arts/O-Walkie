@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/orientation_store.dart';
 import '../l10n/app_strings.dart';
+import '../platform/windows/desktop_bootstrap.dart';
 import 'app_router.dart';
 
 class OwalkieApp extends ConsumerStatefulWidget {
@@ -31,21 +32,23 @@ class _OwalkieAppState extends ConsumerState<OwalkieApp> {
       brightness: Brightness.dark,
     );
 
-    return MaterialApp.router(
-      title: AppStrings.appName,
-      theme: ThemeData(
-        colorScheme: colorScheme,
-        useMaterial3: true,
-        visualDensity: VisualDensity.standard,
-        materialTapTargetSize: MaterialTapTargetSize.padded,
-        inputDecorationTheme: InputDecorationTheme(
-          border: const OutlineInputBorder(),
-          focusedBorder: OutlineInputBorder(
-            borderSide: BorderSide(color: colorScheme.primary, width: 2),
+    return DesktopBootstrap(
+      child: MaterialApp.router(
+        title: AppStrings.appName,
+        theme: ThemeData(
+          colorScheme: colorScheme,
+          useMaterial3: true,
+          visualDensity: VisualDensity.standard,
+          materialTapTargetSize: MaterialTapTargetSize.padded,
+          inputDecorationTheme: InputDecorationTheme(
+            border: const OutlineInputBorder(),
+            focusedBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: colorScheme.primary, width: 2),
+            ),
           ),
         ),
+        routerConfig: appRouter,
       ),
-      routerConfig: appRouter,
     );
   }
 }

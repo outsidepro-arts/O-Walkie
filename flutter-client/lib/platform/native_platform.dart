@@ -32,6 +32,8 @@ abstract final class NativePlatform {
 
   static bool get isAndroid => Platform.isAndroid;
 
+  static bool get isWindows => Platform.isWindows;
+
   static Stream<String> get platformEvents =>
       _eventsChannel.receiveBroadcastStream().map((event) => event.toString());
 

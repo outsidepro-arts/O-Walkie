@@ -250,11 +250,15 @@ Note: no “screen PTT toggle mode” checkbox — see [PTT policy](#ptt-input-p
 
 ## Phase 8 — Windows desktop
 
-| Task | Plugin |
-|------|--------|
-| Global PTT hotkey | [`hotkey_manager`](https://pub.dev/packages/hotkey_manager) |
-| Tray / window | [`tray_manager`](https://pub.dev/packages/tray_manager) / [`window_manager`](https://pub.dev/packages/window_manager) |
-| UI tones | `audioplayers` / `just_audio` |
+| Task | Plugin | Status |
+|------|--------|--------|
+| Global PTT hotkey (latch toggle) | [`hotkey_manager`](https://pub.dev/packages/hotkey_manager) | done |
+| Tray / window close | [`tray_manager`](https://pub.dev/packages/tray_manager) / [`window_manager`](https://pub.dev/packages/window_manager) | done |
+| UI tones | `audioplayers` / `just_audio` | deferred |
+
+`lib/platform/windows/desktop_shell.dart`, `windows_settings_store.dart`, Settings → Windows section.
+
+Global hotkey uses **keydown = latch toggle** (Windows `hotkey_manager` has no `keyUpHandler`; hold-PTT would need a native hook like the C++ client).
 
 ### Acceptance tests (Phase 8)
 

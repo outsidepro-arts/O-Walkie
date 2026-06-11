@@ -68,6 +68,18 @@ abstract final class AppStrings {
   static const settingsPauseDuringPhoneCall = 'Pause relay during phone call';
   static const settingsUseBluetoothHeadset = 'Use Bluetooth headset';
   static const settingsExternalControl = 'Allow external control (Tasker)';
+  static const settingsWindows = 'Windows';
+  static const settingsGlobalPttHotkey = 'Global PTT hotkey';
+  static const settingsGlobalPttHotkeyUnassigned = 'Not assigned';
+  static const settingsGlobalPttHotkeyAssign = 'Assign';
+  static const settingsGlobalPttHotkeyClear = 'Clear';
+  static const settingsGlobalPttHotkeyDialogTitle = 'Press global PTT hotkey';
+  static const settingsGlobalPttHotkeyDialogHint =
+      'Press toggles transmit (works when app is in background).';
+  static const settingsMinimizeToTray =
+      'Minimize to system tray when closing the window';
+  static const trayMenuShow = 'Show O-Walkie';
+  static const trayMenuExit = 'Exit';
   static const settingsMediaButtonPtt = 'Headset play/pause toggles transmit';
   static const settingsHardwarePttKey = 'Hardware PTT key';
   static const settingsHardwarePttUnassigned = 'Not assigned';
