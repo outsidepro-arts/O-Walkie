@@ -12,6 +12,14 @@ object PlatformEvents {
     const val EVENT_HARDWARE_PTT_DOWN = "hardware_ptt_down"
     const val EVENT_HARDWARE_PTT_UP = "hardware_ptt_up"
     const val EVENT_HARDWARE_PTT_BOUND = "hardware_ptt_bound"
+    const val EVENT_EXTERNAL_PTT_DOWN = "external_ptt_down"
+    const val EVENT_EXTERNAL_PTT_UP = "external_ptt_up"
+    const val EVENT_EXTERNAL_PTT_TOGGLE = "external_ptt_toggle"
+    const val EVENT_EXTERNAL_CALL_SIGNAL = "external_call_signal"
+    const val EVENT_EXTERNAL_CONNECT = "external_connect"
+    const val EVENT_EXTERNAL_DISCONNECT = "external_disconnect"
+    const val EVENT_EXTERNAL_NEXT_CONNECTION = "external_next_connection"
+    const val EVENT_EXTERNAL_PREVIOUS_CONNECTION = "external_previous_connection"
 
     private val mainHandler = Handler(Looper.getMainLooper())
 

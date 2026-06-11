@@ -33,6 +33,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _pauseDuringPhoneCall = true;
   bool _useBluetoothHeadset = false;
   bool _mediaButtonPtt = true;
+  bool _externalControl = false;
   HardwarePttBinding _hardwarePttBinding = const HardwarePttBinding.unassigned();
 
   @override
@@ -49,7 +50,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final phoneCallPause = ref.read(phoneCallPauseStoreProvider);
     final bluetoothHeadset = ref.read(bluetoothHeadsetStoreProvider);
     final mediaButtonPtt = ref.read(mediaButtonPttStoreProvider);
+    final externalControl = ref.read(externalControlStoreProvider);
     final hardwareBinding = await NativePlatform.getHardwarePttBinding();
+    final externalControlEnabled = await externalControl.isEnabled();
     if (!mounted) {
       return;
     }
@@ -63,6 +66,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _pauseDuringPhoneCall = phoneCallPause.isEnabled();
       _useBluetoothHeadset = bluetoothHeadset.isEnabled();
       _mediaButtonPtt = mediaButtonPtt.isEnabled();
+      _externalControl = externalControlEnabled;
       _hardwarePttBinding = hardwareBinding;
     });
   }
@@ -84,6 +88,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (NativePlatform.isMobile) {
       await NativePlatform.prepareAudioSession(bluetoothHeadset: enabled);
     }
+  }
+
+  Future<void> _setExternalControl(bool? enabled) async {
+    if (enabled == null) {
+      return;
+    }
+    await ref.read(externalControlStoreProvider).setEnabled(enabled);
+    setState(() => _externalControl = enabled);
   }
 
   Future<void> _setMediaButtonPtt(bool? enabled) async {
@@ -230,6 +242,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onPressed: _showHardwarePttDialog,
                 child: const Text(AppStrings.settingsHardwarePttAssign),
               ),
+            ),
+            SwitchListTile(
+              title: const Text(AppStrings.settingsExternalControl),
+              value: _externalControl,
+              onChanged: _setExternalControl,
             ),
           ],
           const SizedBox(height: 24),

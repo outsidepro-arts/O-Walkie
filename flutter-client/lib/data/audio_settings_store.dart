@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../platform/native_platform.dart';
 import 'shared_preferences_provider.dart';
 
 final phoneCallPauseStoreProvider = Provider<PhoneCallPauseStore>((ref) {
@@ -13,6 +14,10 @@ final bluetoothHeadsetStoreProvider = Provider<BluetoothHeadsetStore>((ref) {
 
 final mediaButtonPttStoreProvider = Provider<MediaButtonPttStore>((ref) {
   return MediaButtonPttStore(ref.watch(sharedPreferencesProvider));
+});
+
+final externalControlStoreProvider = Provider<ExternalControlStore>((ref) {
+  return ExternalControlStore();
 });
 
 /// Pause relay transport during phone calls (Kotlin [PhoneCallRelayPauseStore]).
@@ -58,4 +63,12 @@ class MediaButtonPttStore {
   Future<void> setEnabled(bool enabled) async {
     await _prefs.setBool(_key, enabled);
   }
+}
+
+/// Tasker / automation broadcast API gate (Kotlin [ExternalControlStore]).
+class ExternalControlStore {
+  Future<bool> isEnabled() => NativePlatform.getExternalControlEnabled();
+
+  Future<void> setEnabled(bool enabled) =>
+      NativePlatform.setExternalControlEnabled(enabled);
 }

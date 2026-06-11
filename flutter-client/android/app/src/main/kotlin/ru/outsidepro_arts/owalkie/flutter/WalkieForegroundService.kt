@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
  */
 class WalkieForegroundService : Service() {
     private var mediaPttActive = false
+    private var foregroundActive = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -33,6 +34,30 @@ class WalkieForegroundService : Service() {
             return START_STICKY
         }
         when (intent?.action) {
+            ExternalControlReceiver.ACTION_PTT_DOWN -> handleExternalControl(
+                PlatformEvents.EVENT_EXTERNAL_PTT_DOWN,
+            )
+            ExternalControlReceiver.ACTION_PTT_UP -> handleExternalControl(
+                PlatformEvents.EVENT_EXTERNAL_PTT_UP,
+            )
+            ExternalControlReceiver.ACTION_PTT_TOGGLE -> handleExternalControl(
+                PlatformEvents.EVENT_EXTERNAL_PTT_TOGGLE,
+            )
+            ExternalControlReceiver.ACTION_CALL_SIGNAL -> handleExternalControl(
+                PlatformEvents.EVENT_EXTERNAL_CALL_SIGNAL,
+            )
+            ExternalControlReceiver.ACTION_CONNECT -> handleExternalControl(
+                PlatformEvents.EVENT_EXTERNAL_CONNECT,
+            )
+            ExternalControlReceiver.ACTION_DISCONNECT -> handleExternalControl(
+                PlatformEvents.EVENT_EXTERNAL_DISCONNECT,
+            )
+            ExternalControlReceiver.ACTION_NEXT_CONNECTION -> handleExternalControl(
+                PlatformEvents.EVENT_EXTERNAL_NEXT_CONNECTION,
+            )
+            ExternalControlReceiver.ACTION_PREVIOUS_CONNECTION -> handleExternalControl(
+                PlatformEvents.EVENT_EXTERNAL_PREVIOUS_CONNECTION,
+            )
             ACTION_START -> {
                 val connected = intent.getBooleanExtra(EXTRA_CONNECTED, false)
                 startForegroundInternal(connected)
@@ -61,6 +86,18 @@ class WalkieForegroundService : Service() {
         return START_STICKY
     }
 
+    private fun handleExternalControl(event: String) {
+        ensureForegroundRunning(connected = false)
+        PlatformEvents.emit(event)
+    }
+
+    private fun ensureForegroundRunning(connected: Boolean) {
+        if (foregroundActive) {
+            return
+        }
+        startForegroundInternal(connected)
+    }
+
     private fun startForegroundInternal(connected: Boolean) {
         ensureNotificationChannel()
         val notification = buildNotification(connected)
@@ -74,6 +111,7 @@ class WalkieForegroundService : Service() {
             @Suppress("DEPRECATION")
             startForeground(NOTIFICATION_ID, notification)
         }
+        foregroundActive = true
     }
 
     private fun updateNotification(connected: Boolean) {
@@ -143,6 +181,7 @@ class WalkieForegroundService : Service() {
 
     private fun stopForegroundService() {
         mediaPttActive = false
+        foregroundActive = false
         PttMediaSessionHost.release()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)

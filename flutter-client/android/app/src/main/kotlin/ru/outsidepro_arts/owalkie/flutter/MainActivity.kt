@@ -81,6 +81,14 @@ class MainActivity : FlutterActivity() {
                     capturingHardwarePttKey = false
                     result.success(true)
                 }
+                "getExternalControlEnabled" -> {
+                    result.success(ExternalControlStore(this).isEnabled())
+                }
+                "setExternalControlEnabled" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    ExternalControlStore(this).setEnabled(enabled)
+                    result.success(true)
+                }
                 "startSessionForeground" -> {
                     val connected = call.argument<Boolean>("connected") ?: false
                     WalkieForegroundService.start(this, connected)

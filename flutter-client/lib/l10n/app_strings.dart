@@ -67,6 +67,7 @@ abstract final class AppStrings {
   static const settingsAudio = 'Audio';
   static const settingsPauseDuringPhoneCall = 'Pause relay during phone call';
   static const settingsUseBluetoothHeadset = 'Use Bluetooth headset';
+  static const settingsExternalControl = 'Allow external control (Tasker)';
   static const settingsMediaButtonPtt = 'Headset play/pause toggles transmit';
   static const settingsHardwarePttKey = 'Hardware PTT key';
   static const settingsHardwarePttUnassigned = 'Not assigned';

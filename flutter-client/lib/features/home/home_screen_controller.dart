@@ -86,6 +86,38 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       scheduleMicrotask(pttUp);
       return;
     }
+    if (event == NativePlatform.externalPttDownEvent) {
+      scheduleMicrotask(pttDown);
+      return;
+    }
+    if (event == NativePlatform.externalPttUpEvent) {
+      scheduleMicrotask(pttUp);
+      return;
+    }
+    if (event == NativePlatform.externalPttToggleEvent) {
+      scheduleMicrotask(togglePttLatch);
+      return;
+    }
+    if (event == NativePlatform.externalCallSignalEvent) {
+      scheduleMicrotask(sendCall);
+      return;
+    }
+    if (event == NativePlatform.externalConnectEvent) {
+      unawaited(externalConnect());
+      return;
+    }
+    if (event == NativePlatform.externalDisconnectEvent) {
+      unawaited(externalDisconnect());
+      return;
+    }
+    if (event == NativePlatform.externalNextConnectionEvent) {
+      unawaited(externalSwitchProfile(1));
+      return;
+    }
+    if (event == NativePlatform.externalPreviousConnectionEvent) {
+      unawaited(externalSwitchProfile(-1));
+      return;
+    }
     if (event.startsWith('${NativePlatform.networkValidatedEvent}:')) {
       final handleText = event.substring(NativePlatform.networkValidatedEvent.length + 1);
       final handle = int.tryParse(handleText) ?? 0;
@@ -757,6 +789,58 @@ class HomeScreenController extends Notifier<HomeScreenState> {
         !state.relayPausedForPhoneCall &&
         _mediaButtonPttStore.isEnabled();
     await NativePlatform.syncPttMediaSession(active: active);
+  }
+
+  Future<void> externalConnect() async {
+    if (state.isConnected || state.isConnecting || state.relayPausedForPhoneCall) {
+      return;
+    }
+    await toggleConnection();
+  }
+
+  Future<void> externalDisconnect() async {
+    if (!state.isConnected && !state.isConnecting && !state.relayPausedForPhoneCall) {
+      return;
+    }
+    await toggleConnection();
+  }
+
+  Future<void> externalSwitchProfile(int step) async {
+    if (state.profiles.length <= 1 || step == 0) {
+      return;
+    }
+    final wasActive =
+        state.isConnected || state.isConnecting || state.relayPausedForPhoneCall;
+    if (wasActive) {
+      _session?.disconnect();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    final nextIndex =
+        (state.selectedServerIndex + step + state.profiles.length) %
+            state.profiles.length;
+    final profile = state.profiles[nextIndex];
+    await _store.setLastSelectedName(profile.name);
+    state = state.copyWith(
+      selectedServerIndex: nextIndex,
+      draftProfile: profile,
+      relayPausedForPhoneCall: false,
+      clearError: true,
+      clearStatusMessage: true,
+    );
+    if (!wasActive) {
+      return;
+    }
+    await _ensureSession();
+    final session = _session;
+    if (session == null) {
+      return;
+    }
+    session.connect(
+      host: profile.host.trim(),
+      port: profile.port,
+      channel: profile.channel,
+      repeater: profile.repeater,
+    );
   }
 
   void togglePttLatch() {

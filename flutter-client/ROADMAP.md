@@ -211,20 +211,22 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 ---
 
-## Phase 6 — Settings screen
+## Phase 6 — Settings screen *(mostly done)*
 
-Parity with `SettingsActivity.kt`: PTT modes, mic/BT/warm mic, pause on call, pattern pickers, orientation, About.
+Parity with `SettingsActivity.kt`: pause on call, BT route, media/hardware PTT, pattern pickers, orientation, About, Tasker API.
 
-**External control (Tasker):** **custom** `BroadcastReceiver` — no suitable pub.dev package; mirror `ExternalControlReceiver.kt`.
+**Deferred:** mic source, warm mic, disable NS/AGC — custom native audio layer (same as Phase 4c).
 
 Note: no “screen PTT toggle mode” checkbox — see [PTT policy](#ptt-input-policy-fixed--no-ptt-toggle-mode-setting).
 
 ### Acceptance tests (Phase 6)
 
-- [ ] Mic source / warm mic / BT route settings affect capture
-- [ ] Tasker intents: PTT, connect, next profile (Android)
-- [ ] Roger/Call pattern pickers open editor
-- [ ] Pause-on-call toggle works with real cellular call
+- [ ] Mic source / warm mic settings affect capture *(deferred)*
+- [x] BT route setting affects audio session
+- [x] Tasker intents: PTT, connect, disconnect, next/prev profile (Android `ExternalControlReceiver`)
+- [x] Roger/Call pattern pickers open editor
+- [x] Pause-on-call toggle (Phase 4c; device-tested)
+- [ ] Tasker device verification on Pixel
 
 ---
 

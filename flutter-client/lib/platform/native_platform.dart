@@ -16,6 +16,14 @@ abstract final class NativePlatform {
   static const hardwarePttDownEvent = 'hardware_ptt_down';
   static const hardwarePttUpEvent = 'hardware_ptt_up';
   static const hardwarePttBoundEvent = 'hardware_ptt_bound';
+  static const externalPttDownEvent = 'external_ptt_down';
+  static const externalPttUpEvent = 'external_ptt_up';
+  static const externalPttToggleEvent = 'external_ptt_toggle';
+  static const externalCallSignalEvent = 'external_call_signal';
+  static const externalConnectEvent = 'external_connect';
+  static const externalDisconnectEvent = 'external_disconnect';
+  static const externalNextConnectionEvent = 'external_next_connection';
+  static const externalPreviousConnectionEvent = 'external_previous_connection';
 
   static const signalWifi = 0;
   static const signalCell = 1;
@@ -183,6 +191,23 @@ abstract final class NativePlatform {
       return;
     }
     await _channel.invokeMethod<void>('cancelCaptureHardwarePttKey');
+  }
+
+  static Future<bool> getExternalControlEnabled() async {
+    if (!isAndroid) {
+      return false;
+    }
+    final enabled = await _channel.invokeMethod<bool>('getExternalControlEnabled');
+    return enabled ?? false;
+  }
+
+  static Future<void> setExternalControlEnabled(bool enabled) async {
+    if (!isAndroid) {
+      return;
+    }
+    await _channel.invokeMethod<void>('setExternalControlEnabled', {
+      'enabled': enabled,
+    });
   }
 }
 
