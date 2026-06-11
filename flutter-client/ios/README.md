@@ -1,5 +1,7 @@
 # O-Walkie Flutter — iOS
 
+**Mac developer handoff:** see [DEVELOPER_HANDOFF.md](DEVELOPER_HANDOFF.md) for branch, checklist, and PR notes.
+
 iOS builds on macOS with Xcode. Without vcpkg iOS deps the app runs **utilities-only** (`sessionSupported` false). With deps installed, the relay session (Boost/Opus) links statically into the app.
 
 ## Prerequisites (macOS)
