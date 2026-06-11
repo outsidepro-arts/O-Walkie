@@ -1,5 +1,18 @@
 # O-Walkie Flutter client — architecture (experiment)
 
+Feature phases and plugin choices: [ROADMAP.md](ROADMAP.md).
+
+## PTT input policy
+
+| Input | Behavior |
+|-------|----------|
+| On-screen button | Tap = TX latch; hold = push-to-talk (`ptt_gesture_button.dart`) |
+| Hardware PTT | Hold-to-talk only |
+| Media play/pause | Toggle latch (planned) |
+| Space / a11y actions | Toggle latch |
+
+No user setting for “screen PTT toggle-only mode” (unlike legacy Kotlin checkbox).
+
 ## Layout
 
 ```

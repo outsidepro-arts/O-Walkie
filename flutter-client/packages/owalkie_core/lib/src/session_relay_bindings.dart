@@ -54,6 +54,24 @@ typedef _Ptt = int Function(int sessionId);
 typedef _PollEventNative = ffi.Int32 Function(ffi.Pointer<OwalkiePolledEvent> out);
 typedef _PollEvent = int Function(ffi.Pointer<OwalkiePolledEvent> out);
 
+typedef _SetRepeaterNative = ffi.Int32 Function(ffi.Int64 sessionId, ffi.Int32 enabled);
+typedef _SetRepeater = int Function(int sessionId, int enabled);
+
+typedef _CheckActivityNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Char> host,
+  ffi.Int32 port,
+  ffi.Pointer<ffi.Char> channel,
+  ffi.Int32 timeoutMs,
+  ffi.Pointer<ffi.Int32> outActive,
+);
+typedef _CheckActivity = int Function(
+  ffi.Pointer<ffi.Char> host,
+  int port,
+  ffi.Pointer<ffi.Char> channel,
+  int timeoutMs,
+  ffi.Pointer<ffi.Int32> outActive,
+);
+
 /// Low-level FFI to owalkie_flutter_* session exports (worker isolate only).
 class SessionRelayBindings {
   SessionRelayBindings(this._lib);
@@ -101,6 +119,15 @@ class SessionRelayBindings {
   late final _PollEvent _pollEvent =
       _lib.lookupFunction<_PollEventNative, _PollEvent>('owalkie_flutter_poll_event');
 
+  late final _SetRepeater _setRepeater = _lib.lookupFunction<_SetRepeaterNative, _SetRepeater>(
+    'owalkie_flutter_set_repeater_mode',
+  );
+
+  late final _CheckActivity _checkActivity =
+      _lib.lookupFunction<_CheckActivityNative, _CheckActivity>(
+    'owalkie_flutter_check_channel_activity',
+  );
+
   bool get hasSession => _hasSession() != 0;
 
   void shutdown() => _shutdown();
@@ -134,6 +161,30 @@ class SessionRelayBindings {
   int pttDown(int sessionId) => _pttDown(sessionId);
 
   int pttUp(int sessionId) => _pttUp(sessionId);
+
+  int setRepeaterMode(int sessionId, {required bool enabled}) =>
+      _setRepeater(sessionId, enabled ? 1 : 0);
+
+  ({int resultCode, bool active}) checkChannelActivity({
+    required String host,
+    required int port,
+    required String channel,
+    int timeoutMs = 4000,
+  }) {
+    return using((arena) {
+      final hostPtr = host.toNativeUtf8(allocator: arena);
+      final channelPtr = channel.toNativeUtf8(allocator: arena);
+      final outActive = arena<ffi.Int32>();
+      final rc = _checkActivity(
+        hostPtr.cast(),
+        port,
+        channelPtr.cast(),
+        timeoutMs,
+        outActive,
+      );
+      return (resultCode: rc, active: outActive.value != 0);
+    });
+  }
 
   OwalkiePolledEventData? pollEvent() {
     final out = calloc<OwalkiePolledEvent>();

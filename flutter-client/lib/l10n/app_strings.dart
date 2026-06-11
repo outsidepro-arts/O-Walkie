@@ -5,9 +5,12 @@ abstract final class AppStrings {
   static const menuMore = 'More';
   static const connectionStateDisconnected = 'Disconnected';
   static const connectionStateConnecting = 'Connecting…';
+  static const connectionStateReconnecting = 'Reconnecting…';
   static const connectionStateConnected = 'Connected';
   static const connectionStateUnsupported = 'Session unavailable';
   static const signalQualityDefault = 'Signal: —';
+  static const signalRxActive = 'RX active';
+  static const signalRxBusy = 'RX busy';
   static const serverProfiles = 'Connection list';
   static const collapseConnectionDetails = 'Collapse connection details';
   static const expandConnectionDetails = 'Show connection details';
@@ -35,6 +38,10 @@ abstract final class AppStrings {
   static const rxVolumeValueDefault = '100%';
   static const pttHold = 'Hold to Talk';
   static const pttActive = 'Talking…';
+
+  static String pttLockedCountdown(int sec) => 'Locked $sec s';
+
+  static String pttTxCountdown(int sec) => 'Wait $sec s';
   static const callSignal = 'Call';
   static const coreVersionFooter = 'Core';
 }

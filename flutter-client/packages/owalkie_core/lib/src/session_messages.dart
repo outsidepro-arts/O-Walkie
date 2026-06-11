@@ -35,6 +35,28 @@ final class SessionSetRxVolumeCommand extends SessionCommand {
   final int percent;
 }
 
+final class SessionSetRepeaterCommand extends SessionCommand {
+  const SessionSetRepeaterCommand(this.enabled);
+
+  final bool enabled;
+}
+
+final class SessionCheckChannelActivityCommand extends SessionCommand {
+  const SessionCheckChannelActivityCommand({
+    required this.requestId,
+    required this.host,
+    required this.port,
+    required this.channel,
+    this.timeoutMs = 4000,
+  });
+
+  final int requestId;
+  final String host;
+  final int port;
+  final String channel;
+  final int timeoutMs;
+}
+
 final class SessionShutdownCommand extends SessionCommand {
   const SessionShutdownCommand();
 }
@@ -56,8 +78,15 @@ sealed class SessionWorkerMessage {
     required int sessionId,
     required bool connected,
     required bool connecting,
+    bool reconnecting,
     String? error,
   }) = SessionTransportStateMessage;
+
+  const factory SessionWorkerMessage.channelActivityResult({
+    required int requestId,
+    required int resultCode,
+    required bool active,
+  }) = SessionChannelActivityResultMessage;
 
   const factory SessionWorkerMessage.nativeEvent({
     required int eventType,
@@ -96,13 +125,27 @@ final class SessionTransportStateMessage extends SessionWorkerMessage {
     required this.sessionId,
     required this.connected,
     required this.connecting,
+    this.reconnecting = false,
     this.error,
   });
 
   final int sessionId;
   final bool connected;
   final bool connecting;
+  final bool reconnecting;
   final String? error;
+}
+
+final class SessionChannelActivityResultMessage extends SessionWorkerMessage {
+  const SessionChannelActivityResultMessage({
+    required this.requestId,
+    required this.resultCode,
+    required this.active,
+  });
+
+  final int requestId;
+  final int resultCode;
+  final bool active;
 }
 
 final class SessionNativeEventMessage extends SessionWorkerMessage {

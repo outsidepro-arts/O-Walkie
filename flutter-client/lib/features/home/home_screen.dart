@@ -7,6 +7,8 @@ import '../../a11y/a11y.dart';
 import '../../l10n/a11y_strings.dart';
 import '../../l10n/app_strings.dart';
 import 'home_screen_controller.dart';
+import 'ptt_gesture_button.dart';
+import 'session_event_mapper.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -100,6 +102,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     connection: state.connectionChip,
                     signal: state.signalChip,
                   ),
+                  if (state.statusInfo != null) ...[
+                    const SizedBox(height: 8),
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        state.statusInfo!,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
                   if (state.lastError != null) ...[
                     const SizedBox(height: 8),
                     Semantics(
@@ -205,8 +217,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                   const SizedBox(height: 16),
                   _PttArea(
-                    enabled: state.isConnected && state.sessionSupported,
+                    enabled: pttEnabled(
+                      sessionSupported: state.sessionSupported,
+                      isConnected: state.isConnected,
+                      pttServerLocked: state.pttServerLocked,
+                    ),
                     active: state.txActive,
+                    label: pttButtonLabel(
+                      txActive: state.txActive,
+                      pttServerLocked: state.pttServerLocked,
+                      pttLockSec: state.pttLockSec,
+                      txCountdownSec: state.txCountdownSec,
+                    ),
+                    locked: state.pttServerLocked,
                     onPttDown: controller.pttDown,
                     onPttUp: controller.pttUp,
                   ),
@@ -550,100 +573,53 @@ class _PttArea extends StatelessWidget {
   const _PttArea({
     required this.enabled,
     required this.active,
+    required this.label,
+    required this.locked,
     required this.onPttDown,
     required this.onPttUp,
   });
 
   final bool enabled;
   final bool active;
+  final String label;
+  final bool locked;
   final VoidCallback onPttDown;
   final VoidCallback onPttUp;
 
   @override
   Widget build(BuildContext context) {
-    final label = active ? AppStrings.pttActive : A11yStrings.pttLabel;
-    final hint = enabled ? A11yStrings.pttHint : A11yStrings.pttDisabledHint;
-
     return SizedBox(
       height: 220,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          Focus(
-            child: Shortcuts(
-              shortcuts: {
-                const SingleActivator(LogicalKeyboardKey.space):
-                    const _PttKeyboardIntent(),
-              },
-              child: Actions(
-                actions: {
-                  _PttKeyboardIntent: CallbackAction<_PttKeyboardIntent>(
-                    onInvoke: (_) {
-                      if (!enabled) {
-                        return null;
-                      }
-                      if (active) {
-                        onPttUp();
-                      } else {
-                        onPttDown();
-                      }
-                      return null;
-                    },
-                  ),
-                },
-                child: Semantics(
-                  button: true,
-                  enabled: enabled,
-                  label: label,
-                  hint: hint,
-                  customSemanticsActions: enabled
-                      ? {
-                          CustomSemanticsAction(
-                            label: A11yStrings.pttStartAction,
-                          ): onPttDown,
-                          CustomSemanticsAction(
-                            label: A11yStrings.pttStopAction,
-                          ): onPttUp,
-                        }
-                      : const {},
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: enabled ? (_) => onPttDown() : null,
-                    onTapUp: enabled ? (_) => onPttUp() : null,
-                    onTapCancel: enabled ? () => onPttUp() : null,
-                    child: MinTouchTarget(
-                      child: Semantics(
-                        container: true,
-                        excludeSemantics: true,
-                        child: Container(
-                          width: 190,
-                          height: 190,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: active
-                                ? Theme.of(context)
-                                    .colorScheme
-                                    .primaryContainer
-                                : Theme.of(context).colorScheme.primary,
-                          ),
-                          child: Text(
-                            active ? AppStrings.pttActive : AppStrings.pttHold,
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onPrimary,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                          ),
-                        ),
+          PttGestureButton(
+            enabled: enabled,
+            active: active,
+            label: label,
+            locked: locked,
+            onPttDown: onPttDown,
+            onPttUp: onPttUp,
+            child: Semantics(
+              container: true,
+              excludeSemantics: true,
+              child: Container(
+                width: 190,
+                height: 190,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: active
+                      ? Theme.of(context).colorScheme.primaryContainer
+                      : Theme.of(context).colorScheme.primary,
+                ),
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onPrimary,
+                        fontWeight: FontWeight.bold,
                       ),
-                    ),
-                  ),
                 ),
               ),
             ),
@@ -668,8 +644,4 @@ class _PttArea extends StatelessWidget {
       ),
     );
   }
-}
-
-class _PttKeyboardIntent extends Intent {
-  const _PttKeyboardIntent();
 }

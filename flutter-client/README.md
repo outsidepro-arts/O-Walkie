@@ -2,6 +2,8 @@
 
 Cross-platform shell for O-Walkie: **Flutter UI** + **`owalkie-core` FFI plugin**.
 
+Migration plan and phases: [ROADMAP.md](ROADMAP.md).
+
 ## Prerequisites
 
 - Flutter SDK at `C:\dev\flutter` (stable)

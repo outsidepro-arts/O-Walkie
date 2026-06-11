@@ -4,6 +4,7 @@
 #include "owalkie_core.h"
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -34,25 +35,38 @@ void push_event(owalkie_event_type type, owalkie_session_id sid, const char* inf
     g_events.push_back(ev);
 }
 
-const char* event_info(const owalkie_event* ev) {
-    if (!ev) {
-        return nullptr;
+void format_event_info(const owalkie_event* ev, char* buf, size_t bufsize) {
+    if (!ev || !buf || bufsize == 0) {
+        return;
     }
+    buf[0] = '\0';
     switch (ev->type) {
         case OWALKIE_EV_CONNECTION_FAILED:
         case OWALKIE_EV_DISCONNECTED:
         case OWALKIE_EV_CONNECTION_LOST:
-            return ev->u.disconnected.reason;
+            if (ev->u.disconnected.reason) {
+                std::strncpy(buf, ev->u.disconnected.reason, bufsize - 1);
+            }
+            break;
         case OWALKIE_EV_PROTOCOL_ERROR:
-            return ev->u.protocol_error.message;
+            if (ev->u.protocol_error.message) {
+                std::strncpy(buf, ev->u.protocol_error.message, bufsize - 1);
+            }
+            break;
         case OWALKIE_EV_RX_BROADCAST_START:
-            return ev->u.rx_broadcast_start.busy_mode ? "busy" : "idle";
+            std::snprintf(buf, bufsize, "%s", ev->u.rx_broadcast_start.busy_mode ? "true" : "false");
+            break;
         case OWALKIE_EV_PTT_LOCKED:
-            return "locked";
+        case OWALKIE_EV_TX_COUNTDOWN_START:
+            std::snprintf(buf, bufsize, "%d", ev->u.ptt_locked.display_sec);
+            break;
         case OWALKIE_EV_TX_STOP:
-            return ev->u.tx_stop.info;
+            if (ev->u.tx_stop.info) {
+                std::strncpy(buf, ev->u.tx_stop.info, bufsize - 1);
+            }
+            break;
         default:
-            return nullptr;
+            break;
     }
 }
 
@@ -60,7 +74,9 @@ void on_session_event(void* /*user*/, owalkie_session_id sid, const owalkie_even
     if (!ev) {
         return;
     }
-    push_event(ev->type, sid, event_info(ev));
+    char info_buf[512]{};
+    format_event_info(ev, info_buf, sizeof(info_buf));
+    push_event(ev->type, sid, info_buf[0] != '\0' ? info_buf : nullptr);
     if (ev->type == OWALKIE_EV_CONNECTED) {
         const auto& cfg = ev->u.welcome.config;
         owalkie_flutter_audio::configure(cfg.sample_rate, cfg.packet_ms);
@@ -283,6 +299,54 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_poll_event(owalkie_flutter_polled_even
     return 1;
 #else
     return 0;
+#endif
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_set_repeater_mode(int64_t session_id, int32_t enabled) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    if (session_id <= 0) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return static_cast<int32_t>(owalkie_set_repeater_mode(
+        static_cast<owalkie_session_id>(session_id),
+        enabled ? 1 : 0));
+#else
+    (void)session_id;
+    (void)enabled;
+    return OWALKIE_ERR_UNSUPPORTED;
+#endif
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_check_channel_activity(
+    const char* host,
+    int32_t port,
+    const char* channel,
+    int32_t timeout_ms,
+    int32_t* out_active) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    if (!host || !channel || port <= 0 || !out_active) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    owalkie_connect_params params{};
+    params.host = host;
+    params.port = port;
+    params.channel = channel;
+    params.use_tls = 0;
+    params.repeater_mode = 0;
+    int active = 0;
+    const owalkie_result r =
+        owalkie_check_channel_activity(&params, timeout_ms, &active);
+    *out_active = active;
+    return static_cast<int32_t>(r);
+#else
+    (void)host;
+    (void)port;
+    (void)channel;
+    (void)timeout_ms;
+    if (out_active) {
+        *out_active = 0;
+    }
+    return OWALKIE_ERR_UNSUPPORTED;
 #endif
 }
 

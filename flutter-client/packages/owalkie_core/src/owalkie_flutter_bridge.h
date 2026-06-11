@@ -64,6 +64,20 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_ptt_up(int64_t session_id);
  */
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_poll_event(owalkie_flutter_polled_event* out);
 
+/** Toggle repeater mode on an active session. */
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_set_repeater_mode(int64_t session_id, int32_t enabled);
+
+/**
+ * One-shot channel activity probe (no managed session).
+ * @p out_active is 0 or 1 on success.
+ */
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_check_channel_activity(
+    const char* host,
+    int32_t port,
+    const char* channel,
+    int32_t timeout_ms,
+    int32_t* out_active);
+
 #ifdef __cplusplus
 }
 #endif

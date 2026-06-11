@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:isolate';
+import 'dart:math' as math;
 
 import 'package:ffi/ffi.dart';
 
@@ -27,7 +28,11 @@ class _SessionWorker {
   int _sessionId = 0;
   bool _desiredConnected = false;
   bool _connectLoopRunning = false;
+  bool _hadConnected = false;
   Timer? _pollTimer;
+
+  static const _initialBackoffMs = 1500;
+  static const _maxBackoffMs = 8000;
 
   void run() {
     try {
@@ -66,6 +71,10 @@ class _SessionWorker {
         _pttUp();
       case SessionSetRxVolumeCommand(:final percent):
         _relay.setRxVolumePercent(percent);
+      case SessionSetRepeaterCommand(:final enabled):
+        _setRepeater(enabled);
+      case SessionCheckChannelActivityCommand():
+        _checkChannelActivity(message);
       case SessionShutdownCommand():
         _shutdown();
     }
@@ -110,18 +119,25 @@ class _SessionWorker {
   }
 
   Future<void> _connectLoop() async {
+    var backoffMs = _initialBackoffMs;
     while (_desiredConnected && _sessionId != 0 && _relay.sessionValid(_sessionId)) {
       if (_relay.sessionReady(_sessionId)) {
         _publishState(connected: true, connecting: false);
         break;
       }
+      _publishState(
+        connected: false,
+        connecting: true,
+        reconnecting: _hadConnected,
+      );
       _relay.connect(_sessionId, timeoutMs: 3500);
       await Future<void>.delayed(const Duration(milliseconds: 400));
       if (_relay.sessionReady(_sessionId)) {
         _publishState(connected: true, connecting: false);
         break;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 600));
+      await Future<void>.delayed(Duration(milliseconds: backoffMs));
+      backoffMs = math.min((backoffMs * 1.5).round(), _maxBackoffMs);
     }
     _connectLoopRunning = false;
     if (!_desiredConnected) {
@@ -131,6 +147,7 @@ class _SessionWorker {
 
   void _disconnect() {
     _desiredConnected = false;
+    _hadConnected = false;
     final id = _sessionId;
     if (id != 0) {
       _relay.pttUp(id);
@@ -138,6 +155,27 @@ class _SessionWorker {
     }
     _sessionId = 0;
     _publishState(connected: false, connecting: false);
+  }
+
+  void _setRepeater(bool enabled) {
+    if (_sessionId == 0) {
+      return;
+    }
+    _relay.setRepeaterMode(_sessionId, enabled: enabled);
+  }
+
+  void _checkChannelActivity(SessionCheckChannelActivityCommand cmd) {
+    final result = _relay.checkChannelActivity(
+      host: cmd.host,
+      port: cmd.port,
+      channel: cmd.channel,
+      timeoutMs: cmd.timeoutMs,
+    );
+    _mainPort.send(SessionWorkerMessage.channelActivityResult(
+      requestId: cmd.requestId,
+      resultCode: result.resultCode,
+      active: result.active,
+    ));
   }
 
   void _pttDown() {
@@ -175,17 +213,46 @@ class _SessionWorker {
       ));
       switch (ev.eventType) {
         case OwalkieEventType.connected:
-          _publishState(connected: true, connecting: false);
+          _hadConnected = true;
+          _publishState(connected: true, connecting: false, clearError: true);
         case OwalkieEventType.connectionLost:
-          _publishState(connected: false, connecting: true);
+          _publishState(connected: false, connecting: true, reconnecting: true);
           if (_desiredConnected) {
             _ensureConnectLoop();
           }
-        case OwalkieEventType.disconnected:
-        case OwalkieEventType.connectionFailed:
         case OwalkieEventType.protocolError:
-          if (!_desiredConnected) {
+          _desiredConnected = false;
+          _hadConnected = false;
+          _publishState(
+            connected: false,
+            connecting: false,
+            error: ev.info.isNotEmpty ? ev.info : 'Protocol error',
+          );
+        case OwalkieEventType.connectionFailed:
+          if (_desiredConnected && _hadConnected) {
+            _publishState(
+              connected: false,
+              connecting: true,
+              reconnecting: true,
+              error: ev.info.isNotEmpty ? ev.info : null,
+            );
+          } else if (!_desiredConnected) {
             _publishState(connected: false, connecting: false);
+          } else {
+            _publishState(
+              connected: false,
+              connecting: true,
+              error: ev.info.isNotEmpty ? ev.info : null,
+            );
+          }
+        case OwalkieEventType.disconnected:
+          if (!_desiredConnected) {
+            _hadConnected = false;
+            _publishState(
+              connected: false,
+              connecting: false,
+              error: ev.info.isNotEmpty ? ev.info : null,
+            );
           }
       }
     }
@@ -194,13 +261,16 @@ class _SessionWorker {
   void _publishState({
     required bool connected,
     required bool connecting,
+    bool reconnecting = false,
     String? error,
+    bool clearError = false,
   }) {
     _mainPort.send(SessionWorkerMessage.transportState(
       sessionId: _sessionId,
       connected: connected,
       connecting: connecting,
-      error: error,
+      reconnecting: reconnecting,
+      error: clearError ? null : error,
     ));
   }
 

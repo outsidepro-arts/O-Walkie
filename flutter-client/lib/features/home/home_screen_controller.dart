@@ -7,6 +7,7 @@ import 'package:owalkie_core/owalkie_core.dart';
 import '../../l10n/app_strings.dart';
 import '../../platform/native_platform.dart';
 import 'home_screen_state.dart';
+import 'session_event_mapper.dart';
 
 final homeScreenControllerProvider =
     NotifierProvider<HomeScreenController, HomeScreenState>(
@@ -71,6 +72,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       case SessionTransportStateMessage(
           :final connected,
           :final connecting,
+          :final reconnecting,
           :final error,
         ):
         if (connected && NativePlatform.isMobile) {
@@ -81,9 +83,15 @@ class HomeScreenController extends Notifier<HomeScreenState> {
         state = state.copyWith(
           isConnected: connected,
           isConnecting: connecting,
-          connectionChip: _chipForTransport(connected, connecting),
+          isReconnecting: reconnecting,
+          connectionChip: connectionChipForTransport(
+            connected: connected,
+            connecting: connecting,
+            reconnecting: reconnecting,
+          ),
           lastError: error,
           clearError: error == null,
+          statusInfo: reconnecting ? AppStrings.connectionStateReconnecting : state.statusInfo,
         );
       case SessionPttResultMessage(:final active, :final resultCode):
         state = state.copyWith(
@@ -91,30 +99,19 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           lastError: resultCode != 0 ? _pttError(resultCode) : state.lastError,
         );
       case SessionNativeEventMessage(:final eventType, :final info):
-        if (info.isNotEmpty) {
-          state = state.copyWith(lastError: info);
-        }
-        if (eventType == OwalkieEventType.rxBroadcastStart) {
-          state = state.copyWith(signalChip: 'RX active');
-        } else if (eventType == OwalkieEventType.rxBroadcastEnd) {
-          state = state.copyWith(signalChip: AppStrings.signalQualityDefault);
-        }
+        state = applyNativeSessionEvent(
+          state,
+          eventType: eventType,
+          info: info,
+        );
       case SessionUnsupportedMessage():
         state = state.copyWith(
           sessionSupported: false,
           connectionChip: AppStrings.connectionStateUnsupported,
         );
+      case SessionChannelActivityResultMessage():
+        break;
     }
-  }
-
-  String _chipForTransport(bool connected, bool connecting) {
-    if (connected) {
-      return AppStrings.connectionStateConnected;
-    }
-    if (connecting) {
-      return AppStrings.connectionStateConnecting;
-    }
-    return AppStrings.connectionStateDisconnected;
   }
 
   void toggleConnectionDetails() {
@@ -131,6 +128,13 @@ class HomeScreenController extends Notifier<HomeScreenState> {
 
   void toggleScan() {
     state = state.copyWith(scanActive: !state.scanActive);
+  }
+
+  void setRepeaterMode(bool enabled) {
+    state = state.copyWith(
+      profile: state.profile.copyWith(repeater: enabled),
+    );
+    _session?.setRepeaterMode(enabled);
   }
 
   void updateProfile({
@@ -163,11 +167,17 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     final p = state.profile;
     if (p.host.trim().isEmpty) {
       state = state.copyWith(
-        lastError: 'Enter server host (LAN IP of the relay, not 127.0.0.1 on a phone).',
+        lastError:
+            'Enter server host (LAN IP of the relay, not 127.0.0.1 on a phone).',
       );
       return;
     }
-    session.connect(host: p.host.trim(), port: p.port, channel: p.channel, repeater: p.repeater);
+    session.connect(
+      host: p.host.trim(),
+      port: p.port,
+      channel: p.channel,
+      repeater: p.repeater,
+    );
   }
 
   String _pttError(int code) {
@@ -179,7 +189,14 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void pttDown() {
-    if (!state.isConnected || state.txActive) {
+    if (!pttEnabled(
+      sessionSupported: state.sessionSupported,
+      isConnected: state.isConnected,
+      pttServerLocked: state.pttServerLocked,
+    )) {
+      return;
+    }
+    if (state.txActive) {
       return;
     }
     if (NativePlatform.isMobile) {

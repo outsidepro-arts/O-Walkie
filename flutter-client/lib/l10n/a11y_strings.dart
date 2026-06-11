@@ -16,9 +16,12 @@ abstract final class A11yStrings {
   static const scanOffHint = 'Double tap to start scanning servers';
   static const rxVolumeHint = 'Adjust incoming audio volume from 0 to 200 percent';
   static const pttLabel = 'Push to talk';
+  static const pttActiveLabel = 'Talking';
   static const pttHint =
-      'Touch and hold to transmit. Screen reader: use actions Start talking and Stop talking';
+      'Short tap latches transmit until next tap. Hold for classic push-to-talk. '
+      'Screen reader: use Start talking and Stop talking actions';
   static const pttDisabledHint = 'Connect to a server before transmitting';
+  static const pttLockedHint = 'Server locked push-to-talk. Wait for unlock';
   static const pttStartAction = 'Start talking';
   static const pttStopAction = 'Stop talking';
   static const callSignalHint = 'Call signal, not available in this version';
