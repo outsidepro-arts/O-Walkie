@@ -99,6 +99,29 @@ abstract final class AppStrings {
   static String get protocolLabel => _l.protocolLabel;
   static String get settingsTitle => _l.settingsTitle;
   static String get settingsAudio => _l.settingsAudio;
+  static String get settingsAudioInputDevice => _l.settingsAudioInputDevice;
+  static String microphoneSourceTitle(String id, {required String fallback}) {
+    switch (id) {
+      case 'mic':
+        return _l.microphoneSourceMic;
+      case 'default':
+        return _l.microphoneSourceDefault;
+      case 'camcorder':
+        return _l.microphoneSourceCamcorder;
+      case 'voice_recognition':
+        return _l.microphoneSourceVoiceRecognition;
+      case 'voice_communication':
+        return _l.microphoneSourceVoiceCommunication;
+      case 'unprocessed':
+        return _l.microphoneSourceUnprocessed;
+      case 'voice_performance':
+        return _l.microphoneSourceVoicePerformance;
+      default:
+        return fallback;
+    }
+  }
+  static String get settingsAudioOutputDevice => _l.settingsAudioOutputDevice;
+  static String get settingsAudioDeviceDefault => _l.settingsAudioDeviceDefault;
   static String get settingsPauseDuringPhoneCall =>
       _l.settingsPauseDuringPhoneCall;
   static String get settingsUseBluetoothHeadset => _l.settingsUseBluetoothHeadset;

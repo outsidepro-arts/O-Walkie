@@ -627,4 +627,48 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_uplink_signal_byte(void) {
 #endif
 }
 
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_list_capture_devices(
+    owalkie_flutter_audio_device_info* out,
+    int32_t max_count) {
+    return owalkie_flutter_audio::list_capture_devices(
+        reinterpret_cast<owalkie_flutter_audio::AudioDeviceEntry*>(out),
+        max_count);
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_list_playback_devices(
+    owalkie_flutter_audio_device_info* out,
+    int32_t max_count) {
+    return owalkie_flutter_audio::list_playback_devices(
+        reinterpret_cast<owalkie_flutter_audio::AudioDeviceEntry*>(out),
+        max_count);
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_capture_device_index(int32_t index) {
+    owalkie_flutter_audio::set_capture_device_index(index);
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_playback_device_index(int32_t index) {
+    owalkie_flutter_audio::set_playback_device_index(index);
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_capture_platform_device_id(int32_t platform_id) {
+    owalkie_flutter_audio::set_capture_platform_device_id(platform_id);
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_capture_aaudio_input_preset(int32_t preset) {
+    owalkie_flutter_audio::set_capture_aaudio_input_preset(preset);
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_playback_platform_device_id(int32_t platform_id) {
+    owalkie_flutter_audio::set_playback_platform_device_id(platform_id);
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_capture_device_index(void) {
+    return owalkie_flutter_audio::capture_device_index();
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_playback_device_index(void) {
+    return owalkie_flutter_audio::playback_device_index();
+}
+
 } // extern "C"

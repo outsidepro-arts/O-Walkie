@@ -6,6 +6,7 @@ import UIKit
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let platformChannelName = "ru.outsidepro_arts.owalkie.flutter/platform"
   private var pendingMicResult: FlutterResult?
+  private var microphoneProfileId = MicrophoneSourceRegistry.ID_MIC
 
   override func application(
     _ application: UIApplication,
@@ -29,9 +30,27 @@ import UIKit
         result(self.hasMicrophonePermission())
       case "requestMicrophonePermission":
         self.requestMicrophonePermission(result: result)
+      case "listMicrophoneSources":
+        result(
+          MicrophoneSourceRegistry.options.map { option in
+            [
+              "id": option.id,
+              "title": option.id,
+              "inputPreset": option.inputPreset,
+            ]
+          }
+        )
+      case "applyMicrophoneProfile":
+        let args = call.arguments as? [String: Any]
+        let profileId = args?["profileId"] as? String ?? self.microphoneProfileId
+        let bluetooth = args?["bluetoothHeadset"] as? Bool ?? false
+        self.applyMicrophoneSession(profileId: profileId, bluetoothHeadset: bluetooth)
+        result(true)
       case "prepareAudioSession":
-        let bluetooth = (call.arguments as? [String: Any])?["bluetoothHeadset"] as? Bool ?? false
-        self.prepareAudioSession(bluetoothHeadset: bluetooth)
+        let args = call.arguments as? [String: Any]
+        let bluetooth = args?["bluetoothHeadset"] as? Bool ?? false
+        let profileId = args?["microphoneProfileId"] as? String ?? self.microphoneProfileId
+        self.applyMicrophoneSession(profileId: profileId, bluetoothHeadset: bluetooth)
         result(true)
       case "releaseAudioSession":
         self.releaseAudioSession()
@@ -64,14 +83,16 @@ import UIKit
     }
   }
 
-  private func prepareAudioSession(bluetoothHeadset: Bool) {
-    let session = AVAudioSession.sharedInstance()
-    var options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth]
-    if bluetoothHeadset {
-      options.insert(.allowBluetoothA2DP)
+  private func applyMicrophoneSession(profileId: String, bluetoothHeadset: Bool) {
+    microphoneProfileId = profileId
+    do {
+      try MicrophoneSourceRegistry.applySession(
+        profileId: profileId,
+        bluetoothHeadset: bluetoothHeadset
+      )
+    } catch {
+      NSLog("owalkie_ios: AVAudioSession apply failed for profile %@: %@", profileId, error.localizedDescription)
     }
-    try? session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
-    try? session.setActive(true)
   }
 
   private func releaseAudioSession() {

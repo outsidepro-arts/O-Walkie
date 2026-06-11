@@ -232,6 +232,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsAudio => 'Audio';
 
   @override
+  String get settingsAudioInputDevice => 'Microphone';
+
+  @override
+  String get microphoneSourceMic => 'Phone mic (MIC)';
+
+  @override
+  String get microphoneSourceDefault => 'System default';
+
+  @override
+  String get microphoneSourceCamcorder => 'Camcorder';
+
+  @override
+  String get microphoneSourceVoiceRecognition => 'Voice recognition';
+
+  @override
+  String get microphoneSourceVoiceCommunication => 'Voice communication';
+
+  @override
+  String get microphoneSourceUnprocessed => 'Unprocessed';
+
+  @override
+  String get microphoneSourceVoicePerformance => 'Voice performance';
+
+  @override
+  String get settingsAudioOutputDevice => 'Speakers';
+
+  @override
+  String get settingsAudioDeviceDefault => 'System default';
+
+  @override
   String get settingsPauseDuringPhoneCall => 'Pause relay during phone call';
 
   @override

@@ -135,6 +135,30 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_uplink_signal_byte(void);
 /** Android only: store network handle + bind process before connect (no-op elsewhere). */
 FFI_PLUGIN_EXPORT void owalkie_flutter_bind_process_network(int64_t network_handle);
 
+typedef struct owalkie_flutter_audio_device_info {
+    int32_t index;
+    int32_t is_default;
+    char name[256];
+} owalkie_flutter_audio_device_info;
+
+/** List capture devices into @p out (max @p max_count). Returns count written. */
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_list_capture_devices(
+    owalkie_flutter_audio_device_info* out,
+    int32_t max_count);
+
+/** List playback devices into @p out (max @p max_count). Returns count written. */
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_list_playback_devices(
+    owalkie_flutter_audio_device_info* out,
+    int32_t max_count);
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_capture_device_index(int32_t index);
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_playback_device_index(int32_t index);
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_capture_aaudio_input_preset(int32_t preset);
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_capture_platform_device_id(int32_t platform_id);
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_playback_platform_device_id(int32_t platform_id);
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_capture_device_index(void);
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_playback_device_index(void);
+
 #ifdef __cplusplus
 }
 #endif

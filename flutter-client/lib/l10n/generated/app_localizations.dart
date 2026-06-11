@@ -512,6 +512,66 @@ abstract class AppLocalizations {
   /// **'Audio'**
   String get settingsAudio;
 
+  /// No description provided for @settingsAudioInputDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone'**
+  String get settingsAudioInputDevice;
+
+  /// No description provided for @microphoneSourceMic.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone mic (MIC)'**
+  String get microphoneSourceMic;
+
+  /// No description provided for @microphoneSourceDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'System default'**
+  String get microphoneSourceDefault;
+
+  /// No description provided for @microphoneSourceCamcorder.
+  ///
+  /// In en, this message translates to:
+  /// **'Camcorder'**
+  String get microphoneSourceCamcorder;
+
+  /// No description provided for @microphoneSourceVoiceRecognition.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice recognition'**
+  String get microphoneSourceVoiceRecognition;
+
+  /// No description provided for @microphoneSourceVoiceCommunication.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice communication'**
+  String get microphoneSourceVoiceCommunication;
+
+  /// No description provided for @microphoneSourceUnprocessed.
+  ///
+  /// In en, this message translates to:
+  /// **'Unprocessed'**
+  String get microphoneSourceUnprocessed;
+
+  /// No description provided for @microphoneSourceVoicePerformance.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice performance'**
+  String get microphoneSourceVoicePerformance;
+
+  /// No description provided for @settingsAudioOutputDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Speakers'**
+  String get settingsAudioOutputDevice;
+
+  /// No description provided for @settingsAudioDeviceDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'System default'**
+  String get settingsAudioDeviceDefault;
+
   /// No description provided for @settingsPauseDuringPhoneCall.
   ///
   /// In en, this message translates to:

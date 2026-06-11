@@ -8,6 +8,8 @@ import 'package:owalkie_core/owalkie_core.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:vibration/vibration.dart';
 
+import '../../data/audio_device_store.dart';
+import '../../data/microphone_source_store.dart';
 import '../../data/audio_settings_store.dart';
 import '../../data/server_store.dart';
 import '../../data/signal_pattern_store.dart';
@@ -20,6 +22,7 @@ import '../../domain/server_profile.dart';
 import '../../domain/signal_pattern.dart';
 import '../../domain/signal_point_codec.dart';
 import '../../l10n/app_strings.dart';
+import '../../platform/audio_device_service.dart';
 import '../../platform/audio_interruption_manager.dart';
 import '../../platform/haptics.dart';
 import '../../platform/native_platform.dart';
@@ -307,6 +310,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     await NativePlatform.prepareAudioSession(
       bluetoothHeadset: _bluetoothHeadsetStore.isEnabled(),
+      microphoneProfileId: ref.read(microphoneSourceStoreProvider).selectedId(),
     );
   }
 
@@ -525,6 +529,13 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           protocolVersion: protocolVersion,
           sessionSupported: true,
           clearError: true,
+        );
+        unawaited(
+          AudioDeviceService.applyFromStore(
+            ref.read(audioDeviceStoreProvider),
+            microphoneStore: ref.read(microphoneSourceStoreProvider),
+            bluetoothHeadset: _bluetoothHeadsetStore.isEnabled(),
+          ),
         );
       case SessionLoadFailedMessage(:final message):
         state = state.copyWith(

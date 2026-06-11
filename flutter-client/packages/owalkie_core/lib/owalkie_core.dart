@@ -4,6 +4,8 @@ import 'owalkie_core_bindings_generated.dart';
 import 'src/native_library.dart';
 
 export 'session_service.dart';
+export 'src/audio_device_bindings.dart'
+    show AudioDeviceBindings, NativeAudioDevice;
 export 'src/link_signal.dart';
 export 'src/session_event_type.dart';
 export 'src/session_messages.dart';

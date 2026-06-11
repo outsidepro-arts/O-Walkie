@@ -233,6 +233,36 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsAudio => 'Аудио';
 
   @override
+  String get settingsAudioInputDevice => 'Микрофон';
+
+  @override
+  String get microphoneSourceMic => 'Микрофон телефона (MIC)';
+
+  @override
+  String get microphoneSourceDefault => 'По умолчанию';
+
+  @override
+  String get microphoneSourceCamcorder => 'Видеокамера';
+
+  @override
+  String get microphoneSourceVoiceRecognition => 'Распознавание речи';
+
+  @override
+  String get microphoneSourceVoiceCommunication => 'Голосовая связь';
+
+  @override
+  String get microphoneSourceUnprocessed => 'Без обработки';
+
+  @override
+  String get microphoneSourceVoicePerformance => 'Голосовая производительность';
+
+  @override
+  String get settingsAudioOutputDevice => 'Динамики';
+
+  @override
+  String get settingsAudioDeviceDefault => 'По умолчанию';
+
+  @override
   String get settingsPauseDuringPhoneCall =>
       'Приостанавливать приём при активном звонке';
 

@@ -2,6 +2,8 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/services.dart';
 
+import '../../domain/microphone_source_option.dart';
+
 /// Mobile platform hooks (microphone permission, voice communication audio mode).
 abstract final class NativePlatform {
   static const _channel =
@@ -93,11 +95,28 @@ abstract final class NativePlatform {
     return requestNotificationPermission();
   }
 
-  static Future<void> prepareAudioSession({bool bluetoothHeadset = false}) async {
+  static Future<void> prepareAudioSession({
+    bool bluetoothHeadset = false,
+    String? microphoneProfileId,
+  }) async {
     if (!isMobile) {
       return;
     }
     await _channel.invokeMethod<void>('prepareAudioSession', {
+      'bluetoothHeadset': bluetoothHeadset,
+      if (microphoneProfileId != null) 'microphoneProfileId': microphoneProfileId,
+    });
+  }
+
+  static Future<void> applyMicrophoneProfile(
+    String profileId, {
+    bool bluetoothHeadset = false,
+  }) async {
+    if (!isIOS) {
+      return;
+    }
+    await _channel.invokeMethod<void>('applyMicrophoneProfile', {
+      'profileId': profileId,
       'bluetoothHeadset': bluetoothHeadset,
     });
   }
@@ -217,6 +236,28 @@ abstract final class NativePlatform {
     await _channel.invokeMethod<void>('setExternalControlEnabled', {
       'enabled': enabled,
     });
+  }
+
+  static bool get isIOS => Platform.isIOS;
+
+  static Future<List<MicrophoneSourceOption>> listMicrophoneSources() async {
+    if (!isAndroid && !isIOS) {
+      return const [];
+    }
+    final raw = await _channel.invokeListMethod<Map<Object?, Object?>>(
+      'listMicrophoneSources',
+    );
+    if (raw == null || raw.isEmpty) {
+      return const [];
+    }
+    return [
+      for (final entry in raw)
+        MicrophoneSourceOption(
+          id: entry['id'] as String? ?? '',
+          title: entry['title'] as String? ?? '',
+          inputPreset: entry['inputPreset'] as int? ?? 1,
+        ),
+    ];
   }
 }
 

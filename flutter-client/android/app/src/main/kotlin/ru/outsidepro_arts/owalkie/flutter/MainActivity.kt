@@ -114,6 +114,17 @@ class MainActivity : FlutterActivity() {
                     openBatteryOptimizationSettings()
                     result.success(true)
                 }
+                "listMicrophoneSources" -> {
+                    result.success(
+                        MicrophoneSourceRegistry.listOptions(this).map { option ->
+                            mapOf(
+                                "id" to option.id,
+                                "title" to option.title,
+                                "inputPreset" to option.inputPreset,
+                            )
+                        },
+                    )
+                }
                 else -> result.notImplemented()
             }
         }

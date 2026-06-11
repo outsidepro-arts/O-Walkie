@@ -12,6 +12,10 @@ ffi.DynamicLibrary openOwalkieCoreLibrary() {
     return ffi.DynamicLibrary.process();
   }
   if (Platform.isWindows) {
+    final override = Platform.environment['OWALKIE_CORE_DLL'];
+    if (override != null && override.isNotEmpty) {
+      return ffi.DynamicLibrary.open(override);
+    }
     final exeDir = File(Platform.resolvedExecutable).parent.path;
     final nextToExe = '$exeDir\\$root.dll';
     if (File(nextToExe).existsSync()) {

@@ -6,4 +6,11 @@
     <string name="service_notification_action_connect">Подключиться</string>
     <string name="service_notification_action_disconnect">Отключиться</string>
     <string name="service_notification_action_battery">Батарея</string>
+    <string name="microphone_option_mic">Микрофон телефона (MIC)</string>
+    <string name="microphone_option_default">Системный по умолчанию</string>
+    <string name="microphone_option_camcorder">Камера (Camcorder)</string>
+    <string name="microphone_option_voice_recognition">Распознавание речи</string>
+    <string name="microphone_option_voice_communication">Голосовая связь</string>
+    <string name="microphone_option_unprocessed">Без обработки (Unprocessed)</string>
+    <string name="microphone_option_voice_performance">Сценический режим (Voice performance)</string>
 </resources>

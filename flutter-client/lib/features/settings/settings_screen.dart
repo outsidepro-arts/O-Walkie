@@ -6,10 +6,15 @@ import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../data/audio_device_store.dart';
+import '../../data/microphone_source_store.dart';
 import '../../data/audio_settings_store.dart';
 import '../../data/orientation_store.dart';
 import '../../data/windows_settings_store.dart';
+import '../../domain/microphone_source_option.dart';
 import '../../features/home/home_screen_controller.dart';
+import '../../platform/audio_device_service.dart';
+import '../../platform/microphone_source_service.dart';
 import '../../platform/native_platform.dart';
 import '../../platform/windows/desktop_shell.dart';
 import '../../platform/windows/windows_global_ptt.dart';
@@ -41,11 +46,93 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   HardwarePttBinding _hardwarePttBinding = const HardwarePttBinding.unassigned();
   WindowsPttBinding? _globalPttBinding;
   bool _minimizeToTray = false;
+  List<NativeAudioDevice> _inputDevices = [];
+  List<NativeAudioDevice> _outputDevices = [];
+  int _inputDeviceIndex = -1;
+  int _outputDeviceIndex = -1;
+  List<MicrophoneSourceOption> _microphoneSources = [];
+  String _selectedMicrophoneSourceId = MicrophoneSourceStore.defaultId;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  Future<void> _reloadAudioDevices() async {
+    if (MicrophoneSourceService.isSupported) {
+      final micStore = ref.read(microphoneSourceStoreProvider);
+      final options = await MicrophoneSourceService.listOptions();
+      var selectedId = micStore.selectedId();
+      if (options.isNotEmpty && !options.any((o) => o.id == selectedId)) {
+        selectedId = options.first.id;
+        await micStore.setSelectedId(selectedId);
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _microphoneSources = options;
+        _selectedMicrophoneSourceId = selectedId;
+      });
+      return;
+    }
+    if (!AudioDeviceService.showsPhysicalAudioDevices) {
+      return;
+    }
+    final audioDeviceStore = ref.read(audioDeviceStoreProvider);
+    final inputDevices = await AudioDeviceService.listInputDevices();
+    final outputDevices = await AudioDeviceService.listOutputDevices();
+    var inputIndex = audioDeviceStore.inputDeviceIndex();
+    var outputIndex = audioDeviceStore.outputDeviceIndex();
+    if (AudioDeviceService.supportsSystemDefaultOption) {
+      if (inputIndex >= 0 &&
+          !inputDevices.any((d) => d.index == inputIndex)) {
+        inputIndex = AudioDeviceService.systemDefaultIndex;
+        await audioDeviceStore.setInputDevice(index: inputIndex);
+      }
+      if (outputIndex >= 0 &&
+          !outputDevices.any((d) => d.index == outputIndex)) {
+        outputIndex = AudioDeviceService.systemDefaultIndex;
+        await audioDeviceStore.setOutputDevice(index: outputIndex);
+      }
+    } else if (inputDevices.isNotEmpty && outputDevices.isNotEmpty) {
+      final inputDevice = AudioDeviceService.resolveStoredDevice(
+        audioDeviceStore,
+        inputDevices,
+        input: true,
+      );
+      final outputDevice = AudioDeviceService.resolveStoredDevice(
+        audioDeviceStore,
+        outputDevices,
+        input: false,
+      );
+      inputIndex = inputDevice.index;
+      outputIndex = outputDevice.index;
+      if (audioDeviceStore.inputDeviceIndex() != inputIndex ||
+          audioDeviceStore.inputPlatformId() != inputDevice.platformId) {
+        await audioDeviceStore.setInputDevice(
+          index: inputIndex,
+          platformId: inputDevice.platformId,
+        );
+      }
+      if (audioDeviceStore.outputDeviceIndex() != outputIndex ||
+          audioDeviceStore.outputPlatformId() != outputDevice.platformId) {
+        await audioDeviceStore.setOutputDevice(
+          index: outputIndex,
+          platformId: outputDevice.platformId,
+        );
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _inputDevices = inputDevices;
+      _outputDevices = outputDevices;
+      _inputDeviceIndex = inputIndex;
+      _outputDeviceIndex = outputIndex;
+    });
   }
 
   Future<void> _load() async {
@@ -80,6 +167,70 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _globalPttBinding = globalBinding;
       _minimizeToTray = minimizeToTray;
     });
+    await _reloadAudioDevices();
+  }
+
+  int _dropdownDeviceIndex(int index, List<NativeAudioDevice> devices) {
+    return AudioDeviceService.dropdownValue(index, devices);
+  }
+
+  List<DropdownMenuItem<int>> _audioDeviceMenuItems(List<NativeAudioDevice> devices) {
+    return [
+      if (AudioDeviceService.supportsSystemDefaultOption)
+        DropdownMenuItem(
+          value: AudioDeviceService.systemDefaultIndex,
+          child: Text(AppStrings.settingsAudioDeviceDefault),
+        ),
+      for (final d in devices)
+        DropdownMenuItem(
+          value: d.index,
+          child: Text(d.name),
+        ),
+    ];
+  }
+
+  Future<void> _setMicrophoneSource(String? id) async {
+    if (id == null) {
+      return;
+    }
+    final option = _microphoneSources.firstWhere(
+      (o) => o.id == id,
+      orElse: () => _microphoneSources.first,
+    );
+    await MicrophoneSourceService.persistAndApply(
+      store: ref.read(microphoneSourceStoreProvider),
+      option: option,
+      bluetoothHeadset: ref.read(bluetoothHeadsetStoreProvider).isEnabled(),
+    );
+    setState(() => _selectedMicrophoneSourceId = id);
+  }
+
+  Future<void> _setInputDevice(int? index) async {
+    if (index == null) {
+      return;
+    }
+    await AudioDeviceService.persistAndApplyInput(
+      store: ref.read(audioDeviceStoreProvider),
+      index: index,
+      inputDevices: _inputDevices,
+      outputDevices: _outputDevices,
+      outputIndex: _outputDeviceIndex,
+    );
+    setState(() => _inputDeviceIndex = index);
+  }
+
+  Future<void> _setOutputDevice(int? index) async {
+    if (index == null) {
+      return;
+    }
+    await AudioDeviceService.persistAndApplyOutput(
+      store: ref.read(audioDeviceStoreProvider),
+      index: index,
+      inputDevices: _inputDevices,
+      outputDevices: _outputDevices,
+      inputIndex: _inputDeviceIndex,
+    );
+    setState(() => _outputDeviceIndex = index);
   }
 
   Future<void> _setPauseDuringPhoneCall(bool? enabled) async {
@@ -97,7 +248,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await ref.read(bluetoothHeadsetStoreProvider).setEnabled(enabled);
     setState(() => _useBluetoothHeadset = enabled);
     if (NativePlatform.isMobile) {
-      await NativePlatform.prepareAudioSession(bluetoothHeadset: enabled);
+      await NativePlatform.prepareAudioSession(
+        bluetoothHeadset: enabled,
+        microphoneProfileId: ref.read(microphoneSourceStoreProvider).selectedId(),
+      );
     }
   }
 
@@ -269,6 +423,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(homeScreenControllerProvider, (previous, next) {
+      if (next.sessionSupported && previous?.sessionSupported != true) {
+        unawaited(_reloadAudioDevices());
+      }
+    });
+
     final version = _packageInfo?.version ?? '…';
     final build = _packageInfo?.buildNumber ?? '';
 
@@ -308,6 +468,48 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             AppStrings.settingsAudio,
             style: Theme.of(context).textTheme.titleSmall,
           ),
+          if (MicrophoneSourceService.isSupported &&
+              _microphoneSources.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _selectedMicrophoneSourceId,
+              decoration: InputDecoration(
+                labelText: AppStrings.settingsAudioInputDevice,
+              ),
+              items: [
+                for (final option in _microphoneSources)
+                  DropdownMenuItem(
+                    value: option.id,
+                    child: Text(option.displayTitle),
+                  ),
+              ],
+              onChanged: _setMicrophoneSource,
+            ),
+          ],
+          if (AudioDeviceService.showsPhysicalAudioDevices &&
+              _inputDevices.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            DropdownButtonFormField<int>(
+              value: _dropdownDeviceIndex(_inputDeviceIndex, _inputDevices),
+              decoration: InputDecoration(
+                labelText: AppStrings.settingsAudioInputDevice,
+              ),
+              items: _audioDeviceMenuItems(_inputDevices),
+              onChanged: _setInputDevice,
+            ),
+          ],
+          if (AudioDeviceService.showsPhysicalAudioDevices &&
+              _outputDevices.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            DropdownButtonFormField<int>(
+              value: _dropdownDeviceIndex(_outputDeviceIndex, _outputDevices),
+              decoration: InputDecoration(
+                labelText: AppStrings.settingsAudioOutputDevice,
+              ),
+              items: _audioDeviceMenuItems(_outputDevices),
+              onChanged: _setOutputDevice,
+            ),
+          ],
           SwitchListTile(
             title: Text(AppStrings.settingsPauseDuringPhoneCall),
             value: _pauseDuringPhoneCall,

@@ -7,4 +7,11 @@
     <string name="service_notification_action_connect">Connect</string>
     <string name="service_notification_action_disconnect">Disconnect</string>
     <string name="service_notification_action_battery">Battery settings</string>
+    <string name="microphone_option_mic">Phone mic (MIC)</string>
+    <string name="microphone_option_default">System default</string>
+    <string name="microphone_option_camcorder">Camcorder</string>
+    <string name="microphone_option_voice_recognition">Voice recognition</string>
+    <string name="microphone_option_voice_communication">Voice communication</string>
+    <string name="microphone_option_unprocessed">Unprocessed</string>
+    <string name="microphone_option_voice_performance">Voice performance</string>
 </resources>
