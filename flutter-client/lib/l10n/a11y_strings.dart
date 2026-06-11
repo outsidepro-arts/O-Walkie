@@ -1,31 +1,23 @@
+import 'package:flutter/widgets.dart';
+
+import 'app_strings.dart';
+import 'generated/app_localizations.dart';
+
 /// Screen reader labels and hints (not shown visually).
 abstract final class A11yStrings {
-  static const connectionStatus = 'Connection status';
-  static const signalStatus = 'Signal status';
-  static const errorLiveRegion = 'Error';
-  static const serverProfilePicker = 'Active server profile';
-  static const serverProfilePickerHint = 'Select active connection profile';
-  static const expandDetailsHint = 'Shows host, port, and channel fields';
-  static const collapseDetailsHint = 'Hides connection detail fields';
-  static const connectHint = 'Connects to the relay server using the profile below';
-  static const disconnectHint = 'Disconnects from the relay server';
-  static const connectUnavailableHint =
-      'Unavailable. Native session library failed to load or is not built.';
-  static const notAvailableYet = 'Not available in this version';
-  static const scanOnHint = 'Scanning servers. Double tap to stop';
-  static const scanOffHint = 'Double tap to start scanning servers';
-  static const rxVolumeHint = 'Adjust incoming audio volume from 0 to 200 percent';
-  static const pttLabel = 'Push to talk';
-  static const pttActiveLabel = 'Talking';
-  static const pttHint =
-      'Short tap latches transmit until next tap. Hold for classic push-to-talk. '
-      'Screen reader: use Start talking and Stop talking actions';
-  static const pttDisabledHint = 'Connect to a server before transmitting';
-  static const pttLockedHint = 'Server locked push-to-talk. Wait for unlock';
-  static const pttStartAction = 'Start talking';
-  static const pttStopAction = 'Stop talking';
-  static const callSignalHint = 'Send call signal on the channel';
-  static const menuMoreHint = 'Additional options and settings';
-  static const coreVersionLabel = 'Application core version';
-  static const mainScrollHint = 'Main screen';
+  static void bind(AppLocalizations l10n) => AppStrings.bind(l10n);
+
+  static AppLocalizations get _l => AppStrings.l10n;
+
+  static String get scanStateOn => _l.a11yScanStateOn;
+  static String get scanStateOff => _l.a11yScanStateOff;
+  static String get pttHoldHint => _l.a11yPttHoldHint;
+  static String get pttToggleHint => _l.a11yPttToggleHint;
+  static String get pttUnavailable => _l.a11yPttUnavailable;
+  static String get pttLocked => _l.a11yPttLocked;
+  static String pttCountdown(int sec) => _l.a11yPttCountdown(sec);
+  static String get connectUnavailableHint => _l.a11yConnectUnavailableHint;
+  static String get notAvailableYet => _l.a11yNotAvailableYet;
+  static String get pttStartAction => _l.a11yPttStartAction;
+  static String get pttStopAction => _l.a11yPttStopAction;
 }

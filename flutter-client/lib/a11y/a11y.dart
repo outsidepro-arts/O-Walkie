@@ -28,12 +28,12 @@ class UnavailableButton extends StatelessWidget {
   const UnavailableButton({
     super.key,
     required this.label,
-    this.hint = A11yStrings.notAvailableYet,
+    this.hint,
     required this.child,
   });
 
   final String label;
-  final String hint;
+  final String? hint;
   final Widget child;
 
   @override
@@ -42,7 +42,7 @@ class UnavailableButton extends StatelessWidget {
       button: true,
       enabled: false,
       label: label,
-      hint: hint,
+      hint: hint ?? A11yStrings.notAvailableYet,
       child: ExcludeSemantics(child: child),
     );
   }

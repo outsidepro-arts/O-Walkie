@@ -2,7 +2,7 @@ import '../../domain/server_profile.dart';
 import '../../l10n/app_strings.dart';
 
 class HomeScreenState {
-  const HomeScreenState({
+  HomeScreenState({
     this.connectionDetailsExpanded = true,
     this.profiles = const [ServerProfile()],
     this.selectedServerIndex = 0,
@@ -19,15 +19,17 @@ class HomeScreenState {
     this.txCountdownSec = 0,
     this.isReceivingBroadcast = false,
     this.callActive = false,
-    this.connectionChip = AppStrings.connectionStateDisconnected,
-    this.signalChip = AppStrings.signalQualityDefault,
+    String? connectionChip,
+    String? signalChip,
     this.coreVersion = '',
     this.protocolVersion = 0,
     this.sessionSupported = true,
     this.lastError,
     this.statusInfo,
     this.statusMessage,
-  });
+  })  : connectionChip =
+            connectionChip ?? AppStrings.connectionStateDisconnected,
+        signalChip = signalChip ?? AppStrings.signalQualityDefault;
 
   final bool connectionDetailsExpanded;
   final List<ServerProfile> profiles;

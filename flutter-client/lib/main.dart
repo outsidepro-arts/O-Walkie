@@ -14,7 +14,7 @@ Future<void> main() async {
 
   if (Platform.isWindows && Platform.environment['FLUTTER_TEST'] != 'true') {
     await windowManager.ensureInitialized();
-    const windowOptions = WindowOptions(
+    final windowOptions = WindowOptions(
       size: Size(480, 840),
       minimumSize: Size(400, 600),
       center: true,

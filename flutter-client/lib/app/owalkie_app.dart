@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/orientation_store.dart';
+import '../l10n/a11y_strings.dart';
 import '../l10n/app_strings.dart';
 import '../platform/windows/desktop_bootstrap.dart';
 import 'app_router.dart';
@@ -35,6 +36,14 @@ class _OwalkieAppState extends ConsumerState<OwalkieApp> {
     return DesktopBootstrap(
       child: MaterialApp.router(
         title: AppStrings.appName,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        builder: (context, child) {
+          final l10n = AppLocalizations.of(context);
+          AppStrings.bind(l10n);
+          A11yStrings.bind(l10n);
+          return child ?? const SizedBox.shrink();
+        },
         theme: ThemeData(
           colorScheme: colorScheme,
           useMaterial3: true,

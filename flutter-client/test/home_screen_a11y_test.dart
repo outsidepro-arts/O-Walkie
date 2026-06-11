@@ -21,30 +21,21 @@ void main() {
       matchesSemantics(isHeader: true),
     );
 
-    expect(
-      tester.getSemantics(find.text(AppStrings.serverProfiles)),
-      matchesSemantics(isHeader: true),
+    final ptt = tester.getSemantics(
+      find.bySemanticsLabel(A11yStrings.pttUnavailable),
     );
-
-    final ptt = tester.getSemantics(find.bySemanticsLabel(A11yStrings.pttLabel));
-    expect(ptt.label, A11yStrings.pttLabel);
-    expect(ptt.hint, A11yStrings.pttDisabledHint);
+    expect(ptt.label, A11yStrings.pttUnavailable);
     expect(ptt.hasFlag(SemanticsFlag.isButton), isTrue);
     expect(ptt.hasFlag(SemanticsFlag.hasEnabledState), isTrue);
     expect(ptt.hasFlag(SemanticsFlag.isEnabled), isFalse);
 
     final connection = tester.getSemantics(
-      find.bySemanticsLabel(
-        '${A11yStrings.connectionStatus}: ${AppStrings.connectionStateDisconnected}',
-      ),
+      find.bySemanticsLabel(AppStrings.connectionStateDisconnected),
     );
     expect(connection.hasFlag(SemanticsFlag.isLiveRegion), isTrue);
 
-    final more = tester.getSemantics(find.text(AppStrings.menuMore));
-    expect(more.label, contains(AppStrings.menuMore));
-    expect(more.hint, A11yStrings.menuMoreHint);
-
-    expect(find.text(AppStrings.menuMore), findsOneWidget);
+    final more = tester.getSemantics(find.bySemanticsLabel(AppStrings.menuMore));
+    expect(more.label, AppStrings.menuMore);
 
     handle.dispose();
   });

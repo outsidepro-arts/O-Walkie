@@ -11,14 +11,14 @@ import 'ptt_touch_policy.dart';
 /// On-screen PTT: tap toggles TX latch; hold = classic push-to-talk.
 ///
 /// Keyboard Space toggles (same as media-button policy). Screen reader uses
-/// explicit Start/Stop semantics actions.
+/// short state descriptions (Kotlin parity) plus Start/Stop actions.
 class PttGestureButton extends StatefulWidget {
   const PttGestureButton({
     super.key,
     required this.enabled,
     required this.active,
-    required this.label,
     required this.locked,
+    required this.pttLockSec,
     required this.onPttDown,
     required this.onPttUp,
     required this.child,
@@ -26,8 +26,8 @@ class PttGestureButton extends StatefulWidget {
 
   final bool enabled;
   final bool active;
-  final String label;
   final bool locked;
+  final int pttLockSec;
   final VoidCallback onPttDown;
   final VoidCallback onPttUp;
   final Widget child;
@@ -123,14 +123,24 @@ class _PttGestureButtonState extends State<PttGestureButton> {
     }
   }
 
+  String _semanticsLabel() {
+    if (!widget.enabled) {
+      if (widget.locked && widget.pttLockSec > 0) {
+        return A11yStrings.pttCountdown(widget.pttLockSec);
+      }
+      if (widget.locked) {
+        return A11yStrings.pttLocked;
+      }
+      return A11yStrings.pttUnavailable;
+    }
+    if (widget.active) {
+      return A11yStrings.pttToggleHint;
+    }
+    return A11yStrings.pttHoldHint;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final semanticsLabel =
-        widget.active ? A11yStrings.pttActiveLabel : A11yStrings.pttLabel;
-    final hint = widget.locked
-        ? A11yStrings.pttLockedHint
-        : (widget.enabled ? A11yStrings.pttHint : A11yStrings.pttDisabledHint);
-
     return Focus(
       child: Shortcuts(
         shortcuts: {
@@ -148,8 +158,8 @@ class _PttGestureButtonState extends State<PttGestureButton> {
           child: Semantics(
             button: true,
             enabled: widget.enabled,
-            label: semanticsLabel,
-            hint: hint,
+            label: _semanticsLabel(),
+            excludeSemantics: true,
             customSemanticsActions: widget.enabled
                 ? {
                     CustomSemanticsAction(label: A11yStrings.pttStartAction):

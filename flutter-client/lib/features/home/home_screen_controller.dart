@@ -75,7 +75,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       }
       unawaited(_bootstrap());
     }
-    return const HomeScreenState();
+    return HomeScreenState();
   }
 
   void _onWindowsGlobalPttEvent(String event) {

@@ -213,14 +213,14 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
         children: [
           TextField(
             controller: _nameCtrl,
-            decoration: const InputDecoration(labelText: AppStrings.rogerNameHint),
+            decoration: InputDecoration(labelText: AppStrings.rogerNameHint),
           ),
           if (widget.kind == SignalEditorKind.calling) ...[
             const SizedBox(height: 8),
             TextField(
               controller: _repeatCtrl,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: AppStrings.callRepeatLabel,
               ),
             ),
@@ -238,7 +238,9 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
                       ? AppStrings.rogerPointPause
                       : AppStrings.rogerPointHz(_points[i].freqHz.toInt()),
                 ),
-                subtitle: Text('${_points[i].durationMs} ms'),
+                subtitle: Text(
+                  AppStrings.rogerPointDurationMs(_points[i].durationMs),
+                ),
                 trailing: IconButton(
                   icon: const Icon(Icons.edit),
                   onPressed: () => _addOrEditSegment(i),
@@ -247,12 +249,12 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
               ),
           OutlinedButton(
             onPressed: () => _addOrEditSegment(),
-            child: const Text(AppStrings.rogerNewSegment),
+            child: Text(AppStrings.rogerNewSegment),
           ),
           const SizedBox(height: 24),
           FilledButton(
             onPressed: _save,
-            child: const Text(AppStrings.rogerSave),
+            child: Text(AppStrings.rogerSave),
           ),
         ],
       ),
@@ -311,7 +313,7 @@ class _SegmentEditDialogState extends State<_SegmentEditDialog> {
     final dur = int.tryParse(_durCtrl.text);
     if (freq == null || dur == null || freq < 0 || dur <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text(AppStrings.rogerPointInvalid)),
+        SnackBar(content: Text(AppStrings.rogerPointInvalid)),
       );
       return;
     }
@@ -330,7 +332,7 @@ class _SegmentEditDialogState extends State<_SegmentEditDialog> {
               controller: _freqCtrl,
               keyboardType: TextInputType.number,
               textInputAction: TextInputAction.next,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: AppStrings.rogerFrequencyHint,
               ),
             ),
@@ -339,7 +341,7 @@ class _SegmentEditDialogState extends State<_SegmentEditDialog> {
               keyboardType: TextInputType.number,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _submit(),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: AppStrings.rogerDurationHint,
               ),
             ),
@@ -349,11 +351,11 @@ class _SegmentEditDialogState extends State<_SegmentEditDialog> {
       actions: [
         TextButton(
           onPressed: () => unawaited(_close()),
-          child: const Text(AppStrings.rogerCancel),
+          child: Text(AppStrings.rogerCancel),
         ),
         FilledButton(
           onPressed: _submit,
-          child: const Text(AppStrings.rogerSave),
+          child: Text(AppStrings.rogerSave),
         ),
       ],
     );

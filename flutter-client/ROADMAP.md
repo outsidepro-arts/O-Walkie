@@ -79,7 +79,7 @@ Prerequisites: relay in LAN, Android APK or Windows dist with session enabled, s
 | Screen orientation | `SystemChrome.setPreferredOrientations` |
 | About / version | [`package_info_plus`](https://pub.dev/packages/package_info_plus) |
 | GitHub link | [`url_launcher`](https://pub.dev/packages/url_launcher) |
-| i18n (ru/en) | `flutter gen-l10n` |
+| i18n (ru/en) | `flutter gen-l10n` (`lib/l10n/app_*.arb`, system locale) | done |
 
 **Custom:** `lib/domain/` + `ServerStore` (mirror `android/.../model/ServerStore.kt`).
 

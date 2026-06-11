@@ -216,7 +216,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open GitHub')),
+        SnackBar(content: Text(AppStrings.settingsGitHubOpenFailed)),
       );
     }
   }
@@ -228,7 +228,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(AppStrings.settingsTitle),
+        title: Text(AppStrings.settingsTitle),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.pop(),
@@ -244,7 +244,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 8),
           DropdownButtonFormField<ScreenOrientationMode>(
             value: _orientation,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: AppStrings.settingsOrientation,
             ),
             items: ScreenOrientationMode.values
@@ -263,31 +263,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             style: Theme.of(context).textTheme.titleSmall,
           ),
           SwitchListTile(
-            title: const Text(AppStrings.settingsPauseDuringPhoneCall),
+            title: Text(AppStrings.settingsPauseDuringPhoneCall),
             value: _pauseDuringPhoneCall,
             onChanged: _setPauseDuringPhoneCall,
           ),
           SwitchListTile(
-            title: const Text(AppStrings.settingsUseBluetoothHeadset),
+            title: Text(AppStrings.settingsUseBluetoothHeadset),
             value: _useBluetoothHeadset,
             onChanged: _setUseBluetoothHeadset,
           ),
           if (NativePlatform.isAndroid) ...[
             SwitchListTile(
-              title: const Text(AppStrings.settingsMediaButtonPtt),
+              title: Text(AppStrings.settingsMediaButtonPtt),
               value: _mediaButtonPtt,
               onChanged: _setMediaButtonPtt,
             ),
             ListTile(
-              title: const Text(AppStrings.settingsHardwarePttKey),
+              title: Text(AppStrings.settingsHardwarePttKey),
               subtitle: Text(_hardwarePttLabel()),
               trailing: TextButton(
                 onPressed: _showHardwarePttDialog,
-                child: const Text(AppStrings.settingsHardwarePttAssign),
+                child: Text(AppStrings.settingsHardwarePttAssign),
               ),
             ),
             SwitchListTile(
-              title: const Text(AppStrings.settingsExternalControl),
+              title: Text(AppStrings.settingsExternalControl),
               value: _externalControl,
               onChanged: _setExternalControl,
             ),
@@ -299,7 +299,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               style: Theme.of(context).textTheme.titleSmall,
             ),
             ListTile(
-              title: const Text(AppStrings.settingsGlobalPttHotkey),
+              title: Text(AppStrings.settingsGlobalPttHotkey),
               subtitle: Text(
                 _globalPttBinding?.displayName ??
                     AppStrings.settingsGlobalPttHotkeyUnassigned,
@@ -309,18 +309,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 children: [
                   TextButton(
                     onPressed: _showGlobalPttHotkeyDialog,
-                    child: const Text(AppStrings.settingsGlobalPttHotkeyAssign),
+                    child: Text(AppStrings.settingsGlobalPttHotkeyAssign),
                   ),
                   if (_globalPttBinding != null)
                     TextButton(
                       onPressed: _clearGlobalPttHotkey,
-                      child: const Text(AppStrings.settingsGlobalPttHotkeyClear),
+                      child: Text(AppStrings.settingsGlobalPttHotkeyClear),
                     ),
                 ],
               ),
             ),
             SwitchListTile(
-              title: const Text(AppStrings.settingsMinimizeToTray),
+              title: Text(AppStrings.settingsMinimizeToTray),
               value: _minimizeToTray,
               onChanged: _setMinimizeToTray,
             ),
@@ -334,7 +334,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           DropdownButtonFormField<String>(
             value: _selectedRogerId ??
                 (_rogerPatterns.isEmpty ? null : _rogerPatterns.first.id),
-            decoration: const InputDecoration(labelText: AppStrings.rogerSignalLabel),
+            decoration: InputDecoration(labelText: AppStrings.rogerSignalLabel),
             items: [
               for (final p in _rogerPatterns)
                 DropdownMenuItem(value: p.id, child: Text(p.name)),
@@ -354,7 +354,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   await context.push('/signals/roger/edit');
                   await _reloadPatterns();
                 },
-                child: const Text(AppStrings.rogerCustomButton),
+                child: Text(AppStrings.rogerCustomButton),
               ),
               if (_selectedRogerId != null &&
                   _rogerPatterns.any((p) => p.id == _selectedRogerId && !p.builtIn))
@@ -365,7 +365,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     );
                     await _reloadPatterns();
                   },
-                  child: const Text(AppStrings.rogerEditSegment),
+                  child: Text(AppStrings.rogerEditSegment),
                 ),
             ],
           ),
@@ -378,7 +378,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           DropdownButtonFormField<String>(
             value: _selectedCallingId ??
                 (_callingPatterns.isEmpty ? null : _callingPatterns.first.id),
-            decoration: const InputDecoration(labelText: AppStrings.callSignalLabel),
+            decoration: InputDecoration(labelText: AppStrings.callSignalLabel),
             items: [
               for (final p in _callingPatterns)
                 DropdownMenuItem(value: p.id, child: Text(p.name)),
@@ -398,7 +398,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   await context.push('/signals/calling/edit');
                   await _reloadPatterns();
                 },
-                child: const Text(AppStrings.rogerCustomButton),
+                child: Text(AppStrings.rogerCustomButton),
               ),
               if (_selectedCallingId != null &&
                   _callingPatterns.any((p) => p.id == _selectedCallingId && !p.builtIn))
@@ -409,7 +409,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     );
                     await _reloadPatterns();
                   },
-                  child: const Text(AppStrings.rogerEditSegment),
+                  child: Text(AppStrings.rogerEditSegment),
                 ),
             ],
           ),
@@ -487,12 +487,12 @@ class _GlobalPttHotkeyDialogState extends State<_GlobalPttHotkeyDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text(AppStrings.settingsGlobalPttHotkeyDialogTitle),
+      title: Text(AppStrings.settingsGlobalPttHotkeyDialogTitle),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(AppStrings.settingsGlobalPttHotkeyDialogHint),
+          Text(AppStrings.settingsGlobalPttHotkeyDialogHint),
           const SizedBox(height: 16),
           Text(_status),
         ],
@@ -500,7 +500,7 @@ class _GlobalPttHotkeyDialogState extends State<_GlobalPttHotkeyDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text(AppStrings.rogerCancel),
+          child: Text(AppStrings.rogerCancel),
         ),
       ],
     );
@@ -584,18 +584,18 @@ class _HardwarePttKeyDialogState extends State<_HardwarePttKeyDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text(AppStrings.settingsHardwarePttDialogTitle),
+      title: Text(AppStrings.settingsHardwarePttDialogTitle),
       content: Text(_capturing && !_binding.assigned
           ? AppStrings.settingsHardwarePttDialogWaiting
           : _bindingLabel()),
       actions: [
         TextButton(
           onPressed: _resetBinding,
-          child: const Text(AppStrings.settingsHardwarePttReset),
+          child: Text(AppStrings.settingsHardwarePttReset),
         ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('OK'),
+          child: Text(AppStrings.commonOk),
         ),
       ],
     );

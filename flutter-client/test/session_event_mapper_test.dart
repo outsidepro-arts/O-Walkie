@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:owalkie_core/owalkie_core.dart';
 import 'package:owalkie_app/features/home/home_screen_state.dart';
@@ -5,6 +6,8 @@ import 'package:owalkie_app/features/home/session_event_mapper.dart';
 import 'package:owalkie_app/l10n/app_strings.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  AppStrings.bind(lookupAppLocalizations(const Locale('en')));
   group('connectionChipForTransport', () {
     test('maps connected', () {
       expect(
@@ -29,7 +32,11 @@ void main() {
   });
 
   group('applyNativeSessionEvent', () {
-    const base = HomeScreenState(isConnected: true, txActive: true);
+    late HomeScreenState base;
+
+    setUp(() {
+      base = HomeScreenState(isConnected: true, txActive: true);
+    });
 
     test('ptt lock parses countdown and blocks tx', () {
       final next = applyNativeSessionEvent(
@@ -65,7 +72,7 @@ void main() {
 
     test('rx broadcast start busy mode', () {
       final next = applyNativeSessionEvent(
-        const HomeScreenState(),
+        HomeScreenState(),
         eventType: OwalkieEventType.rxBroadcastStart,
         info: 'true',
       );
@@ -74,7 +81,7 @@ void main() {
     });
 
     test('parallel tx when transmitting and receiving', () {
-      const receiving = HomeScreenState(isReceivingBroadcast: true);
+      final receiving = HomeScreenState(isReceivingBroadcast: true);
       expect(receiving.parallelTxActive, isFalse);
       final parallel = receiving.copyWith(txActive: true);
       expect(parallel.parallelTxActive, isTrue);

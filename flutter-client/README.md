@@ -6,6 +6,8 @@ Cross-platform shell for O-Walkie: **Flutter UI** + **`owalkie-core` FFI plugin*
 
 Migration plan and phases: [ROADMAP.md](ROADMAP.md).
 
+**Language:** UI follows the **system locale** (English / Russian), same as the Kotlin app — no in-app language switch. Strings live in `lib/l10n/app_en.arb` and `app_ru.arb`.
+
 ## Prerequisites
 
 - Flutter SDK at `C:\dev\flutter` (stable)

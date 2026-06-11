@@ -1,0 +1,190 @@
+{
+  "@@locale": "en",
+  "appName": "O-Walkie",
+  "menuMore": "More",
+  "menuRepeaterMode": "Repeater mode",
+  "menuSettings": "Settings",
+  "connectionStateDisconnected": "Disconnected",
+  "connectionStateConnecting": "Connecting…",
+  "connectionStateReconnecting": "Reconnecting…",
+  "connectionStatePausedPhoneCall": "Paused (phone call)",
+  "connectionStateConnected": "Connected",
+  "connectionStateParallelTx": "Parallel transmission!",
+  "connectionStateCalling": "Calling…",
+  "connectionStateUnsupported": "Session unavailable",
+  "signalQualityDefault": "Signal: —",
+  "signalRxActive": "RX active",
+  "signalRxBusy": "RX busy",
+  "serverProfiles": "Connection list",
+  "collapseConnectionDetails": "Collapse connection details",
+  "expandConnectionDetails": "Show connection details",
+  "previousServer": "Previous",
+  "nextServer": "Next",
+  "connectServer": "Connect",
+  "disconnectServer": "Disconnect",
+  "scanToggle": "Scan",
+  "scanning": "Scanning...",
+  "serverNameLabel": "Server name",
+  "serverNameHint": "Server name (example: Team Alpha)",
+  "serverHostLabel": "Server host",
+  "serverHostHint": "Server host/IP",
+  "portLabel": "Port",
+  "portHint": "Port",
+  "channelLabel": "Channel",
+  "channelHint": "Channel name",
+  "saveServer": "Save server",
+  "deleteServer": "Delete server",
+  "moveServerUp": "Move up",
+  "moveServerDown": "Move down",
+  "shareConnection": "Share",
+  "importConnection": "Import from clipboard",
+  "connectionLinkCopied": "Connection link copied",
+  "connectionLinkIncludeNamePrompt": "Add your connection name to the link?",
+  "connectionLinkInvalid": "No valid O-Walkie connection link in clipboard",
+  "connectionLinkImported": "Connection imported from link",
+  "scanModeTitle": "Scan mode",
+  "scanModeOneShot": "One-time",
+  "scanModeContinuous": "Continuous",
+  "scanStartedAnnouncement": "Scanning started",
+  "scanStoppedAnnouncement": "Scanning stopped",
+  "scanFoundServerAnnouncement": "Activity found on {name}, connecting",
+  "@scanFoundServerAnnouncement": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "scanFoundActivityToast": "Activity detected on {name}",
+  "@scanFoundActivityToast": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "rxVolumeLabel": "Incoming volume",
+  "rxVolumeValueDefault": "100%",
+  "rxVolumePercent": "{percent}%",
+  "@rxVolumePercent": {
+    "placeholders": {
+      "percent": { "type": "int" }
+    }
+  },
+  "rxVolumePercentAccessibility": "{percent} percent",
+  "@rxVolumePercentAccessibility": {
+    "placeholders": {
+      "percent": { "type": "int" }
+    }
+  },
+  "pttHold": "Hold to Talk",
+  "pttActive": "Talking…",
+  "pttLockedCountdown": "Locked {sec} s",
+  "@pttLockedCountdown": {
+    "placeholders": {
+      "sec": { "type": "int" }
+    }
+  },
+  "pttTxCountdown": "Wait {sec} s",
+  "@pttTxCountdown": {
+    "placeholders": {
+      "sec": { "type": "int" }
+    }
+  },
+  "callSignal": "Call",
+  "coreVersionFooter": "Core",
+  "protocolLabel": "protocol",
+  "settingsTitle": "Settings",
+  "settingsAudio": "Audio",
+  "settingsPauseDuringPhoneCall": "Pause relay during phone call",
+  "settingsUseBluetoothHeadset": "Use Bluetooth headset",
+  "settingsExternalControl": "Allow external control (Tasker)",
+  "settingsWindows": "Windows",
+  "settingsGlobalPttHotkey": "Global PTT hotkey",
+  "settingsGlobalPttHotkeyUnassigned": "Not assigned",
+  "settingsGlobalPttHotkeyAssign": "Assign",
+  "settingsGlobalPttHotkeyClear": "Clear",
+  "settingsGlobalPttHotkeyDialogTitle": "Press global PTT hotkey",
+  "settingsGlobalPttHotkeyDialogHint": "Hold to transmit; release to stop (works when app is in background).",
+  "settingsGlobalPttHotkeyDialogWaiting": "Press any key or key combination (Ctrl/Alt/Shift).",
+  "settingsMinimizeToTray": "Minimize to system tray when closing the window",
+  "trayMenuShow": "Show O-Walkie",
+  "trayMenuExit": "Exit",
+  "settingsMediaButtonPtt": "Headset play/pause toggles transmit",
+  "settingsHardwarePttKey": "Hardware PTT key",
+  "settingsHardwarePttUnassigned": "Not assigned",
+  "settingsHardwarePttAssign": "Assign key",
+  "settingsHardwarePttDialogTitle": "Press hardware PTT key",
+  "settingsHardwarePttDialogWaiting": "Waiting for key press…",
+  "settingsHardwarePttReset": "Reset",
+  "settingsDisplay": "Display",
+  "settingsOrientation": "Screen orientation",
+  "settingsAbout": "About",
+  "settingsAppVersion": "App version",
+  "settingsProtocolVersion": "Protocol version",
+  "settingsGitHub": "GitHub repository",
+  "settingsGitHubOpenFailed": "Could not open GitHub",
+  "orientationFollowSystem": "Follow system",
+  "orientationPortrait": "Portrait",
+  "orientationLandscape": "Landscape",
+  "cannotSwitchProfileConnected": "Disconnect before switching connection profile.",
+  "cannotDeleteLastProfile": "At least one profile is required.",
+  "profileSaved": "Connection profile saved.",
+  "rogerSignalLabel": "Roger signal",
+  "callSignalLabel": "Call signal",
+  "rogerCustomButton": "Custom",
+  "rogerCustomTitle": "Custom Roger signal",
+  "callCustomTitle": "Custom call signal",
+  "rogerNameHint": "Signal name",
+  "rogerPointsLabel": "Segments",
+  "rogerNewSegment": "New segment",
+  "rogerEditSegment": "Edit segment",
+  "rogerFrequencyHint": "Frequency (Hz)",
+  "rogerDurationHint": "Duration (ms)",
+  "rogerPointInvalid": "Enter valid segment values (frequency >= 0, duration > 0).",
+  "rogerPointsTooLong": "Total signal length is too long for this mode.",
+  "rogerPointPause": "Pause",
+  "rogerPointHz": "{hz} Hz",
+  "@rogerPointHz": {
+    "placeholders": {
+      "hz": { "type": "int" }
+    }
+  },
+  "rogerPointDurationMs": "{ms} ms",
+  "@rogerPointDurationMs": {
+    "placeholders": {
+      "ms": { "type": "int" }
+    }
+  },
+  "rogerSave": "Save",
+  "rogerCancel": "Cancel",
+  "rogerPointsEmpty": "No segments yet",
+  "rogerNameRequired": "Enter signal name",
+  "rogerPointsRequired": "Add at least one segment",
+  "callRepeatLabel": "Repeat count",
+  "patternCopy": "Copy pattern",
+  "patternPaste": "Paste pattern",
+  "patternCopied": "Pattern copied to clipboard",
+  "patternPasteFailed": "Could not paste pattern from clipboard",
+  "commonYes": "Yes",
+  "commonNo": "No",
+  "commonOk": "OK",
+  "profileNumberFallback": "Profile {number}",
+  "@profileNumberFallback": {
+    "placeholders": {
+      "number": { "type": "int" }
+    }
+  },
+  "a11yScanStateOn": "On",
+  "a11yScanStateOff": "Off",
+  "a11yPttHoldHint": "Press and hold to transmit.",
+  "a11yPttToggleHint": "Double tap to start or stop transmit.",
+  "a11yPttUnavailable": "PTT unavailable: not connected.",
+  "a11yPttLocked": "PTT is locked while the channel is busy.",
+  "a11yPttCountdown": "PTT unlocks in {sec} seconds",
+  "@a11yPttCountdown": {
+    "placeholders": {
+      "sec": { "type": "int" }
+    }
+  },
+  "a11yConnectUnavailableHint": "Session unavailable.",
+  "a11yNotAvailableYet": "Not available",
+  "a11yPttStartAction": "Start talking",
+  "a11yPttStopAction": "Stop talking"
+}

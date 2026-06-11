@@ -99,19 +99,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text(AppStrings.scanModeTitle),
+        title: Text(AppStrings.scanModeTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              title: const Text(AppStrings.scanModeOneShot),
+              title: Text(AppStrings.scanModeOneShot),
               onTap: () {
                 Navigator.of(dialogContext).pop();
                 controller.startScanning(ScanMode.oneShot);
               },
             ),
             ListTile(
-              title: const Text(AppStrings.scanModeContinuous),
+              title: Text(AppStrings.scanModeContinuous),
               onTap: () {
                 Navigator.of(dialogContext).pop();
                 controller.startScanning(ScanMode.continuous);
@@ -128,16 +128,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final includeName = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text(AppStrings.shareConnection),
-        content: const Text(AppStrings.connectionLinkIncludeNamePrompt),
+        title: Text(AppStrings.shareConnection),
+        content: Text(AppStrings.connectionLinkIncludeNamePrompt),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Yes'),
+            child: Text(AppStrings.commonYes),
           ),
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('No'),
+            child: Text(AppStrings.commonNo),
           ),
         ],
       ),
@@ -168,16 +168,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final connectLabel = state.isConnected || state.isConnecting
         ? AppStrings.disconnectServer
         : AppStrings.connectServer;
-    final connectHint = !canConnect
-        ? A11yStrings.connectUnavailableHint
-        : (state.isConnected || state.isConnecting
-            ? A11yStrings.disconnectHint
-            : A11yStrings.connectHint);
 
     final connectionChip = state.connectionDisplayChip;
 
     return Semantics(
-      label: A11yStrings.mainScrollHint,
+      explicitChildNodes: true,
       child: Scaffold(
         body: SafeArea(
           child: FocusTraversalGroup(
@@ -198,31 +193,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                   if (state.statusInfo != null) ...[
                     const SizedBox(height: 8),
-                    Semantics(
-                      liveRegion: true,
-                      child: Text(
-                        state.statusInfo!,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
+                    Text(
+                      state.statusInfo!,
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
                   if (state.statusMessage != null) ...[
                     const SizedBox(height: 8),
-                    Semantics(
-                      liveRegion: true,
-                      child: Text(
-                        state.statusMessage!,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                      ),
+                    Text(
+                      state.statusMessage!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
                     ),
                   ],
                   if (state.lastError != null) ...[
                     const SizedBox(height: 8),
                     Semantics(
                       liveRegion: true,
-                      label: A11yStrings.errorLiveRegion,
                       child: Text(
                         state.lastError!,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -232,8 +220,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ),
                   ],
                   const SizedBox(height: 12),
-                  Semantics(
-                    header: true,
+                  ExcludeSemantics(
                     child: Text(
                       AppStrings.serverProfiles,
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
@@ -242,24 +229,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Semantics(
-                    label: A11yStrings.serverProfilePicker,
-                    hint: A11yStrings.serverProfilePickerHint,
-                    enabled: state.canSelectProfiles,
-                    child: DropdownButtonFormField<int>(
-                      value: state.selectedServerIndex
-                          .clamp(0, state.profiles.length - 1),
-                      decoration: const InputDecoration(
-                        contentPadding:
-                            EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      ),
+                  DropdownButtonFormField<int>(
+                    value: state.selectedServerIndex
+                        .clamp(0, state.profiles.length - 1),
+                    decoration: InputDecoration(
+                      labelText: AppStrings.serverProfiles,
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
                       items: [
                         for (var i = 0; i < state.profiles.length; i++)
                           DropdownMenuItem(
                             value: i,
                             child: Text(
                               state.profiles[i].name.isEmpty
-                                  ? 'Profile ${i + 1}'
+                                  ? AppStrings.profileNumberFallback(i + 1)
                                   : state.profiles[i].name,
                             ),
                           ),
@@ -276,21 +260,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               }
                             }
                           : null,
-                    ),
                   ),
                   const SizedBox(height: 8),
-                  Semantics(
-                    button: true,
-                    hint: state.connectionDetailsExpanded
-                        ? A11yStrings.collapseDetailsHint
-                        : A11yStrings.expandDetailsHint,
-                    child: OutlinedButton(
-                      onPressed: controller.toggleConnectionDetails,
-                      child: Text(
-                        state.connectionDetailsExpanded
-                            ? AppStrings.collapseConnectionDetails
-                            : AppStrings.expandConnectionDetails,
-                      ),
+                  OutlinedButton(
+                    onPressed: controller.toggleConnectionDetails,
+                    child: Text(
+                      state.connectionDetailsExpanded
+                          ? AppStrings.collapseConnectionDetails
+                          : AppStrings.expandConnectionDetails,
                     ),
                   ),
                   if (!state.connectionDetailsExpanded) ...[
@@ -299,7 +276,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       scanActive: state.scanActive,
                       onToggleScan: () => _onScanPressed(state.scanActive),
                       connectLabel: connectLabel,
-                      connectHint: connectHint,
+                      canConnect: canConnect,
                       onConnect: canConnect
                           ? () {
                               unawaited(controller.connectToSelectedProfile());
@@ -333,7 +310,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 ref.read(homeScreenControllerProvider).profile,
                               );
                             },
-                            child: const Text(AppStrings.saveServer),
+                            child: Text(AppStrings.saveServer),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -345,7 +322,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                     controller.deleteCurrentProfile();
                                   }
                                 : null,
-                            child: const Text(AppStrings.deleteServer),
+                            child: Text(AppStrings.deleteServer),
                           ),
                         ),
                       ],
@@ -356,32 +333,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         Expanded(
                           child: OutlinedButton(
                             onPressed: _shareConnection,
-                            child: const Text(AppStrings.shareConnection),
+                            child: Text(AppStrings.shareConnection),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: OutlinedButton(
                             onPressed: _importConnection,
-                            child: const Text(AppStrings.importConnection),
+                            child: Text(AppStrings.importConnection),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 8),
-                    Semantics(
-                      button: true,
+                    _ConnectButton(
+                      label: connectLabel,
                       enabled: canConnect,
-                      hint: connectHint,
-                      child: FilledButton(
-                        onPressed: canConnect
-                            ? () {
-                                _syncProfile();
-                                controller.toggleConnection();
-                              }
-                            : null,
-                        child: Text(connectLabel),
-                      ),
+                      onPressed: canConnect
+                          ? () {
+                              _syncProfile();
+                              controller.toggleConnection();
+                            }
+                          : null,
                     ),
                   ],
                   const SizedBox(height: 24),
@@ -404,22 +377,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       txCountdownSec: state.txCountdownSec,
                     ),
                     locked: state.pttServerLocked,
+                    pttLockSec: state.pttLockSec,
                     onPttDown: controller.pttDown,
                     onPttUp: controller.pttUp,
                     onCall: controller.sendCall,
                   ),
                   const SizedBox(height: 12),
-                  Semantics(
-                    label:
-                        '${A11yStrings.coreVersionLabel}: ${state.coreVersion}, '
-                        'protocol ${state.protocolVersion}',
-                    child: ExcludeSemantics(
-                      child: Text(
-                        '${AppStrings.coreVersionFooter}: ${state.coreVersion} · '
-                        'protocol ${state.protocolVersion}',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
+                  ExcludeSemantics(
+                    child: Text(
+                      '${AppStrings.coreVersionFooter}: ${state.coreVersion} · '
+                      '${AppStrings.protocolLabel} ${state.protocolVersion}',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
                 ],
@@ -459,7 +428,7 @@ class _HeaderRow extends StatelessWidget {
         Semantics(
           button: true,
           label: AppStrings.menuMore,
-          hint: A11yStrings.menuMoreHint,
+          excludeSemantics: true,
           child: PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'repeater') {
@@ -472,9 +441,9 @@ class _HeaderRow extends StatelessWidget {
               CheckedPopupMenuItem(
                 value: 'repeater',
                 checked: repeaterEnabled,
-                child: const Text(AppStrings.menuRepeaterMode),
+                child: Text(AppStrings.menuRepeaterMode),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'settings',
                 child: Text(AppStrings.menuSettings),
               ),
@@ -485,7 +454,7 @@ class _HeaderRow extends StatelessWidget {
                 border: Border.all(color: Theme.of(context).colorScheme.outline),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Text(AppStrings.menuMore),
+              child: Text(AppStrings.menuMore),
             ),
           ),
         ),
@@ -510,14 +479,16 @@ class _StatusChips extends StatelessWidget {
         Expanded(
           child: Semantics(
             liveRegion: true,
-            label: '${A11yStrings.connectionStatus}: $connection',
+            label: connection,
+            excludeSemantics: true,
             child: _ChipBox(child: Text(connection, style: chipStyle)),
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: Semantics(
-            label: '${A11yStrings.signalStatus}: $signal',
+            label: signal,
+            excludeSemantics: true,
             child: _ChipBox(
               alignment: Alignment.centerRight,
               child: Text(signal, style: chipStyle, textAlign: TextAlign.end),
@@ -556,7 +527,7 @@ class _CollapsedActions extends StatelessWidget {
     required this.scanActive,
     required this.onToggleScan,
     required this.connectLabel,
-    required this.connectHint,
+    required this.canConnect,
     required this.onConnect,
     required this.onPrevious,
     required this.onNext,
@@ -565,7 +536,7 @@ class _CollapsedActions extends StatelessWidget {
   final bool scanActive;
   final VoidCallback onToggleScan;
   final String connectLabel;
-  final String connectHint;
+  final bool canConnect;
   final VoidCallback? onConnect;
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
@@ -577,34 +548,32 @@ class _CollapsedActions extends StatelessWidget {
         Expanded(
           child: OutlinedButton(
             onPressed: onPrevious,
-            child: const Text(AppStrings.previousServer),
+            child: Text(AppStrings.previousServer),
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
-          child: Semantics(
-            button: true,
-            enabled: onConnect != null,
-            hint: connectHint,
-            child: FilledButton(
-              onPressed: onConnect,
-              child: Text(connectLabel),
-            ),
+          child: _ConnectButton(
+            label: connectLabel,
+            enabled: canConnect,
+            onPressed: onConnect,
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: OutlinedButton(
             onPressed: onNext,
-            child: const Text(AppStrings.nextServer),
+            child: Text(AppStrings.nextServer),
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: Semantics(
             button: true,
+            label: AppStrings.scanToggle,
             toggled: scanActive,
-            hint: scanActive ? A11yStrings.scanOnHint : A11yStrings.scanOffHint,
+            value: scanActive ? A11yStrings.scanStateOn : A11yStrings.scanStateOff,
+            excludeSemantics: true,
             child: ToggleButtons(
               isSelected: [scanActive],
               onPressed: (_) => onToggleScan(),
@@ -624,6 +593,37 @@ class _CollapsedActions extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ConnectButton extends StatelessWidget {
+  const _ConnectButton({
+    required this.label,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool enabled;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final button = FilledButton(
+      onPressed: onPressed,
+      child: Text(label),
+    );
+    if (enabled) {
+      return button;
+    }
+    return Semantics(
+      button: true,
+      enabled: false,
+      label: label,
+      hint: A11yStrings.connectUnavailableHint,
+      excludeSemantics: true,
+      child: button,
     );
   }
 }
@@ -727,41 +727,47 @@ class _RxVolumeSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      label: '${AppStrings.rxVolumeLabel}, $percent percent',
-      hint: A11yStrings.rxVolumeHint,
-      child: MergeSemantics(
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    AppStrings.rxVolumeLabel,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ExcludeSemantics(
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  AppStrings.rxVolumeLabel,
+                  style: Theme.of(context).textTheme.bodyMedium,
                 ),
-                ExcludeSemantics(
-                  child: Text(
-                    '$percent%',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                ),
-              ],
-            ),
-            Slider(
-              value: percent.toDouble(),
-              min: 0,
-              max: 200,
-              divisions: 200,
-              label: '$percent%',
-              onChanged: (v) => onChanged(v.round()),
-            ),
-          ],
+              ),
+              Text(
+                AppStrings.rxVolumePercent(percent),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+            ],
+          ),
         ),
-      ),
+        Semantics(
+          slider: true,
+          label:
+              '${AppStrings.rxVolumeLabel} ${AppStrings.rxVolumePercentAccessibility(percent)}',
+          value: AppStrings.rxVolumePercent(percent),
+          increasedValue: percent < 200
+              ? AppStrings.rxVolumePercent(percent + 1)
+              : null,
+          decreasedValue: percent > 0
+              ? AppStrings.rxVolumePercent(percent - 1)
+              : null,
+          child: Slider(
+            value: percent.toDouble(),
+            min: 0,
+            max: 200,
+            divisions: 200,
+            onChanged: (v) => onChanged(v.round()),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -772,6 +778,7 @@ class _PttArea extends StatelessWidget {
     required this.active,
     required this.label,
     required this.locked,
+    required this.pttLockSec,
     required this.onPttDown,
     required this.onPttUp,
     required this.onCall,
@@ -781,6 +788,7 @@ class _PttArea extends StatelessWidget {
   final bool active;
   final String label;
   final bool locked;
+  final int pttLockSec;
   final VoidCallback onPttDown;
   final VoidCallback onPttUp;
   final VoidCallback onCall;
@@ -795,51 +803,39 @@ class _PttArea extends StatelessWidget {
           PttGestureButton(
             enabled: enabled,
             active: active,
-            label: label,
             locked: locked,
+            pttLockSec: pttLockSec,
             onPttDown: onPttDown,
             onPttUp: onPttUp,
-            child: Semantics(
-              container: true,
-              excludeSemantics: true,
-              child: Container(
-                width: 190,
-                height: 190,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: active
-                      ? Theme.of(context).colorScheme.primaryContainer
-                      : Theme.of(context).colorScheme.primary,
-                ),
-                child: Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onPrimary,
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
+            child: Container(
+              width: 190,
+              height: 190,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: active
+                    ? Theme.of(context).colorScheme.primaryContainer
+                    : Theme.of(context).colorScheme.primary,
+              ),
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
             ),
           ),
           Positioned(
             right: 0,
             bottom: 0,
-            child: Semantics(
-              button: true,
-              label: AppStrings.callSignal,
-              hint: A11yStrings.callSignalHint,
-              enabled: enabled && !active && !locked,
-              child: SizedBox(
-                width: 96,
-                height: 72,
-                child: OutlinedButton(
-                  onPressed: enabled && !active && !locked
-                      ? onCall
-                      : null,
-                  child: const Text(AppStrings.callSignal),
-                ),
+            child: SizedBox(
+              width: 96,
+              height: 72,
+              child: OutlinedButton(
+                onPressed: enabled && !active && !locked ? onCall : null,
+                child: Text(AppStrings.callSignal),
               ),
             ),
           ),
