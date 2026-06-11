@@ -28,4 +28,36 @@ class ServerProfile {
       repeater: repeater ?? this.repeater,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'host': host,
+        'port': port,
+        'channel': channel,
+        if (repeater) 'repeater': true,
+      };
+
+  factory ServerProfile.fromJson(Map<String, dynamic> json) {
+    final port = _readPort(json);
+    return ServerProfile(
+      name: json['name'] as String? ?? '',
+      host: json['host'] as String? ?? '',
+      port: port,
+      channel: json['channel'] as String? ?? 'global',
+      repeater: json['repeater'] as bool? ?? false,
+    );
+  }
+
+  static int _readPort(Map<String, dynamic> json) {
+    if (json['port'] is int) {
+      return json['port'] as int;
+    }
+    if (json['wsPort'] is int) {
+      return json['wsPort'] as int;
+    }
+    if (json['udpPort'] is int) {
+      return json['udpPort'] as int;
+    }
+    return 5500;
+  }
 }

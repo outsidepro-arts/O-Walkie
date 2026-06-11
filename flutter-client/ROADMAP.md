@@ -26,8 +26,9 @@ There is **no** user setting to switch the screen button to “toggle-only” (r
 
 | Done | Missing / stubbed |
 |------|-------------------|
-| Connect / disconnect, hold-PTT, RX volume | Multi-profile persistence |
-| `SessionService` + isolate worker | Settings, Roger/Call, scan logic |
+| Connect / disconnect, hybrid PTT, RX volume | Roger/Call, scan logic |
+| Multi-profile persistence + Settings About | Full settings (mic, Tasker) |
+| `SessionService` + isolate worker | FGS, deep links |
 | Android/iOS mic permission + audio session | FGS, notifications, deep links |
 | Windows session (vcpkg) | iOS full session |
 | Basic a11y on Home | PTT lock, TX countdown, repeater |
@@ -66,7 +67,7 @@ Prerequisites: relay in LAN, Android APK or Windows dist with session enabled, s
 
 ---
 
-## Phase 1 — App shell and data *(in progress)*
+## Phase 1 — App shell and data *(done)*
 
 
 **Goal:** structure like Kotlin without heavy platform work.

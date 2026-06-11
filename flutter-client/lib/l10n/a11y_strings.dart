@@ -4,7 +4,7 @@ abstract final class A11yStrings {
   static const signalStatus = 'Signal status';
   static const errorLiveRegion = 'Error';
   static const serverProfilePicker = 'Active server profile';
-  static const serverProfilePickerHint = 'Server selection, not yet available';
+  static const serverProfilePickerHint = 'Select active connection profile';
   static const expandDetailsHint = 'Shows host, port, and channel fields';
   static const collapseDetailsHint = 'Hides connection detail fields';
   static const connectHint = 'Connects to the relay server using the profile below';
@@ -25,7 +25,7 @@ abstract final class A11yStrings {
   static const pttStartAction = 'Start talking';
   static const pttStopAction = 'Stop talking';
   static const callSignalHint = 'Call signal, not available in this version';
-  static const menuMoreHint = 'Additional options, not available in this version';
+  static const menuMoreHint = 'Additional options and settings';
   static const coreVersionLabel = 'Application core version';
   static const mainScrollHint = 'Main screen';
 }

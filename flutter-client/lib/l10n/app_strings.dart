@@ -44,4 +44,19 @@ abstract final class AppStrings {
   static String pttTxCountdown(int sec) => 'Wait $sec s';
   static const callSignal = 'Call';
   static const coreVersionFooter = 'Core';
+  static const settingsTitle = 'Settings';
+  static const settingsDisplay = 'Display';
+  static const settingsOrientation = 'Screen orientation';
+  static const settingsAbout = 'About';
+  static const settingsAppVersion = 'App version';
+  static const settingsProtocolVersion = 'Protocol version';
+  static const settingsGitHub = 'GitHub repository';
+  static const orientationFollowSystem = 'Follow system';
+  static const orientationPortrait = 'Portrait';
+  static const orientationLandscape = 'Landscape';
+  static const menuSettings = 'Settings';
+  static const cannotSwitchProfileConnected =
+      'Disconnect before switching connection profile.';
+  static const cannotDeleteLastProfile = 'At least one profile is required.';
+  static const profileSaved = 'Connection profile saved.';
 }

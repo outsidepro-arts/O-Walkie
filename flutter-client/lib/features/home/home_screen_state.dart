@@ -4,8 +4,8 @@ import '../../l10n/app_strings.dart';
 class HomeScreenState {
   const HomeScreenState({
     this.connectionDetailsExpanded = true,
+    this.profiles = const [ServerProfile()],
     this.selectedServerIndex = 0,
-    this.profile = const ServerProfile(),
     this.rxVolumePercent = 100,
     this.scanActive = false,
     this.isConnecting = false,
@@ -22,11 +22,12 @@ class HomeScreenState {
     this.sessionSupported = true,
     this.lastError,
     this.statusInfo,
+    this.statusMessage,
   });
 
   final bool connectionDetailsExpanded;
+  final List<ServerProfile> profiles;
   final int selectedServerIndex;
-  final ServerProfile profile;
   final int rxVolumePercent;
   final bool scanActive;
   final bool isConnecting;
@@ -43,11 +44,23 @@ class HomeScreenState {
   final bool sessionSupported;
   final String? lastError;
   final String? statusInfo;
+  final String? statusMessage;
+
+  ServerProfile get profile {
+    if (profiles.isEmpty) {
+      return const ServerProfile();
+    }
+    final index = selectedServerIndex.clamp(0, profiles.length - 1);
+    return profiles[index];
+  }
+
+  bool get canSwitchProfiles =>
+      !isConnected && !isConnecting && profiles.length > 1;
 
   HomeScreenState copyWith({
     bool? connectionDetailsExpanded,
+    List<ServerProfile>? profiles,
     int? selectedServerIndex,
-    ServerProfile? profile,
     int? rxVolumePercent,
     bool? scanActive,
     bool? isConnecting,
@@ -64,14 +77,16 @@ class HomeScreenState {
     bool? sessionSupported,
     String? lastError,
     String? statusInfo,
+    String? statusMessage,
     bool clearError = false,
     bool clearStatusInfo = false,
+    bool clearStatusMessage = false,
   }) {
     return HomeScreenState(
       connectionDetailsExpanded:
           connectionDetailsExpanded ?? this.connectionDetailsExpanded,
+      profiles: profiles ?? this.profiles,
       selectedServerIndex: selectedServerIndex ?? this.selectedServerIndex,
-      profile: profile ?? this.profile,
       rxVolumePercent: rxVolumePercent ?? this.rxVolumePercent,
       scanActive: scanActive ?? this.scanActive,
       isConnecting: isConnecting ?? this.isConnecting,
@@ -88,6 +103,17 @@ class HomeScreenState {
       sessionSupported: sessionSupported ?? this.sessionSupported,
       lastError: clearError ? null : (lastError ?? this.lastError),
       statusInfo: clearStatusInfo ? null : (statusInfo ?? this.statusInfo),
+      statusMessage:
+          clearStatusMessage ? null : (statusMessage ?? this.statusMessage),
     );
+  }
+
+  HomeScreenState withProfileAt(int index, ServerProfile profile) {
+    final list = [...profiles];
+    if (index < 0 || index >= list.length) {
+      return this;
+    }
+    list[index] = profile;
+    return copyWith(profiles: list);
   }
 }

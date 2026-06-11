@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../a11y/a11y.dart';
 import '../../l10n/a11y_strings.dart';
@@ -33,6 +34,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     _hostCtrl = TextEditingController(text: profile.host);
     _portCtrl = TextEditingController(text: '${profile.port}');
     _channelCtrl = TextEditingController(text: profile.channel);
+    ref.listenManual(
+      homeScreenControllerProvider.select((s) => s.selectedServerIndex),
+      (previous, next) {
+        if (previous == next) {
+          return;
+        }
+        final profile = ref.read(homeScreenControllerProvider).profile;
+        _nameCtrl.text = profile.name;
+        _hostCtrl.text = profile.host;
+        _portCtrl.text = '${profile.port}';
+        _channelCtrl.text = profile.channel;
+      },
+    );
   }
 
   @override
@@ -96,7 +110,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _HeaderRow(),
+                  const _HeaderRow(),
                   const SizedBox(height: 8),
                   _StatusChips(
                     connection: state.connectionChip,
@@ -109,6 +123,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       child: Text(
                         state.statusInfo!,
                         style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                  if (state.statusMessage != null) ...[
+                    const SizedBox(height: 8),
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        state.statusMessage!,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
                       ),
                     ),
                   ],
@@ -139,20 +165,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   Semantics(
                     label: A11yStrings.serverProfilePicker,
                     hint: A11yStrings.serverProfilePickerHint,
-                    enabled: false,
+                    enabled: state.canSwitchProfiles,
                     child: DropdownButtonFormField<int>(
-                      initialValue: state.selectedServerIndex,
+                      value: state.selectedServerIndex
+                          .clamp(0, state.profiles.length - 1),
                       decoration: const InputDecoration(
                         contentPadding:
                             EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       ),
                       items: [
-                        DropdownMenuItem(
-                          value: 0,
-                          child: Text(state.profile.name),
-                        ),
+                        for (var i = 0; i < state.profiles.length; i++)
+                          DropdownMenuItem(
+                            value: i,
+                            child: Text(
+                              state.profiles[i].name.isEmpty
+                                  ? 'Profile ${i + 1}'
+                                  : state.profiles[i].name,
+                            ),
+                          ),
                       ],
-                      onChanged: null,
+                      onChanged: state.canSwitchProfiles
+                          ? (index) {
+                              if (index != null) {
+                                controller.selectProfile(index);
+                              }
+                            }
+                          : null,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -183,6 +221,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               controller.toggleConnection();
                             }
                           : null,
+                      onPrevious: state.canSwitchProfiles
+                          ? controller.previousProfile
+                          : null,
+                      onNext: state.canSwitchProfiles
+                          ? controller.nextProfile
+                          : null,
                     ),
                   ],
                   if (state.connectionDetailsExpanded) ...[
@@ -193,6 +237,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       portCtrl: _portCtrl,
                       channelCtrl: _channelCtrl,
                       onChanged: _syncProfile,
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () {
+                              _syncProfile();
+                              controller.saveCurrentProfile();
+                            },
+                            child: const Text(AppStrings.saveServer),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: state.profiles.length > 1
+                                ? () {
+                                    _syncProfile();
+                                    controller.deleteCurrentProfile();
+                                  }
+                                : null,
+                            child: const Text(AppStrings.deleteServer),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Semantics(
@@ -258,6 +328,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 }
 
 class _HeaderRow extends StatelessWidget {
+  const _HeaderRow();
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -273,12 +345,30 @@ class _HeaderRow extends StatelessWidget {
             ),
           ),
         ),
-        UnavailableButton(
+        Semantics(
+          button: true,
           label: AppStrings.menuMore,
           hint: A11yStrings.menuMoreHint,
-          child: OutlinedButton(
-            onPressed: null,
-            child: const Text(AppStrings.menuMore),
+          child: PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'settings') {
+                context.push('/settings');
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'settings',
+                child: Text(AppStrings.menuSettings),
+              ),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                border: Border.all(color: Theme.of(context).colorScheme.outline),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(AppStrings.menuMore),
+            ),
           ),
         ),
       ],
@@ -352,6 +442,8 @@ class _CollapsedActions extends StatelessWidget {
     required this.connectLabel,
     required this.connectHint,
     required this.onConnect,
+    required this.onPrevious,
+    required this.onNext,
   });
 
   final bool scanActive;
@@ -359,18 +451,17 @@ class _CollapsedActions extends StatelessWidget {
   final String connectLabel;
   final String connectHint;
   final VoidCallback? onConnect;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
         Expanded(
-          child: UnavailableButton(
-            label: AppStrings.previousServer,
-            child: OutlinedButton(
-              onPressed: null,
-              child: const Text(AppStrings.previousServer),
-            ),
+          child: OutlinedButton(
+            onPressed: onPrevious,
+            child: const Text(AppStrings.previousServer),
           ),
         ),
         const SizedBox(width: 8),
@@ -387,12 +478,9 @@ class _CollapsedActions extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Expanded(
-          child: UnavailableButton(
-            label: AppStrings.nextServer,
-            child: OutlinedButton(
-              onPressed: null,
-              child: const Text(AppStrings.nextServer),
-            ),
+          child: OutlinedButton(
+            onPressed: onNext,
+            child: const Text(AppStrings.nextServer),
           ),
         ),
         const SizedBox(width: 8),

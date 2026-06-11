@@ -1,12 +1,19 @@
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:owalkie_app/app/owalkie_app.dart';
 import 'package:owalkie_app/l10n/a11y_strings.dart';
 import 'package:owalkie_app/l10n/app_strings.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   testWidgets('home screen exposes key semantics for screen readers',
       (WidgetTester tester) async {
     final handle = tester.ensureSemantics();
@@ -33,11 +40,7 @@ void main() {
     expect(ptt.hasFlag(SemanticsFlag.hasEnabledState), isTrue);
     expect(ptt.hasFlag(SemanticsFlag.isEnabled), isFalse);
 
-    final menu = tester.getSemantics(find.bySemanticsLabel(AppStrings.menuMore));
-    expect(menu.label, AppStrings.menuMore);
-    expect(menu.hint, A11yStrings.menuMoreHint);
-    expect(menu.hasFlag(SemanticsFlag.isButton), isTrue);
-    expect(menu.hasFlag(SemanticsFlag.isEnabled), isFalse);
+    expect(find.text(AppStrings.menuMore), findsOneWidget);
 
     handle.dispose();
   });

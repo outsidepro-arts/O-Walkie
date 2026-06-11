@@ -4,6 +4,8 @@ import 'dart:io' show Platform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:owalkie_core/owalkie_core.dart';
 
+import '../../data/server_store.dart';
+import '../../domain/server_profile.dart';
 import '../../l10n/app_strings.dart';
 import '../../platform/native_platform.dart';
 import 'home_screen_state.dart';
@@ -18,13 +20,132 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   SessionService? _session;
   StreamSubscription<SessionWorkerMessage>? _sessionSub;
 
+  ServerStore get _store => ref.read(serverStoreProvider);
+
   @override
   HomeScreenState build() {
     ref.onDispose(_dispose);
     if (Platform.environment['FLUTTER_TEST'] != 'true') {
-      unawaited(_ensureSession());
+      unawaited(_bootstrap());
     }
     return const HomeScreenState();
+  }
+
+  Future<void> _bootstrap() async {
+    await _loadProfiles();
+    await _ensureSession();
+  }
+
+  Future<void> _loadProfiles() async {
+    var list = await _store.load();
+    if (list.isEmpty) {
+      list = [const ServerProfile()];
+      await _store.save(list);
+    }
+    var index = 0;
+    final selectedName = await _store.getLastSelectedName();
+    if (selectedName != null) {
+      final found = list.indexWhere((p) => p.name == selectedName);
+      if (found >= 0) {
+        index = found;
+      }
+    }
+    state = state.copyWith(
+      profiles: list,
+      selectedServerIndex: index,
+      clearError: true,
+    );
+  }
+
+  Future<void> _persistProfiles(List<ServerProfile> profiles) async {
+    await _store.save(profiles);
+    final index = state.selectedServerIndex.clamp(0, profiles.length - 1);
+    if (profiles.isNotEmpty) {
+      await _store.setLastSelectedName(profiles[index].name);
+    }
+  }
+
+  bool _rejectIfConnected() {
+    if (state.isConnected || state.isConnecting) {
+      state = state.copyWith(
+        lastError: AppStrings.cannotSwitchProfileConnected,
+      );
+      return true;
+    }
+    return false;
+  }
+
+  void selectProfile(int index) {
+    if (_rejectIfConnected()) {
+      return;
+    }
+    if (index < 0 || index >= state.profiles.length) {
+      return;
+    }
+    state = state.copyWith(
+      selectedServerIndex: index,
+      clearError: true,
+      clearStatusMessage: true,
+    );
+    unawaited(_store.setLastSelectedName(state.profile.name));
+  }
+
+  void previousProfile() {
+    if (!state.canSwitchProfiles) {
+      if (_rejectIfConnected()) {
+        return;
+      }
+      return;
+    }
+    final next = (state.selectedServerIndex - 1 + state.profiles.length) %
+        state.profiles.length;
+    selectProfile(next);
+  }
+
+  void nextProfile() {
+    if (!state.canSwitchProfiles) {
+      if (_rejectIfConnected()) {
+        return;
+      }
+      return;
+    }
+    final next = (state.selectedServerIndex + 1) % state.profiles.length;
+    selectProfile(next);
+  }
+
+  Future<void> saveCurrentProfile() async {
+    final index = state.selectedServerIndex;
+    if (index < 0 || index >= state.profiles.length) {
+      return;
+    }
+    final list = [...state.profiles];
+    list[index] = state.profile;
+    await _persistProfiles(list);
+    state = state.copyWith(
+      profiles: list,
+      statusMessage: AppStrings.profileSaved,
+      clearError: true,
+    );
+  }
+
+  Future<void> deleteCurrentProfile() async {
+    if (_rejectIfConnected()) {
+      return;
+    }
+    if (state.profiles.length <= 1) {
+      state = state.copyWith(lastError: AppStrings.cannotDeleteLastProfile);
+      return;
+    }
+    final index = state.selectedServerIndex;
+    final list = [...state.profiles]..removeAt(index);
+    final newIndex = index.clamp(0, list.length - 1);
+    await _persistProfiles(list);
+    state = state.copyWith(
+      profiles: list,
+      selectedServerIndex: newIndex,
+      clearError: true,
+      clearStatusMessage: true,
+    );
   }
 
   Future<void> _ensureSession() async {
@@ -131,8 +252,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void setRepeaterMode(bool enabled) {
-    state = state.copyWith(
-      profile: state.profile.copyWith(repeater: enabled),
+    state = state.withProfileAt(
+      state.selectedServerIndex,
+      state.profile.copyWith(repeater: enabled),
     );
     _session?.setRepeaterMode(enabled);
   }
@@ -144,14 +266,13 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     String? channel,
   }) {
     final parsedPort = int.tryParse(portText ?? '') ?? state.profile.port;
-    state = state.copyWith(
-      profile: state.profile.copyWith(
-        name: name ?? state.profile.name,
-        host: host ?? state.profile.host,
-        port: parsedPort,
-        channel: channel ?? state.profile.channel,
-      ),
+    final updated = state.profile.copyWith(
+      name: name ?? state.profile.name,
+      host: host ?? state.profile.host,
+      port: parsedPort,
+      channel: channel ?? state.profile.channel,
     );
+    state = state.withProfileAt(state.selectedServerIndex, updated);
   }
 
   Future<void> toggleConnection() async {
