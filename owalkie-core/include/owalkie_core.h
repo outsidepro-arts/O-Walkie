@@ -1,6 +1,13 @@
 #pragma once
 
+/* Portable size_t / fixed-width types for C and C++ (thanks @beqabeqa473). */
+#ifdef __cplusplus
+#include <cstddef>
 #include <cstdint>
+#else
+#include <stddef.h>
+#include <stdint.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
