@@ -31,7 +31,7 @@ class WalkieForegroundService : Service() {
                 updateNotification(connected)
             }
             ACTION_NOTIFICATION_DISCONNECT -> {
-                PlatformEvents.emit(EVENT_NOTIFICATION_DISCONNECT)
+                PlatformEvents.emit(PlatformEvents.EVENT_NOTIFICATION_DISCONNECT)
             }
             ACTION_STOP -> stopForegroundService()
         }

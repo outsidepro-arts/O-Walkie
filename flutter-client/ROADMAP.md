@@ -140,9 +140,9 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 ---
 
-## Phase 4 — Android: background, network, audio policy *(in progress — 4a FGS)*
+## Phase 4 — Android: background, network, audio policy *(in progress — 4b network)*
 
-### 4a. Foreground service + notification *(implemented — device test pending)*
+### 4a. Foreground service + notification *(done)*
 
 | Task | Solution |
 |------|----------|
@@ -180,8 +180,9 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 ### Acceptance tests (Phase 4)
 
-- [ ] Connect → home button → mic stays alive 2+ min; ongoing notification visible
-- [ ] Notification disconnect action works
+- [x] Connect → home button → mic stays alive 2+ min; ongoing notification visible
+- [x] Notification disconnect action works
+- [x] Battery optimization prompt opens system screen
 - [ ] Switch Wi‑Fi ↔ mobile → reconnect without app restart
 - [ ] Incoming phone call pauses TX/RX; resume after call
 - [ ] BT headset: route + media play/pause toggles latch; hardware PTT hold works
