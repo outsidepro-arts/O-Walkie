@@ -75,15 +75,15 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       return;
     }
     if (event == NativePlatform.mediaPttToggleEvent) {
-      togglePttLatch();
+      scheduleMicrotask(togglePttLatch);
       return;
     }
     if (event == NativePlatform.hardwarePttDownEvent) {
-      pttDown();
+      scheduleMicrotask(pttDown);
       return;
     }
     if (event == NativePlatform.hardwarePttUpEvent) {
-      pttUp();
+      scheduleMicrotask(pttUp);
       return;
     }
     if (event.startsWith('${NativePlatform.networkValidatedEvent}:')) {

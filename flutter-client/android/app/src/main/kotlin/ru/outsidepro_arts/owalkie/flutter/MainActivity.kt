@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.KeyEvent
+import android.view.Window
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -55,7 +56,7 @@ class MainActivity : FlutterActivity() {
                 }
                 "syncPttMediaSession" -> {
                     val active = call.argument<Boolean>("active") ?: false
-                    PttMediaSessionHost.sync(this, active)
+                    WalkieForegroundService.syncPttMediaSession(this, active)
                     result.success(true)
                 }
                 "getHardwarePttBinding" -> {
@@ -113,6 +114,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
+        installHardwarePttWindowCallback()
         handleBatterySettingsIntent(intent)
         handleMediaButtonIntent(intent)
     }
@@ -124,39 +126,9 @@ class MainActivity : FlutterActivity() {
         handleMediaButtonIntent(intent)
     }
 
-    override fun onDestroy() {
-        PttMediaSessionHost.release()
-        super.onDestroy()
-    }
-
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (capturingHardwarePttKey &&
-            event.action == KeyEvent.ACTION_DOWN &&
-            event.repeatCount == 0
-        ) {
-            hardwareKeyStore.setBinding(
-                PttHardwareKeyStore.Binding(
-                    keyCode = event.keyCode,
-                    scanCode = event.scanCode,
-                ),
-            )
-            capturingHardwarePttKey = false
-            PlatformEvents.emit(PlatformEvents.EVENT_HARDWARE_PTT_BOUND)
+        if (interceptHardwarePttKey(event)) {
             return true
-        }
-        if (hardwareKeyStore.matches(event)) {
-            when (event.action) {
-                KeyEvent.ACTION_DOWN -> {
-                    if (event.repeatCount == 0) {
-                        PlatformEvents.emit(PlatformEvents.EVENT_HARDWARE_PTT_DOWN)
-                    }
-                    return true
-                }
-                KeyEvent.ACTION_UP -> {
-                    PlatformEvents.emit(PlatformEvents.EVENT_HARDWARE_PTT_UP)
-                    return true
-                }
-            }
         }
         return super.dispatchKeyEvent(event)
     }
@@ -183,11 +155,43 @@ class MainActivity : FlutterActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
+    /**
+     * FlutterView consumes many key events before Activity.dispatchKeyEvent; intercept at the
+     * window layer (same keys still reach us during hardware-key capture in settings).
+     */
+    private fun installHardwarePttWindowCallback() {
+        val original = window.callback
+        window.callback = object : Window.Callback by original {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                if (interceptHardwarePttKey(event)) {
+                    return true
+                }
+                return original.dispatchKeyEvent(event)
+            }
+        }
+    }
+
+    private fun interceptHardwarePttKey(event: KeyEvent): Boolean {
+        if (capturingHardwarePttKey) {
+            if (HardwarePttKeyHandler.tryCaptureBinding(this, event) {
+                    capturingHardwarePttKey = false
+                    PlatformEvents.emit(PlatformEvents.EVENT_HARDWARE_PTT_BOUND)
+                }
+            ) {
+                return true
+            }
+        }
+        return HardwarePttKeyHandler.tryHandlePtt(this, event)
+    }
+
     private fun handleMediaButtonIntent(intent: Intent?) {
         if (intent?.action != Intent.ACTION_MEDIA_BUTTON) {
             return
         }
-        PttMediaSessionHost.dispatchMediaButtonIntent(intent)
+        val serviceIntent = Intent(intent).apply {
+            setClass(this@MainActivity, WalkieForegroundService::class.java)
+        }
+        startService(serviceIntent)
     }
 
     private fun handleBatterySettingsIntent(intent: Intent?) {

@@ -33,6 +33,10 @@ class PttMediaSessionController(
         refreshPlaybackState(s)
     }
 
+    fun refreshPlaybackStateAnchor() {
+        session?.let { refreshPlaybackState(it) }
+    }
+
     fun dispatchMediaButtonIntent(intent: Intent): Boolean {
         val s = session ?: return false
         MediaButtonReceiver.handleIntent(s, intent)
@@ -52,6 +56,8 @@ class PttMediaSessionController(
 
                 override fun onPause() = dispatchToggle()
 
+                override fun onSkipToNext() = dispatchToggle()
+
                 override fun onMediaButtonEvent(mediaButtonIntent: Intent?): Boolean {
                     if (mediaButtonIntent == null) {
                         return false
@@ -68,6 +74,7 @@ class PttMediaSessionController(
                         KeyEvent.KEYCODE_MEDIA_PAUSE,
                         KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                         KeyEvent.KEYCODE_HEADSETHOOK,
+                        KeyEvent.KEYCODE_MEDIA_NEXT,
                         -> {
                             dispatchToggle()
                             return true

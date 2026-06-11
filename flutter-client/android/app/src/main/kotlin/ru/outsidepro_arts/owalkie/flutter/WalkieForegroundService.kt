@@ -10,17 +10,28 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 /**
  * Keeps the Flutter process alive while a relay session is desired (connecting or connected).
- * Audio capture/playback stays in owalkie-core FFI; this service only provides FGS + notification.
+ * Audio capture/playback stays in owalkie-core FFI; this service provides FGS, notification,
+ * media-button PTT capture, and hardware PTT routing while the session is active.
  */
 class WalkieForegroundService : Service() {
+    private var mediaPttActive = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == Intent.ACTION_MEDIA_BUTTON) {
+            if (mediaPttActive) {
+                PttMediaSessionHost.sync(this, true)
+                PttMediaSessionHost.dispatchMediaButtonIntent(intent)
+            }
+            return START_STICKY
+        }
         when (intent?.action) {
             ACTION_START -> {
                 val connected = intent.getBooleanExtra(EXTRA_CONNECTED, false)
@@ -29,6 +40,18 @@ class WalkieForegroundService : Service() {
             ACTION_UPDATE -> {
                 val connected = intent.getBooleanExtra(EXTRA_CONNECTED, false)
                 updateNotification(connected)
+            }
+            ACTION_SYNC_PTT_MEDIA_SESSION -> {
+                mediaPttActive = intent.getBooleanExtra(EXTRA_MEDIA_PTT_ACTIVE, false)
+                PttMediaSessionHost.sync(this, mediaPttActive)
+            }
+            ACTION_HARDWARE_PTT_KEY -> {
+                val action = intent.getIntExtra(EXTRA_HW_KEY_ACTION, KeyEvent.ACTION_DOWN)
+                val repeat = intent.getIntExtra(EXTRA_HW_KEY_REPEAT, 0)
+                val keyCode = intent.getIntExtra(EXTRA_HW_KEY_CODE, KeyEvent.KEYCODE_UNKNOWN)
+                val scanCode = intent.getIntExtra(EXTRA_HW_SCAN_CODE, 0)
+                val event = KeyEvent(0L, 0L, action, keyCode, repeat, 0, 0, scanCode)
+                HardwarePttKeyHandler.tryHandlePtt(this, event)
             }
             ACTION_NOTIFICATION_DISCONNECT -> {
                 PlatformEvents.emit(PlatformEvents.EVENT_NOTIFICATION_DISCONNECT)
@@ -119,6 +142,8 @@ class WalkieForegroundService : Service() {
     }
 
     private fun stopForegroundService() {
+        mediaPttActive = false
+        PttMediaSessionHost.release()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -134,7 +159,16 @@ class WalkieForegroundService : Service() {
         const val ACTION_STOP = "ru.outsidepro_arts.owalkie.flutter.action.FGS_STOP"
         const val ACTION_NOTIFICATION_DISCONNECT =
             "ru.outsidepro_arts.owalkie.flutter.action.NOTIFICATION_DISCONNECT"
+        const val ACTION_SYNC_PTT_MEDIA_SESSION =
+            "ru.outsidepro_arts.owalkie.flutter.action.SYNC_PTT_MEDIA_SESSION"
+        const val ACTION_HARDWARE_PTT_KEY =
+            "ru.outsidepro_arts.owalkie.flutter.action.HARDWARE_PTT_KEY"
         const val EXTRA_CONNECTED = "connected"
+        const val EXTRA_MEDIA_PTT_ACTIVE = "media_ptt_active"
+        const val EXTRA_HW_KEY_ACTION = "hw_key_action"
+        const val EXTRA_HW_KEY_REPEAT = "hw_key_repeat"
+        const val EXTRA_HW_KEY_CODE = "hw_key_code"
+        const val EXTRA_HW_SCAN_CODE = "hw_scan_code"
 
         private const val NOTIFICATION_ID = 42
         private const val NOTIFICATION_CHANNEL_ID = "owalkie_session"
@@ -158,6 +192,25 @@ class WalkieForegroundService : Service() {
         fun stop(context: Context) {
             val intent = Intent(context, WalkieForegroundService::class.java).apply {
                 action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+
+        fun syncPttMediaSession(context: Context, active: Boolean) {
+            val intent = Intent(context, WalkieForegroundService::class.java).apply {
+                action = ACTION_SYNC_PTT_MEDIA_SESSION
+                putExtra(EXTRA_MEDIA_PTT_ACTIVE, active)
+            }
+            context.startService(intent)
+        }
+
+        fun forwardHardwarePttKey(context: Context, event: KeyEvent) {
+            val intent = Intent(context, WalkieForegroundService::class.java).apply {
+                action = ACTION_HARDWARE_PTT_KEY
+                putExtra(EXTRA_HW_KEY_ACTION, event.action)
+                putExtra(EXTRA_HW_KEY_REPEAT, event.repeatCount)
+                putExtra(EXTRA_HW_KEY_CODE, event.keyCode)
+                putExtra(EXTRA_HW_SCAN_CODE, event.scanCode)
             }
             context.startService(intent)
         }
