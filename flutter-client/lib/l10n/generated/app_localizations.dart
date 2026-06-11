@@ -152,6 +152,36 @@ abstract class AppLocalizations {
   /// **'Connected'**
   String get connectionStateConnected;
 
+  /// No description provided for @connectionStatePartial.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected (UDP init)'**
+  String get connectionStatePartial;
+
+  /// No description provided for @connectionStateProtocolIncompatible.
+  ///
+  /// In en, this message translates to:
+  /// **'Protocol incompatible'**
+  String get connectionStateProtocolIncompatible;
+
+  /// No description provided for @connectionStateTransmitting.
+  ///
+  /// In en, this message translates to:
+  /// **'Transmitting'**
+  String get connectionStateTransmitting;
+
+  /// No description provided for @connectionStateReceiving.
+  ///
+  /// In en, this message translates to:
+  /// **'Receiving'**
+  String get connectionStateReceiving;
+
+  /// No description provided for @connectionStateScanning.
+  ///
+  /// In en, this message translates to:
+  /// **'Scanning...'**
+  String get connectionStateScanning;
+
   /// No description provided for @connectionStateParallelTx.
   ///
   /// In en, this message translates to:
@@ -175,6 +205,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Signal: —'**
   String get signalQualityDefault;
+
+  /// No description provided for @signalQualityPercent.
+  ///
+  /// In en, this message translates to:
+  /// **'Signal: {percent}%'**
+  String signalQualityPercent(int percent);
 
   /// No description provided for @signalRxActive.
   ///

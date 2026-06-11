@@ -220,6 +220,11 @@ class SessionRelayBindings {
     'owalkie_flutter_clear_signal',
   );
 
+  late final int Function() _getUplinkSignalByte =
+      _lib.lookupFunction<ffi.Int32 Function(), int Function()>(
+    'owalkie_flutter_get_uplink_signal_byte',
+  );
+
   static const int signalWifi = 0;
   static const int signalCell = 1;
 
@@ -288,6 +293,8 @@ class SessionRelayBindings {
       _reportSignal(mode, value);
 
   int clearSignal(int mode) => _clearSignal(mode);
+
+  int getUplinkSignalByte() => _getUplinkSignalByte();
 
   ({int resultCode, bool active}) checkChannelActivity({
     required String host,

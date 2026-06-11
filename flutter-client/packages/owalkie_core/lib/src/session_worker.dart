@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 
 import '../owalkie_core_bindings_generated.dart';
 import 'native_library.dart';
+import 'link_signal.dart';
 import 'session_event_type.dart';
 import 'session_messages.dart';
 import 'session_relay_bindings.dart';
@@ -99,8 +100,10 @@ class _SessionWorker {
         _punchNat();
       case SessionReportSignalCommand(:final mode, :final value):
         _relay.reportSignal(mode: mode, value: value);
+        _publishUplinkSignal();
       case SessionClearSignalCommand(:final mode):
         _relay.clearSignal(mode);
+        _publishUplinkSignal();
       case SessionBindProcessNetworkCommand(:final networkHandle):
         _relay.bindProcessNetwork(networkHandle);
       case SessionNetworkHandoffCommand():
@@ -164,6 +167,11 @@ class _SessionWorker {
       return;
     }
     _relay.punchNat(_sessionId);
+  }
+
+  void _publishUplinkSignal() {
+    final percent = LinkSignal.byteToPercent(_relay.getUplinkSignalByte());
+    _mainPort.send(SessionWorkerMessage.uplinkSignal(percent: percent));
   }
 
   void _recoverAfterNetworkHandoff() {

@@ -19,6 +19,9 @@ class HomeScreenState {
     this.txCountdownSec = 0,
     this.isReceivingBroadcast = false,
     this.callActive = false,
+    this.protocolIncompatible = false,
+    this.udpReady = false,
+    this.uplinkSignalPercent,
     String? connectionChip,
     String? signalChip,
     this.coreVersion = '',
@@ -48,6 +51,9 @@ class HomeScreenState {
   final int txCountdownSec;
   final bool isReceivingBroadcast;
   final bool callActive;
+  final bool protocolIncompatible;
+  final bool udpReady;
+  final int? uplinkSignalPercent;
   final String connectionChip;
   final String signalChip;
   final String coreVersion;
@@ -67,18 +73,8 @@ class HomeScreenState {
 
   bool get parallelTxActive => txActive && isReceivingBroadcast;
 
-  String get connectionDisplayChip {
-    if (relayPausedForPhoneCall) {
-      return AppStrings.connectionStatePausedPhoneCall;
-    }
-    if (callActive) {
-      return AppStrings.connectionStateCalling;
-    }
-    if (parallelTxActive) {
-      return AppStrings.connectionStateParallelTx;
-    }
-    return connectionChip;
-  }
+  /// Left status chip — same priority as Kotlin [MainActivity.updateStatusChips].
+  String get connectionDisplayChip => connectionDisplayChipFor(this);
 
   HomeScreenState copyWith({
     bool? connectionDetailsExpanded,
@@ -97,6 +93,9 @@ class HomeScreenState {
     int? txCountdownSec,
     bool? isReceivingBroadcast,
     bool? callActive,
+    bool? protocolIncompatible,
+    bool? udpReady,
+    int? uplinkSignalPercent,
     String? connectionChip,
     String? signalChip,
     String? coreVersion,
@@ -108,6 +107,7 @@ class HomeScreenState {
     bool clearError = false,
     bool clearStatusInfo = false,
     bool clearStatusMessage = false,
+    bool clearUplinkSignal = false,
   }) {
     return HomeScreenState(
       connectionDetailsExpanded:
@@ -129,6 +129,11 @@ class HomeScreenState {
       isReceivingBroadcast:
           isReceivingBroadcast ?? this.isReceivingBroadcast,
       callActive: callActive ?? this.callActive,
+      protocolIncompatible: protocolIncompatible ?? this.protocolIncompatible,
+      udpReady: udpReady ?? this.udpReady,
+      uplinkSignalPercent: clearUplinkSignal
+          ? null
+          : (uplinkSignalPercent ?? this.uplinkSignalPercent),
       connectionChip: connectionChip ?? this.connectionChip,
       signalChip: signalChip ?? this.signalChip,
       coreVersion: coreVersion ?? this.coreVersion,
@@ -140,4 +145,45 @@ class HomeScreenState {
           clearStatusMessage ? null : (statusMessage ?? this.statusMessage),
     );
   }
+}
+
+/// Left connection chip text; mirrors Kotlin [MainActivity.updateStatusChips] priority.
+String connectionDisplayChipFor(HomeScreenState state) {
+  if (!state.sessionSupported) {
+    return AppStrings.connectionStateUnsupported;
+  }
+  if (state.protocolIncompatible) {
+    return AppStrings.connectionStateProtocolIncompatible;
+  }
+  if (state.relayPausedForPhoneCall) {
+    return AppStrings.connectionStatePausedPhoneCall;
+  }
+  if (state.callActive) {
+    return AppStrings.connectionStateCalling;
+  }
+  if (state.parallelTxActive) {
+    return AppStrings.connectionStateParallelTx;
+  }
+  if (state.txActive) {
+    return AppStrings.connectionStateTransmitting;
+  }
+  if (state.isConnected && state.isReceivingBroadcast) {
+    return AppStrings.connectionStateReceiving;
+  }
+  if (state.scanActive) {
+    return AppStrings.connectionStateScanning;
+  }
+  if (state.isConnecting) {
+    if (state.isReconnecting) {
+      return AppStrings.connectionStateReconnecting;
+    }
+    return AppStrings.connectionStateConnecting;
+  }
+  if (state.isConnected && state.udpReady) {
+    return AppStrings.connectionStateConnected;
+  }
+  if (state.isConnected) {
+    return AppStrings.connectionStatePartial;
+  }
+  return AppStrings.connectionStateDisconnected;
 }

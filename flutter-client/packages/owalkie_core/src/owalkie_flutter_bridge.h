@@ -130,6 +130,8 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_punch_nat(int64_t session_id);
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_recover_udp(int64_t session_id);
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_report_signal(int32_t mode, int32_t value);
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_clear_signal(int32_t mode);
+/** Combined uplink signal byte 0..255 (255 = unknown / no samples). */
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_uplink_signal_byte(void);
 /** Android only: store network handle + bind process before connect (no-op elsewhere). */
 FFI_PLUGIN_EXPORT void owalkie_flutter_bind_process_network(int64_t network_handle);
 

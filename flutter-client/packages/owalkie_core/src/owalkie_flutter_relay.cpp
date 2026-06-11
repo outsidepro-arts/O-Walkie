@@ -619,4 +619,12 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_clear_signal(int32_t mode) {
 #endif
 }
 
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_uplink_signal_byte(void) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    return owalkie_get_uplink_signal_byte();
+#else
+    return 255;
+#endif
+}
+
 } // extern "C"

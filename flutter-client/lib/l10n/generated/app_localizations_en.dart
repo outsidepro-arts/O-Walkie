@@ -36,6 +36,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectionStateConnected => 'Connected';
 
   @override
+  String get connectionStatePartial => 'Connected (UDP init)';
+
+  @override
+  String get connectionStateProtocolIncompatible => 'Protocol incompatible';
+
+  @override
+  String get connectionStateTransmitting => 'Transmitting';
+
+  @override
+  String get connectionStateReceiving => 'Receiving';
+
+  @override
+  String get connectionStateScanning => 'Scanning...';
+
+  @override
   String get connectionStateParallelTx => 'Parallel transmission!';
 
   @override
@@ -46,6 +61,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get signalQualityDefault => 'Signal: —';
+
+  @override
+  String signalQualityPercent(int percent) {
+    return 'Signal: $percent%';
+  }
 
   @override
   String get signalRxActive => 'RX active';

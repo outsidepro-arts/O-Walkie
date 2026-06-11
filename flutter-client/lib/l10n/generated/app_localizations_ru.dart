@@ -36,6 +36,22 @@ class AppLocalizationsRu extends AppLocalizations {
   String get connectionStateConnected => 'Подключен';
 
   @override
+  String get connectionStatePartial => 'Подключен (иниц. UDP)';
+
+  @override
+  String get connectionStateProtocolIncompatible =>
+      'Несовместимая версия протокола';
+
+  @override
+  String get connectionStateTransmitting => 'Передача';
+
+  @override
+  String get connectionStateReceiving => 'Прием';
+
+  @override
+  String get connectionStateScanning => 'Сканирование...';
+
+  @override
   String get connectionStateParallelTx => 'Параллельная передача!';
 
   @override
@@ -46,6 +62,11 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get signalQualityDefault => 'Сигнал: --';
+
+  @override
+  String signalQualityPercent(int percent) {
+    return 'Сигнал: $percent%';
+  }
 
   @override
   String get signalRxActive => 'Приём активен';

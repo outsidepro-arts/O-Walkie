@@ -159,7 +159,7 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 |------|----------|
 | Network validated / lost | Kotlin `SessionNetworkController` + `ConnectivityManager.NetworkCallback` |
 | Process network bind | `android_setprocnetwork` preConnect hook + `bindProcessToNetwork` |
-| Uplink signal byte | Wifi RSSI + cell level → FFI `owalkie_report_signal` |
+| Uplink signal byte | Wifi RSSI + cell level → FFI `owalkie_report_signal` → UI chip `%` |
 | NAT punch / UDP recover | FFI `punch_nat` + `recover_udp_transport` on real network handoff |
 
 **Implementation:** persistent client reconnect loop, handle-based handoff debouncing, `SessionNetworkController` logging (`OwalkieFlutterNet`).

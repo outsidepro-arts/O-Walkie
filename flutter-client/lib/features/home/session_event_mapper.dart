@@ -3,6 +3,13 @@ import 'package:owalkie_core/owalkie_core.dart';
 import '../../l10n/app_strings.dart';
 import 'home_screen_state.dart';
 
+String signalChipForUplinkPercent(int? percent) {
+  if (percent == null) {
+    return AppStrings.signalQualityDefault;
+  }
+  return AppStrings.signalQualityPercent(percent);
+}
+
 /// Pure mapping from native session events to [HomeScreenState] (testable).
 HomeScreenState applyNativeSessionEvent(
   HomeScreenState state, {
@@ -14,6 +21,8 @@ HomeScreenState applyNativeSessionEvent(
       return state.copyWith(
         clearError: true,
         clearStatusInfo: true,
+        protocolIncompatible: false,
+        udpReady: true,
         pttServerLocked: false,
         pttLockSec: 0,
         txCountdownSec: 0,
@@ -22,6 +31,8 @@ HomeScreenState applyNativeSessionEvent(
     case OwalkieEventType.disconnected:
     case OwalkieEventType.connectionFailed:
       return state.copyWith(
+        protocolIncompatible: false,
+        udpReady: false,
         pttServerLocked: false,
         pttLockSec: 0,
         txCountdownSec: 0,
@@ -31,6 +42,8 @@ HomeScreenState applyNativeSessionEvent(
       );
     case OwalkieEventType.protocolError:
       return state.copyWith(
+        protocolIncompatible: true,
+        udpReady: false,
         pttServerLocked: false,
         pttLockSec: 0,
         txCountdownSec: 0,
@@ -40,6 +53,7 @@ HomeScreenState applyNativeSessionEvent(
       );
     case OwalkieEventType.connectionLost:
       return state.copyWith(
+        udpReady: false,
         txActive: false,
         isReceivingBroadcast: false,
         statusInfo: AppStrings.connectionStateReconnecting,
@@ -53,7 +67,7 @@ HomeScreenState applyNativeSessionEvent(
     case OwalkieEventType.rxBroadcastEnd:
       return state.copyWith(
         isReceivingBroadcast: false,
-        signalChip: AppStrings.signalQualityDefault,
+        signalChip: signalChipForUplinkPercent(state.uplinkSignalPercent),
       );
     case OwalkieEventType.pttLocked:
       final sec = int.tryParse(info) ?? 0;

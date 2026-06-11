@@ -9,10 +9,23 @@
   "connectionStateReconnecting": "Reconnecting…",
   "connectionStatePausedPhoneCall": "Paused (phone call)",
   "connectionStateConnected": "Connected",
+  "connectionStatePartial": "Connected (UDP init)",
+  "connectionStateProtocolIncompatible": "Protocol incompatible",
+  "connectionStateTransmitting": "Transmitting",
+  "connectionStateReceiving": "Receiving",
+  "connectionStateScanning": "Scanning...",
   "connectionStateParallelTx": "Parallel transmission!",
   "connectionStateCalling": "Calling…",
   "connectionStateUnsupported": "Session unavailable",
   "signalQualityDefault": "Signal: —",
+  "signalQualityPercent": "Signal: {percent}%",
+  "@signalQualityPercent": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
   "signalRxActive": "RX active",
   "signalRxBusy": "RX busy",
   "serverProfiles": "Connection list",

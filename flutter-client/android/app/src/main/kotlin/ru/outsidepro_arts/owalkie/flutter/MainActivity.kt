@@ -19,7 +19,6 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var pendingMicResult: MethodChannel.Result? = null
     private var pendingNotificationResult: MethodChannel.Result? = null
-    private var sessionNetworkController: SessionNetworkController? = null
     private var capturingHardwarePttKey = false
     private val hardwareKeyStore by lazy { PttHardwareKeyStore(this) }
 
@@ -104,11 +103,11 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "startSessionNetworkMonitoring" -> {
-                    sessionNetworkController()?.start()
+                    WalkieForegroundService.startNetworkMonitoring(this)
                     result.success(true)
                 }
                 "stopSessionNetworkMonitoring" -> {
-                    sessionNetworkController()?.stop()
+                    WalkieForegroundService.stopNetworkMonitoring()
                     result.success(true)
                 }
                 "openBatterySettings" -> {
@@ -261,16 +260,6 @@ class MainActivity : FlutterActivity() {
             arrayOf(Manifest.permission.POST_NOTIFICATIONS),
             NOTIFICATION_REQUEST,
         )
-    }
-
-    private fun sessionNetworkController(): SessionNetworkController {
-        val existing = sessionNetworkController
-        if (existing != null) {
-            return existing
-        }
-        val created = SessionNetworkController(this)
-        sessionNetworkController = created
-        return created
     }
 
     private fun openBatteryOptimizationSettings() {

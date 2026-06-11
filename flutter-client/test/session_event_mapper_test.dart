@@ -8,6 +8,52 @@ import 'package:owalkie_app/l10n/app_strings.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   AppStrings.bind(lookupAppLocalizations(const Locale('en')));
+  group('connectionDisplayChipFor', () {
+    test('maps transmitting over connected', () {
+      final state = HomeScreenState(isConnected: true, udpReady: true, txActive: true);
+      expect(
+        connectionDisplayChipFor(state),
+        AppStrings.connectionStateTransmitting,
+      );
+    });
+
+    test('maps receiving over connected', () {
+      final state = HomeScreenState(
+        isConnected: true,
+        udpReady: true,
+        isReceivingBroadcast: true,
+      );
+      expect(
+        connectionDisplayChipFor(state),
+        AppStrings.connectionStateReceiving,
+      );
+    });
+
+    test('maps scanning when idle', () {
+      final state = HomeScreenState(scanActive: true);
+      expect(
+        connectionDisplayChipFor(state),
+        AppStrings.connectionStateScanning,
+      );
+    });
+
+    test('maps partial when connected without udp', () {
+      final state = HomeScreenState(isConnected: true, udpReady: false);
+      expect(
+        connectionDisplayChipFor(state),
+        AppStrings.connectionStatePartial,
+      );
+    });
+
+    test('maps protocol incompatible', () {
+      final state = HomeScreenState(protocolIncompatible: true);
+      expect(
+        connectionDisplayChipFor(state),
+        AppStrings.connectionStateProtocolIncompatible,
+      );
+    });
+  });
+
   group('connectionChipForTransport', () {
     test('maps connected', () {
       expect(
@@ -80,13 +126,28 @@ void main() {
       expect(next.isReceivingBroadcast, isTrue);
     });
 
+    test('rx broadcast end restores uplink percent', () {
+      final receiving = HomeScreenState(
+        isReceivingBroadcast: true,
+        uplinkSignalPercent: 72,
+        signalChip: AppStrings.signalRxActive,
+      );
+      final next = applyNativeSessionEvent(
+        receiving,
+        eventType: OwalkieEventType.rxBroadcastEnd,
+        info: '',
+      );
+      expect(next.isReceivingBroadcast, isFalse);
+      expect(next.signalChip, AppStrings.signalQualityPercent(72));
+    });
+
     test('parallel tx when transmitting and receiving', () {
       final receiving = HomeScreenState(isReceivingBroadcast: true);
       expect(receiving.parallelTxActive, isFalse);
       final parallel = receiving.copyWith(txActive: true);
       expect(parallel.parallelTxActive, isTrue);
       expect(
-        parallel.connectionDisplayChip,
+        connectionDisplayChipFor(parallel),
         AppStrings.connectionStateParallelTx,
       );
     });

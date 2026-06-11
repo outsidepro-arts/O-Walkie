@@ -112,6 +112,7 @@ class WalkieForegroundService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
         foregroundActive = true
+        startNetworkMonitoring(this)
     }
 
     private fun updateNotification(connected: Boolean) {
@@ -182,6 +183,7 @@ class WalkieForegroundService : Service() {
     private fun stopForegroundService() {
         mediaPttActive = false
         foregroundActive = false
+        stopNetworkMonitoring()
         PttMediaSessionHost.release()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -193,6 +195,20 @@ class WalkieForegroundService : Service() {
     }
 
     companion object {
+        @Volatile
+        private var networkController: SessionNetworkController? = null
+
+        fun startNetworkMonitoring(context: Context) {
+            val app = context.applicationContext
+            val controller = networkController
+                ?: SessionNetworkController(app).also { networkController = it }
+            controller.start()
+        }
+
+        fun stopNetworkMonitoring() {
+            networkController?.stop()
+        }
+
         const val ACTION_START = "ru.outsidepro_arts.owalkie.flutter.action.FGS_START"
         const val ACTION_UPDATE = "ru.outsidepro_arts.owalkie.flutter.action.FGS_UPDATE"
         const val ACTION_STOP = "ru.outsidepro_arts.owalkie.flutter.action.FGS_STOP"

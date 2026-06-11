@@ -43,7 +43,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   Timer? _txCountdownTimer;
   bool _parallelTxVibrating = false;
   bool _sessionForegroundActive = false;
-  bool _sessionNetworkMonitoring = false;
   AudioInterruptionManager? _audioInterruption;
   StreamSubscription<Uri>? _deepLinkSub;
   bool _scanLoopActive = false;
@@ -552,11 +551,18 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           txActive: connected ? state.txActive : false,
           isReceivingBroadcast: connected ? state.isReceivingBroadcast : false,
           callActive: connected ? state.callActive : false,
+          udpReady: connected ? state.udpReady : false,
+          protocolIncompatible:
+              connected ? state.protocolIncompatible : false,
           connectionChip: connectionChipForTransport(
             connected: connected,
             connecting: connecting,
             reconnecting: reconnecting,
           ),
+          signalChip: (!connected && !connecting)
+              ? AppStrings.signalQualityDefault
+              : state.signalChip,
+          clearUplinkSignal: !connected && !connecting,
           lastError: error,
           clearError: error == null,
           statusInfo: reconnecting ? AppStrings.connectionStateReconnecting : state.statusInfo,
@@ -607,6 +613,13 @@ class HomeScreenController extends Notifier<HomeScreenState> {
             lastError: 'Call signal failed (error $resultCode).',
           );
         }
+      case SessionUplinkSignalMessage(:final percent):
+        state = state.copyWith(
+          uplinkSignalPercent: percent,
+          signalChip: state.isReceivingBroadcast
+              ? state.signalChip
+              : AppStrings.signalQualityPercent(percent),
+        );
     }
     _syncSideEffects(prev);
   }
@@ -909,10 +922,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     final sessionDesired = connecting || connected;
     if (!sessionDesired) {
-      if (_sessionNetworkMonitoring) {
-        _sessionNetworkMonitoring = false;
-        await NativePlatform.stopSessionNetworkMonitoring();
-      }
       if (_sessionForegroundActive) {
         _sessionForegroundActive = false;
         await NativePlatform.stopSessionForeground();
@@ -920,10 +929,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       return;
     }
     await NativePlatform.ensureNotificationPermission();
-    if (!_sessionNetworkMonitoring) {
-      _sessionNetworkMonitoring = true;
-      await NativePlatform.startSessionNetworkMonitoring();
-    }
     if (!_sessionForegroundActive) {
       _sessionForegroundActive = true;
       await NativePlatform.startSessionForeground(connected: connected);
@@ -1041,10 +1046,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     stopScanning(announce: false);
     unawaited(_audioInterruption?.stop());
     _audioInterruption = null;
-    if (_sessionNetworkMonitoring) {
-      _sessionNetworkMonitoring = false;
-      unawaited(NativePlatform.stopSessionNetworkMonitoring());
-    }
     if (_sessionForegroundActive) {
       _sessionForegroundActive = false;
       unawaited(NativePlatform.stopSessionForeground());

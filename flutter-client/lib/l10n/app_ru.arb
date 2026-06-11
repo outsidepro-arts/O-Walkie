@@ -9,10 +9,23 @@
   "connectionStateReconnecting": "Переподключение...",
   "connectionStatePausedPhoneCall": "Пауза (телефонный звонок)",
   "connectionStateConnected": "Подключен",
+  "connectionStatePartial": "Подключен (иниц. UDP)",
+  "connectionStateProtocolIncompatible": "Несовместимая версия протокола",
+  "connectionStateTransmitting": "Передача",
+  "connectionStateReceiving": "Прием",
+  "connectionStateScanning": "Сканирование...",
   "connectionStateParallelTx": "Параллельная передача!",
   "connectionStateCalling": "Вызов",
   "connectionStateUnsupported": "Сессия недоступна",
   "signalQualityDefault": "Сигнал: --",
+  "signalQualityPercent": "Сигнал: {percent}%",
+  "@signalQualityPercent": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
   "signalRxActive": "Приём активен",
   "signalRxBusy": "Приём занят",
   "serverProfiles": "Список подключений",

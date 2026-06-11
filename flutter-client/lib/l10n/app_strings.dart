@@ -33,10 +33,18 @@ abstract final class AppStrings {
   static String get connectionStatePausedPhoneCall =>
       _l.connectionStatePausedPhoneCall;
   static String get connectionStateConnected => _l.connectionStateConnected;
+  static String get connectionStatePartial => _l.connectionStatePartial;
+  static String get connectionStateProtocolIncompatible =>
+      _l.connectionStateProtocolIncompatible;
+  static String get connectionStateTransmitting => _l.connectionStateTransmitting;
+  static String get connectionStateReceiving => _l.connectionStateReceiving;
+  static String get connectionStateScanning => _l.connectionStateScanning;
   static String get connectionStateParallelTx => _l.connectionStateParallelTx;
   static String get connectionStateCalling => _l.connectionStateCalling;
   static String get connectionStateUnsupported => _l.connectionStateUnsupported;
   static String get signalQualityDefault => _l.signalQualityDefault;
+  static String signalQualityPercent(int percent) =>
+      _l.signalQualityPercent(percent);
   static String get signalRxActive => _l.signalRxActive;
   static String get signalRxBusy => _l.signalRxBusy;
   static String get serverProfiles => _l.serverProfiles;

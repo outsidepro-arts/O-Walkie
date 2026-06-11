@@ -159,6 +159,10 @@ sealed class SessionWorkerMessage {
   const factory SessionWorkerMessage.callResult({
     required int resultCode,
   }) = SessionCallResultMessage;
+
+  const factory SessionWorkerMessage.uplinkSignal({
+    required int percent,
+  }) = SessionUplinkSignalMessage;
 }
 
 final class SessionUnsupportedMessage extends SessionWorkerMessage {
@@ -235,4 +239,10 @@ final class SessionCallResultMessage extends SessionWorkerMessage {
   const SessionCallResultMessage({required this.resultCode});
 
   final int resultCode;
+}
+
+final class SessionUplinkSignalMessage extends SessionWorkerMessage {
+  const SessionUplinkSignalMessage({required this.percent});
+
+  final int percent;
 }
