@@ -26,9 +26,11 @@ final homeScreenControllerProvider =
 class HomeScreenController extends Notifier<HomeScreenState> {
   SessionService? _session;
   StreamSubscription<SessionWorkerMessage>? _sessionSub;
+  StreamSubscription<String>? _platformSub;
   final PttBurstGuard _pttBurstGuard = PttBurstGuard();
   Timer? _txCountdownTimer;
   bool _parallelTxVibrating = false;
+  bool _sessionForegroundActive = false;
 
   ServerStore get _store => ref.read(serverStoreProvider);
   RogerPatternStore get _rogerStore => ref.read(rogerPatternStoreProvider);
@@ -38,9 +40,16 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   HomeScreenState build() {
     ref.onDispose(_dispose);
     if (Platform.environment['FLUTTER_TEST'] != 'true') {
+      _platformSub ??= NativePlatform.platformEvents.listen(_onPlatformEvent);
       unawaited(_bootstrap());
     }
     return const HomeScreenState();
+  }
+
+  void _onPlatformEvent(String event) {
+    if (event == NativePlatform.notificationDisconnectEvent) {
+      unawaited(toggleConnection());
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -254,6 +263,10 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           clearError: error == null,
           statusInfo: reconnecting ? AppStrings.connectionStateReconnecting : state.statusInfo,
         );
+        unawaited(_syncSessionForeground(
+          connecting: connecting,
+          connected: connected,
+        ));
       case SessionPttResultMessage(:final active, :final resultCode):
         state = state.copyWith(
           txActive: active,
@@ -380,6 +393,30 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     );
   }
 
+  Future<void> _syncSessionForeground({
+    required bool connecting,
+    required bool connected,
+  }) async {
+    if (!NativePlatform.isAndroid) {
+      return;
+    }
+    final sessionDesired = connecting || connected;
+    if (!sessionDesired) {
+      if (_sessionForegroundActive) {
+        _sessionForegroundActive = false;
+        await NativePlatform.stopSessionForeground();
+      }
+      return;
+    }
+    await NativePlatform.ensureNotificationPermission();
+    if (!_sessionForegroundActive) {
+      _sessionForegroundActive = true;
+      await NativePlatform.startSessionForeground(connected: connected);
+      return;
+    }
+    await NativePlatform.updateSessionForeground(connected: connected);
+  }
+
   Future<void> toggleConnection() async {
     await _ensureSession();
     final session = _session;
@@ -389,6 +426,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (state.isConnected || state.isConnecting) {
       session.disconnect();
       return;
+    }
+    if (NativePlatform.isAndroid) {
+      await NativePlatform.ensureNotificationPermission();
     }
     final p = state.profile;
     if (p.host.trim().isEmpty) {
@@ -476,6 +516,12 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     _pttBurstGuard.reset();
     unawaited(Haptics.parallelTxCollision(active: false));
     unawaited(ScreenWake.setTransmitting(false));
+    _platformSub?.cancel();
+    _platformSub = null;
+    if (_sessionForegroundActive) {
+      _sessionForegroundActive = false;
+      unawaited(NativePlatform.stopSessionForeground());
+    }
     _sessionSub?.cancel();
     _session?.dispose();
     _session = null;

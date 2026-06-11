@@ -142,16 +142,16 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 ## Phase 4 — Android: background, network, audio policy *(in progress — 4a FGS)*
 
-### 4a. Foreground service + notification
+### 4a. Foreground service + notification *(implemented — device test pending)*
 
-| Task | Plugin |
-|------|--------|
-| FGS type `microphone` (API 34+) | [`flutter_foreground_task`](https://pub.dev/packages/flutter_foreground_task) |
-| POST_NOTIFICATIONS | [`permission_handler`](https://pub.dev/packages/permission_handler) or extend existing channel |
-| Notification actions | `flutter_foreground_task` `NotificationButton` |
-| Battery optimization hint | `url_launcher` or thin intent channel |
+| Task | Solution |
+|------|----------|
+| FGS type `microphone` (API 34+) | Thin Kotlin `WalkieForegroundService` + method channel |
+| POST_NOTIFICATIONS | `MainActivity` permission on connect |
+| Notification actions | Disconnect/connect toggle + battery settings intent |
+| Battery optimization hint | Notification action → system battery screen |
 
-Fallback: thin Kotlin `WalkieForegroundService` + method channel if plugin is insufficient.
+**Implementation:** `WalkieForegroundService.kt`, `PlatformEvents` EventChannel, `NativePlatform.startSessionForeground` wired from `HomeScreenController` on connect/disconnect.
 
 ### 4b. Network and reconnect
 

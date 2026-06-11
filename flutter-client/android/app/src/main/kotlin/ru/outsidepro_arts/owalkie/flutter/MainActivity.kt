@@ -1,23 +1,46 @@
 package ru.outsidepro_arts.owalkie.flutter
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var pendingMicResult: MethodChannel.Result? = null
+    private var pendingNotificationResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            EVENTS_CHANNEL,
+        ).setStreamHandler(
+            object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    PlatformEvents.attach(events)
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    PlatformEvents.detach()
+                }
+            },
+        )
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "hasMicrophonePermission" -> result.success(hasMicPermission())
                 "requestMicrophonePermission" -> requestMicPermission(result)
+                "hasNotificationPermission" -> result.success(hasNotificationPermission())
+                "requestNotificationPermission" -> requestNotificationPermission(result)
                 "prepareAudioSession" -> {
                     val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
                     audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -30,9 +53,38 @@ class MainActivity : FlutterActivity() {
                     audioManager.mode = AudioManager.MODE_NORMAL
                     result.success(null)
                 }
+                "startSessionForeground" -> {
+                    val connected = call.argument<Boolean>("connected") ?: false
+                    WalkieForegroundService.start(this, connected)
+                    result.success(true)
+                }
+                "updateSessionForeground" -> {
+                    val connected = call.argument<Boolean>("connected") ?: false
+                    WalkieForegroundService.update(this, connected)
+                    result.success(true)
+                }
+                "stopSessionForeground" -> {
+                    WalkieForegroundService.stop(this)
+                    result.success(true)
+                }
+                "openBatterySettings" -> {
+                    openBatteryOptimizationSettings()
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        handleBatterySettingsIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleBatterySettingsIntent(intent)
     }
 
     override fun onRequestPermissionsResult(
@@ -40,13 +92,27 @@ class MainActivity : FlutterActivity() {
         permissions: Array<out String>,
         grantResults: IntArray,
     ) {
-        if (requestCode == MIC_REQUEST) {
-            val granted =
-                grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
-            pendingMicResult?.success(granted)
-            pendingMicResult = null
+        when (requestCode) {
+            MIC_REQUEST -> {
+                val granted =
+                    grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+                pendingMicResult?.success(granted)
+                pendingMicResult = null
+            }
+            NOTIFICATION_REQUEST -> {
+                val granted =
+                    grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+                pendingNotificationResult?.success(granted)
+                pendingNotificationResult = null
+            }
         }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
+    private fun handleBatterySettingsIntent(intent: Intent?) {
+        if (intent?.action == ACTION_OPEN_BATTERY_SETTINGS) {
+            openBatteryOptimizationSettings()
+        }
     }
 
     private fun hasMicPermission(): Boolean {
@@ -73,8 +139,60 @@ class MainActivity : FlutterActivity() {
         )
     }
 
+    private fun hasNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return true
+        }
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestNotificationPermission(result: MethodChannel.Result) {
+        if (hasNotificationPermission()) {
+            result.success(true)
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            result.success(true)
+            return
+        }
+        if (pendingNotificationResult != null) {
+            result.error("busy", "Notification permission request already in progress", null)
+            return
+        }
+        pendingNotificationResult = result
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            NOTIFICATION_REQUEST,
+        )
+    }
+
+    private fun openBatteryOptimizationSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val pm = getSystemService(POWER_SERVICE) as? PowerManager
+        if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+            val direct = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:$packageName"),
+            )
+            if (runCatching { startActivity(direct) }.isSuccess) {
+                return
+            }
+        }
+        runCatching {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
+    }
+
     companion object {
+        const val ACTION_OPEN_BATTERY_SETTINGS =
+            "ru.outsidepro_arts.owalkie.flutter.action.OPEN_BATTERY_SETTINGS"
         private const val CHANNEL = "ru.outsidepro_arts.owalkie.flutter/platform"
+        private const val EVENTS_CHANNEL = "ru.outsidepro_arts.owalkie.flutter/platform_events"
         private const val MIC_REQUEST = 1001
+        private const val NOTIFICATION_REQUEST = 1002
     }
 }

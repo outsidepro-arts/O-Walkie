@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">O-Walkie Flutter</string>
+    <string name="service_channel_name">O-Walkie session</string>
+    <string name="service_notification_title">O-Walkie running</string>
+    <string name="service_notification_text">Audio relay service is active</string>
+    <string name="service_notification_action_connect">Connect</string>
+    <string name="service_notification_action_disconnect">Disconnect</string>
+    <string name="service_notification_action_battery">Battery settings</string>
 </resources>
