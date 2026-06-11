@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:owalkie_core/owalkie_core.dart';
 import 'package:owalkie_app/features/home/home_screen_state.dart';
 import 'package:owalkie_app/features/home/session_event_mapper.dart';
+import 'package:owalkie_app/domain/server_profile.dart';
 import 'package:owalkie_app/l10n/app_strings.dart';
 
 void main() {
@@ -74,6 +75,48 @@ void main() {
         connectionChipForTransport(connected: false, connecting: true, reconnecting: false),
         AppStrings.connectionStateConnecting,
       );
+    });
+  });
+
+  group('profile navigation', () {
+    test('canNavigateProfiles when collapsed with servers while connected', () {
+      final state = HomeScreenState(
+        connectionDetailsExpanded: false,
+        profiles: const [
+          ServerProfile(name: 'a', host: '1', port: 1, channel: 'c'),
+          ServerProfile(name: 'b', host: '2', port: 2, channel: 'c'),
+        ],
+        isConnected: true,
+      );
+      expect(state.canNavigateProfiles, isTrue);
+      expect(state.canSelectProfiles, isFalse);
+      expect(state.hasPreviousProfile, isFalse);
+      expect(state.hasNextProfile, isTrue);
+    });
+
+    test('hasPreviousProfile at last index', () {
+      final state = HomeScreenState(
+        connectionDetailsExpanded: false,
+        profiles: const [
+          ServerProfile(name: 'a', host: '1', port: 1, channel: 'c'),
+          ServerProfile(name: 'b', host: '2', port: 2, channel: 'c'),
+        ],
+        selectedServerIndex: 1,
+        isConnected: true,
+      );
+      expect(state.hasPreviousProfile, isTrue);
+      expect(state.hasNextProfile, isFalse);
+    });
+
+    test('canNavigateProfiles false when details expanded', () {
+      final state = HomeScreenState(
+        connectionDetailsExpanded: true,
+        profiles: const [
+          ServerProfile(name: 'a', host: '1', port: 1, channel: 'c'),
+          ServerProfile(name: 'b', host: '2', port: 2, channel: 'c'),
+        ],
+      );
+      expect(state.canNavigateProfiles, isFalse);
     });
   });
 

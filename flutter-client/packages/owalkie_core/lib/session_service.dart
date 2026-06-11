@@ -77,6 +77,21 @@ class SessionService {
     ));
   }
 
+  /// Switch server profile without clearing user connect intent (next/prev buttons).
+  void switchServer({
+    required String host,
+    required int port,
+    required String channel,
+    bool repeater = false,
+  }) {
+    _workerPort?.send(SessionSwitchServerCommand(
+      host: host,
+      port: port,
+      channel: channel,
+      repeater: repeater,
+    ));
+  }
+
   void disconnect() {
     _workerPort?.send(const SessionDisconnectCommand());
   }

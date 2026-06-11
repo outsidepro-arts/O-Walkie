@@ -48,6 +48,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   bool _scanLoopActive = false;
   ScanMode? _scanMode;
   Timer? _rxVolumePreviewTimer;
+  bool _userRequestedConnection = false;
+  bool _suppressTransientConnectionErrorTone = false;
+  bool _skipNextManualDisconnectTone = false;
   static const _scanInterval = Duration(seconds: 10);
   static const _scanQueryTimeoutMs = 4000;
   static const _scanActivityVibrationMs = 200;
@@ -422,37 +425,22 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     await toggleConnection();
   }
 
-  void previousProfile() {
-    if (!state.canSwitchProfiles) {
-      if (_rejectIfConnected()) {
-        return;
-      }
-      return;
-    }
-    final next = (state.selectedServerIndex - 1 + state.profiles.length) %
-        state.profiles.length;
-    if (next == state.selectedServerIndex) {
-      return;
-    }
-    UiSignalPlayer.playSwitch(_session);
-    selectProfile(next);
-    unawaited(_reconnectIfUserRequestedConnection());
-  }
+  void previousProfile() => moveSelectedServer(-1);
 
-  void nextProfile() {
-    if (!state.canSwitchProfiles) {
-      if (_rejectIfConnected()) {
-        return;
-      }
+  void nextProfile() => moveSelectedServer(1);
+
+  void moveSelectedServer(int offset) {
+    if (!state.canNavigateProfiles || state.profiles.isEmpty) {
       return;
     }
-    final next = (state.selectedServerIndex + 1) % state.profiles.length;
-    if (next == state.selectedServerIndex) {
+    final target = (state.selectedServerIndex + offset)
+        .clamp(0, state.profiles.length - 1);
+    if (target == state.selectedServerIndex) {
       return;
     }
+    _applySelectedProfile(target);
     UiSignalPlayer.playSwitch(_session);
-    selectProfile(next);
-    unawaited(_reconnectIfUserRequestedConnection());
+    unawaited(_reconnectToSelectedServerIfRequested());
   }
 
   Future<void> saveCurrentProfile() async {
@@ -559,16 +547,41 @@ class HomeScreenController extends Notifier<HomeScreenState> {
         if (!connected && !connecting) {
           _pttBurstGuard.reset();
           _cancelTxCountdown();
-          if (state.isConnected && !state.relayPausedForPhoneCall) {
+          if (state.isConnected &&
+              !state.relayPausedForPhoneCall &&
+              !_suppressTransientConnectionErrorTone &&
+              !_skipNextManualDisconnectTone) {
             UiSignalPlayer.playManualDisconnect(_session);
           }
-        } else if (connecting && !connected && !reconnecting && !state.isConnecting) {
+          _skipNextManualDisconnectTone = false;
+        } else if (connecting &&
+            !connected &&
+            !reconnecting &&
+            !state.isConnecting &&
+            !_suppressTransientConnectionErrorTone) {
           UiSignalPlayer.playManualConnectStart(_session);
         } else if (connected && !state.isConnected) {
           UiSignalPlayer.playConnected(_session);
         }
-        if (error != null && error.isNotEmpty) {
-          UiSignalPlayer.playConnectionError(_session);
+        if (connected) {
+          _suppressTransientConnectionErrorTone = false;
+        }
+        if (!_suppressTransientConnectionErrorTone) {
+          if (error != null && error.isNotEmpty) {
+            UiSignalPlayer.playConnectionError(_session);
+          } else if (_userRequestedConnection &&
+              state.isConnecting &&
+              !connecting &&
+              !connected &&
+              !state.relayPausedForPhoneCall) {
+            UiSignalPlayer.playConnectionError(_session);
+          } else if (_userRequestedConnection &&
+              state.isConnected &&
+              !connected &&
+              !connecting &&
+              !state.relayPausedForPhoneCall) {
+            UiSignalPlayer.playConnectionError(_session);
+          }
         }
         state = state.copyWith(
           isConnected: connected,
@@ -628,6 +641,10 @@ class HomeScreenController extends Notifier<HomeScreenState> {
             eventType == OwalkieEventType.connectionFailed ||
             eventType == OwalkieEventType.protocolError) {
           _pttBurstGuard.reset();
+        }
+        if (eventType == OwalkieEventType.protocolError) {
+          _suppressTransientConnectionErrorTone = false;
+          UiSignalPlayer.playConnectionError(_session);
         }
       case SessionUnsupportedMessage():
         state = state.copyWith(
@@ -728,8 +745,11 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     _rxVolumePreviewTimer = null;
   }
 
-  Future<void> _reconnectIfUserRequestedConnection() async {
-    if (!state.isConnected && !state.isConnecting && !state.relayPausedForPhoneCall) {
+  Future<void> _reconnectToSelectedServerIfRequested() async {
+    if (!_userRequestedConnection &&
+        !state.isConnected &&
+        !state.isConnecting &&
+        !state.relayPausedForPhoneCall) {
       return;
     }
     await _ensureSession();
@@ -741,14 +761,30 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (profile.host.trim().isEmpty) {
       return;
     }
-    session.disconnect();
-    await Future<void>.delayed(const Duration(milliseconds: 150));
-    session.connect(
+    _suppressTransientConnectionErrorTone = true;
+    session.switchServer(
       host: profile.host.trim(),
       port: profile.port,
       channel: profile.channel,
       repeater: profile.repeater,
     );
+    state = state.copyWith(
+      isConnected: false,
+      isConnecting: true,
+      isReconnecting: false,
+      relayPausedForPhoneCall: false,
+      protocolIncompatible: false,
+      udpReady: false,
+      txActive: false,
+      isReceivingBroadcast: false,
+      callActive: false,
+      connectionChip: AppStrings.connectionStateConnecting,
+      signalChip: AppStrings.signalQualityDefault,
+      clearUplinkSignal: true,
+      clearError: true,
+    );
+    unawaited(_syncSessionForeground(connecting: true, connected: false));
+    unawaited(_syncPttMediaSession());
   }
 
   void startScanning(ScanMode mode) {
@@ -854,7 +890,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
         }
         final idx = foundIndex.clamp(0, state.profiles.length - 1);
         if (state.profiles.isNotEmpty && idx != state.selectedServerIndex) {
-          selectProfile(idx);
+          _applySelectedProfile(idx);
         }
         state = state.copyWith(
           draftProfile: profile,
@@ -888,6 +924,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       channel: profile.channel,
       repeater: profile.repeater,
     );
+    _userRequestedConnection = true;
   }
 
   void setRepeaterMode(bool enabled) {
@@ -942,39 +979,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (state.profiles.length <= 1 || step == 0) {
       return;
     }
-    UiSignalPlayer.playSwitch(_session);
-    final wasActive =
-        state.isConnected || state.isConnecting || state.relayPausedForPhoneCall;
-    if (wasActive) {
-      _session?.disconnect();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-    }
-    final nextIndex =
-        (state.selectedServerIndex + step + state.profiles.length) %
-            state.profiles.length;
-    final profile = state.profiles[nextIndex];
-    await _store.setLastSelectedName(profile.name);
-    state = state.copyWith(
-      selectedServerIndex: nextIndex,
-      draftProfile: profile,
-      relayPausedForPhoneCall: false,
-      clearError: true,
-      clearStatusMessage: true,
-    );
-    if (!wasActive) {
-      return;
-    }
-    await _ensureSession();
-    final session = _session;
-    if (session == null) {
-      return;
-    }
-    session.connect(
-      host: profile.host.trim(),
-      port: profile.port,
-      channel: profile.channel,
-      repeater: profile.repeater,
-    );
+    moveSelectedServer(step);
   }
 
   void togglePttLatch() {
@@ -1020,6 +1025,10 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     UiSignalPlayer.playSwitch(session);
     if (state.isConnected || state.isConnecting || state.relayPausedForPhoneCall) {
+      _userRequestedConnection = false;
+      _suppressTransientConnectionErrorTone = false;
+      _skipNextManualDisconnectTone = true;
+      UiSignalPlayer.playManualDisconnect(session);
       state = state.copyWith(relayPausedForPhoneCall: false);
       session.disconnect();
       return;
@@ -1035,6 +1044,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       );
       return;
     }
+    _userRequestedConnection = true;
     session.connect(
       host: p.host.trim(),
       port: p.port,

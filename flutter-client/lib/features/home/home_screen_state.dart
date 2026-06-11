@@ -71,6 +71,16 @@ class HomeScreenState {
   bool get canSelectProfiles =>
       !isConnected && !isConnecting && profiles.isNotEmpty;
 
+  /// Prev/next server buttons (Kotlin [updateServerNavigationButtons]).
+  bool get canNavigateProfiles =>
+      !connectionDetailsExpanded && profiles.isNotEmpty;
+
+  bool get hasPreviousProfile =>
+      canNavigateProfiles && selectedServerIndex > 0;
+
+  bool get hasNextProfile =>
+      canNavigateProfiles && selectedServerIndex < profiles.length - 1;
+
   bool get canSwitchProfiles => canSelectProfiles && profiles.length > 1;
 
   bool get parallelTxActive => txActive && isReceivingBroadcast;

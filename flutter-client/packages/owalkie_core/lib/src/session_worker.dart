@@ -80,6 +80,8 @@ class _SessionWorker {
     switch (message) {
       case SessionConnectCommand():
         _startConnect(message);
+      case SessionSwitchServerCommand():
+        _switchServer(message);
       case SessionDisconnectCommand():
         _disconnect();
       case SessionPttDownCommand():
@@ -236,6 +238,38 @@ class _SessionWorker {
     }
     _sessionId = id;
     _publishState(connected: false, connecting: true);
+    _ensureClientReconnectLoop();
+  }
+
+  void _switchServer(SessionSwitchServerCommand cmd) {
+    _lastConnect = SessionConnectCommand(
+      host: cmd.host,
+      port: cmd.port,
+      channel: cmd.channel,
+      repeater: cmd.repeater,
+    );
+    _desiredConnected = true;
+    _relayPausedExternally = false;
+    _localTxActive = false;
+    _pendingNetworkRecover = false;
+    final id = _sessionId;
+    if (id != 0) {
+      _relay.pttUp(id);
+      _relay.disconnect(id);
+    }
+    _sessionId = 0;
+    final newId = _relay.prepare(
+      host: cmd.host,
+      port: cmd.port,
+      channel: cmd.channel,
+      repeater: cmd.repeater,
+    );
+    if (newId == 0) {
+      _publishState(connected: false, connecting: false, error: 'prepare failed');
+      return;
+    }
+    _sessionId = newId;
+    _publishState(connected: false, connecting: true, reconnecting: false);
     _ensureClientReconnectLoop();
   }
 

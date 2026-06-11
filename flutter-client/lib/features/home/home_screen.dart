@@ -281,12 +281,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               unawaited(controller.connectToSelectedProfile());
                             }
                           : null,
-                      onPrevious: state.canSwitchProfiles
+                      onPrevious: state.canNavigateProfiles
                           ? controller.previousProfile
                           : null,
-                      onNext: state.canSwitchProfiles
+                      hasPrevious: state.hasPreviousProfile,
+                      onNext: state.canNavigateProfiles
                           ? controller.nextProfile
                           : null,
+                      hasNext: state.hasNextProfile,
                     ),
                   ],
                   if (state.connectionDetailsExpanded) ...[
@@ -556,7 +558,9 @@ class _CollapsedActions extends StatelessWidget {
     required this.canConnect,
     required this.onConnect,
     required this.onPrevious,
+    required this.hasPrevious,
     required this.onNext,
+    required this.hasNext,
   });
 
   final bool scanActive;
@@ -565,7 +569,9 @@ class _CollapsedActions extends StatelessWidget {
   final bool canConnect;
   final VoidCallback? onConnect;
   final VoidCallback? onPrevious;
+  final bool hasPrevious;
   final VoidCallback? onNext;
+  final bool hasNext;
 
   @override
   Widget build(BuildContext context) {
@@ -573,7 +579,7 @@ class _CollapsedActions extends StatelessWidget {
       children: [
         Expanded(
           child: OutlinedButton(
-            onPressed: onPrevious,
+            onPressed: onPrevious != null && hasPrevious ? onPrevious : null,
             child: Text(AppStrings.previousServer),
           ),
         ),
@@ -588,7 +594,7 @@ class _CollapsedActions extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(
           child: OutlinedButton(
-            onPressed: onNext,
+            onPressed: onNext != null && hasNext ? onNext : null,
             child: Text(AppStrings.nextServer),
           ),
         ),

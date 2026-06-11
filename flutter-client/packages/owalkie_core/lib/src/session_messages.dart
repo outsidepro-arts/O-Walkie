@@ -17,6 +17,21 @@ final class SessionConnectCommand extends SessionCommand {
   final bool repeater;
 }
 
+/// Hot-swap relay profile while keeping user connect intent (Kotlin ACTION_SWITCH_SERVER).
+final class SessionSwitchServerCommand extends SessionCommand {
+  const SessionSwitchServerCommand({
+    required this.host,
+    required this.port,
+    required this.channel,
+    this.repeater = false,
+  });
+
+  final String host;
+  final int port;
+  final String channel;
+  final bool repeater;
+}
+
 final class SessionDisconnectCommand extends SessionCommand {
   const SessionDisconnectCommand();
 }
