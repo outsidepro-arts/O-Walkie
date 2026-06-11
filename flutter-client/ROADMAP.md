@@ -226,24 +226,25 @@ Note: no “screen PTT toggle mode” checkbox — see [PTT policy](#ptt-input-p
 - [x] Tasker intents: PTT, connect, disconnect, next/prev profile (Android `ExternalControlReceiver`)
 - [x] Roger/Call pattern pickers open editor
 - [x] Pause-on-call toggle (Phase 4c; device-tested)
-- [ ] Tasker device verification on Pixel
+- [x] Tasker device verification on Pixel
 
 ---
 
-## Phase 7 — iOS
+## Phase 7 — iOS *(in progress)*
 
 | Task | Approach |
 |------|----------|
-| Full session (Boost/Opus) | vcpkg iOS + CMake |
+| Full session (Boost/Opus) | vcpkg iOS + CMake (`ios/scripts/build-ios-deps.sh`) |
 | Background audio | `UIBackgroundModes: audio` |
-| Deep links | `app_links` |
-| Media keys | `audio_service` (same OS limits) |
+| Deep links | `app_links` + `CFBundleURLTypes` |
+| Media keys | OS-limited; deferred (`audio_service` optional) |
 
 ### Acceptance tests (Phase 7)
 
-- [ ] iPhone: full connect + PTT + RX (not utilities-only)
+- [ ] iPhone: full connect + PTT + RX (after `build-ios-deps.sh` on macOS)
 - [ ] Background audio: screen off, TX/RX still work with relay
-- [ ] Deep link opens app with profile
+- [x] Deep link scheme registered (`owalkie://` in Info.plist; Dart handler from Phase 5)
+- [ ] Device verification on iPhone
 
 ---
 

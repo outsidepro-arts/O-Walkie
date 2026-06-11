@@ -10,6 +10,13 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --simulator) SIMULATOR=true; shift ;;
     --release) CONFIG=Release; shift ;;
+    --full-session)
+      export OWALKIE_FLUTTER_FULL_SESSION=ON
+      if [[ -z "${VCPKG_ROOT:-}" ]]; then
+        echo "warning: --full-session requires VCPKG_ROOT (see ios/scripts/build-ios-deps.sh)" >&2
+      fi
+      shift
+      ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done

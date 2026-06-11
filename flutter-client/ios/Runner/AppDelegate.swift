@@ -30,7 +30,8 @@ import UIKit
       case "requestMicrophonePermission":
         self.requestMicrophonePermission(result: result)
       case "prepareAudioSession":
-        self.prepareAudioSession()
+        let bluetooth = (call.arguments as? [String: Any])?["bluetoothHeadset"] as? Bool ?? false
+        self.prepareAudioSession(bluetoothHeadset: bluetooth)
         result(true)
       case "releaseAudioSession":
         self.releaseAudioSession()
@@ -63,9 +64,13 @@ import UIKit
     }
   }
 
-  private func prepareAudioSession() {
+  private func prepareAudioSession(bluetoothHeadset: Bool) {
     let session = AVAudioSession.sharedInstance()
-    try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+    var options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth]
+    if bluetoothHeadset {
+      options.insert(.allowBluetoothA2DP)
+    }
+    try? session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
     try? session.setActive(true)
   }
 
