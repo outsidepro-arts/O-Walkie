@@ -190,42 +190,45 @@ class _PttGestureButtonState extends State<PttGestureButton> {
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
-      child: Shortcuts(
-        shortcuts: {
-          const SingleActivator(LogicalKeyboardKey.space): const _PttKeyboardIntent(),
-        },
-        child: Actions(
-          actions: {
-            _PttKeyboardIntent: CallbackAction<_PttKeyboardIntent>(
-              onInvoke: (_) {
-                _onKeyboardToggle();
-                return null;
-              },
-            ),
+    return FocusableActionDetector(
+      enabled: widget.enabled,
+      mouseCursor: widget.enabled
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.space): _PttKeyboardIntent(),
+        SingleActivator(LogicalKeyboardKey.enter): _PttKeyboardIntent(),
+        SingleActivator(LogicalKeyboardKey.numpadEnter): _PttKeyboardIntent(),
+      },
+      actions: {
+        _PttKeyboardIntent: CallbackAction<_PttKeyboardIntent>(
+          onInvoke: (_) {
+            _onKeyboardToggle();
+            return null;
           },
-          child: Semantics(
-            button: true,
-            enabled: widget.enabled,
-            label: _semanticsLabel(),
-            excludeSemantics: true,
-            onDidGainAccessibilityFocus: _onDidGainAccessibilityFocus,
-            onDidLoseAccessibilityFocus: _onDidLoseAccessibilityFocus,
-            customSemanticsActions: widget.enabled
-                ? {
-                    CustomSemanticsAction(label: A11yStrings.pttStartAction):
-                        widget.onPttDown,
-                    CustomSemanticsAction(label: A11yStrings.pttStopAction):
-                        widget.onPttUp,
-                  }
-                : const {},
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapDown: widget.enabled ? _onTapDown : null,
-              onTapUp: widget.enabled ? _onTapUp : null,
-              onTapCancel: widget.enabled ? _onTapCancel : null,
-              child: MinTouchTarget(child: widget.child),
-            ),
+        ),
+      },
+      child: Semantics(
+        button: true,
+        enabled: widget.enabled,
+        label: _semanticsLabel(),
+        onDidGainAccessibilityFocus: _onDidGainAccessibilityFocus,
+        onDidLoseAccessibilityFocus: _onDidLoseAccessibilityFocus,
+        customSemanticsActions: widget.enabled
+            ? {
+                CustomSemanticsAction(label: A11yStrings.pttStartAction):
+                    widget.onPttDown,
+                CustomSemanticsAction(label: A11yStrings.pttStopAction):
+                    widget.onPttUp,
+              }
+            : const {},
+        child: ExcludeSemantics(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: widget.enabled ? _onTapDown : null,
+            onTapUp: widget.enabled ? _onTapUp : null,
+            onTapCancel: widget.enabled ? _onTapCancel : null,
+            child: MinTouchTarget(child: widget.child),
           ),
         ),
       ),
