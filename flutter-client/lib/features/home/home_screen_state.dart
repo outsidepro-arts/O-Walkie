@@ -12,6 +12,7 @@ class HomeScreenState {
     this.isConnecting = false,
     this.isConnected = false,
     this.isReconnecting = false,
+    this.relayPausedForPhoneCall = false,
     this.txActive = false,
     this.pttServerLocked = false,
     this.pttLockSec = 0,
@@ -38,6 +39,7 @@ class HomeScreenState {
   final bool isConnecting;
   final bool isConnected;
   final bool isReconnecting;
+  final bool relayPausedForPhoneCall;
   final bool txActive;
   final bool pttServerLocked;
   final int pttLockSec;
@@ -64,6 +66,9 @@ class HomeScreenState {
   bool get parallelTxActive => txActive && isReceivingBroadcast;
 
   String get connectionDisplayChip {
+    if (relayPausedForPhoneCall) {
+      return AppStrings.connectionStatePausedPhoneCall;
+    }
     if (callActive) {
       return AppStrings.connectionStateCalling;
     }
@@ -83,6 +88,7 @@ class HomeScreenState {
     bool? isConnecting,
     bool? isConnected,
     bool? isReconnecting,
+    bool? relayPausedForPhoneCall,
     bool? txActive,
     bool? pttServerLocked,
     int? pttLockSec,
@@ -112,6 +118,8 @@ class HomeScreenState {
       isConnecting: isConnecting ?? this.isConnecting,
       isConnected: isConnected ?? this.isConnected,
       isReconnecting: isReconnecting ?? this.isReconnecting,
+      relayPausedForPhoneCall:
+          relayPausedForPhoneCall ?? this.relayPausedForPhoneCall,
       txActive: txActive ?? this.txActive,
       pttServerLocked: pttServerLocked ?? this.pttServerLocked,
       pttLockSec: pttLockSec ?? this.pttLockSec,

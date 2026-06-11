@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:owalkie_core/owalkie_core.dart';
 
+import '../../data/audio_settings_store.dart';
 import '../../data/server_store.dart';
 import '../../data/signal_pattern_store.dart';
 import '../../domain/profile_save.dart';
@@ -11,6 +12,7 @@ import '../../domain/ptt_burst_guard.dart';
 import '../../domain/server_profile.dart';
 import '../../domain/signal_point_codec.dart';
 import '../../l10n/app_strings.dart';
+import '../../platform/audio_interruption_manager.dart';
 import '../../platform/haptics.dart';
 import '../../platform/native_platform.dart';
 import '../../platform/screen_wake.dart';
@@ -32,8 +34,13 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   bool _parallelTxVibrating = false;
   bool _sessionForegroundActive = false;
   bool _sessionNetworkMonitoring = false;
+  AudioInterruptionManager? _audioInterruption;
 
   ServerStore get _store => ref.read(serverStoreProvider);
+  PhoneCallPauseStore get _phoneCallPauseStore =>
+      ref.read(phoneCallPauseStoreProvider);
+  BluetoothHeadsetStore get _bluetoothHeadsetStore =>
+      ref.read(bluetoothHeadsetStoreProvider);
   RogerPatternStore get _rogerStore => ref.read(rogerPatternStoreProvider);
   CallingPatternStore get _callingStore => ref.read(callingPatternStoreProvider);
 
@@ -95,6 +102,56 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   Future<void> _bootstrap() async {
     await _loadProfiles();
     await _ensureSession();
+    _audioInterruption ??= AudioInterruptionManager(
+      onInterruptBegin: _pauseRelayForPhoneCall,
+      onInterruptEnd: _resumeRelayAfterPhoneCall,
+    );
+    await _audioInterruption!.start();
+  }
+
+  Future<void> _applyVoiceAudioRoute() async {
+    if (!NativePlatform.isMobile) {
+      return;
+    }
+    await NativePlatform.prepareAudioSession(
+      bluetoothHeadset: _bluetoothHeadsetStore.isEnabled(),
+    );
+  }
+
+  void _pauseRelayForPhoneCall() {
+    if (!_phoneCallPauseStore.isEnabled()) {
+      return;
+    }
+    if (state.relayPausedForPhoneCall) {
+      return;
+    }
+    if (!state.isConnected && !state.isConnecting) {
+      return;
+    }
+    state = state.copyWith(
+      relayPausedForPhoneCall: true,
+      isConnected: false,
+      isConnecting: false,
+      isReconnecting: false,
+      txActive: false,
+      connectionChip: AppStrings.connectionStatePausedPhoneCall,
+    );
+    if (NativePlatform.isMobile) {
+      unawaited(NativePlatform.releaseAudioSession());
+    }
+    _session?.pauseRelay();
+  }
+
+  void _resumeRelayAfterPhoneCall() {
+    if (!state.relayPausedForPhoneCall) {
+      return;
+    }
+    state = state.copyWith(
+      relayPausedForPhoneCall: false,
+      connectionChip: AppStrings.connectionStateConnecting,
+      isConnecting: true,
+    );
+    _session?.resumeRelay();
   }
 
   Future<void> _loadProfiles() async {
@@ -129,7 +186,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   bool _rejectIfConnected() {
-    if (state.isConnected || state.isConnecting) {
+    if (state.isConnected ||
+        state.isConnecting ||
+        state.relayPausedForPhoneCall) {
       state = state.copyWith(
         lastError: AppStrings.cannotSwitchProfileConnected,
       );
@@ -269,14 +328,17 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           :final error,
         ):
         if (connected && NativePlatform.isMobile) {
-          unawaited(NativePlatform.prepareAudioSession());
-        } else if (!connected && !connecting && NativePlatform.isMobile) {
+          unawaited(_applyVoiceAudioRoute());
+        } else if (!connected &&
+            !connecting &&
+            NativePlatform.isMobile &&
+            !state.relayPausedForPhoneCall) {
           unawaited(NativePlatform.releaseAudioSession());
         }
         if (!connected && !connecting) {
           _pttBurstGuard.reset();
           _cancelTxCountdown();
-          if (state.isConnected) {
+          if (state.isConnected && !state.relayPausedForPhoneCall) {
             UiSignalPlayer.playManualDisconnect(_session);
           }
         } else if (connecting && !connected && !reconnecting && !state.isConnecting) {
@@ -471,7 +533,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (session == null || !state.sessionSupported) {
       return;
     }
-    if (state.isConnected || state.isConnecting) {
+    if (state.isConnected || state.isConnecting || state.relayPausedForPhoneCall) {
+      state = state.copyWith(relayPausedForPhoneCall: false);
       session.disconnect();
       return;
     }
@@ -566,6 +629,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     unawaited(ScreenWake.setTransmitting(false));
     _platformSub?.cancel();
     _platformSub = null;
+    unawaited(_audioInterruption?.stop());
+    _audioInterruption = null;
     if (_sessionNetworkMonitoring) {
       _sessionNetworkMonitoring = false;
       unawaited(NativePlatform.stopSessionNetworkMonitoring());

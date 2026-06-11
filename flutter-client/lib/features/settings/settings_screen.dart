@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../data/audio_settings_store.dart';
 import '../../data/orientation_store.dart';
+import '../../platform/native_platform.dart';
 import '../../data/signal_pattern_store.dart';
 import '../../domain/signal_pattern.dart';
 import '../../l10n/app_strings.dart';
@@ -25,6 +27,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   List<SignalPattern> _callingPatterns = [];
   String? _selectedRogerId;
   String? _selectedCallingId;
+  bool _pauseDuringPhoneCall = true;
+  bool _useBluetoothHeadset = false;
 
   @override
   void initState() {
@@ -37,6 +41,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final orientation = await ref.read(orientationStoreProvider).load();
     final rogerStore = ref.read(rogerPatternStoreProvider);
     final callingStore = ref.read(callingPatternStoreProvider);
+    final phoneCallPause = ref.read(phoneCallPauseStoreProvider);
+    final bluetoothHeadset = ref.read(bluetoothHeadsetStoreProvider);
     if (!mounted) {
       return;
     }
@@ -47,7 +53,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _callingPatterns = callingStore.getAllPatterns();
       _selectedRogerId = rogerStore.getSelectedPattern().id;
       _selectedCallingId = callingStore.getSelectedPattern().id;
+      _pauseDuringPhoneCall = phoneCallPause.isEnabled();
+      _useBluetoothHeadset = bluetoothHeadset.isEnabled();
     });
+  }
+
+  Future<void> _setPauseDuringPhoneCall(bool? enabled) async {
+    if (enabled == null) {
+      return;
+    }
+    await ref.read(phoneCallPauseStoreProvider).setEnabled(enabled);
+    setState(() => _pauseDuringPhoneCall = enabled);
+  }
+
+  Future<void> _setUseBluetoothHeadset(bool? enabled) async {
+    if (enabled == null) {
+      return;
+    }
+    await ref.read(bluetoothHeadsetStoreProvider).setEnabled(enabled);
+    setState(() => _useBluetoothHeadset = enabled);
+    if (NativePlatform.isMobile) {
+      await NativePlatform.prepareAudioSession(bluetoothHeadset: enabled);
+    }
   }
 
   Future<void> _reloadPatterns() async {
@@ -119,6 +146,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 )
                 .toList(),
             onChanged: _setOrientation,
+          ),
+          const SizedBox(height: 24),
+          Text(
+            AppStrings.settingsAudio,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          SwitchListTile(
+            title: const Text(AppStrings.settingsPauseDuringPhoneCall),
+            value: _pauseDuringPhoneCall,
+            onChanged: _setPauseDuringPhoneCall,
+          ),
+          SwitchListTile(
+            title: const Text(AppStrings.settingsUseBluetoothHeadset),
+            value: _useBluetoothHeadset,
+            onChanged: _setUseBluetoothHeadset,
           ),
           const SizedBox(height: 24),
           Text(

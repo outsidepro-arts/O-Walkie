@@ -124,6 +124,10 @@ class SessionService {
     _workerPort?.send(const SessionNetworkHandoffCommand());
   }
 
+  void pauseRelay() => _workerPort?.send(const SessionPauseRelayCommand());
+
+  void resumeRelay() => _workerPort?.send(const SessionResumeRelayCommand());
+
   void reportSignal({required int mode, required int value}) {
     _workerPort?.send(SessionReportSignalCommand(mode: mode, value: value));
   }

@@ -3,7 +3,6 @@ package ru.outsidepro_arts.owalkie.flutter
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -43,15 +42,12 @@ class MainActivity : FlutterActivity() {
                 "hasNotificationPermission" -> result.success(hasNotificationPermission())
                 "requestNotificationPermission" -> requestNotificationPermission(result)
                 "prepareAudioSession" -> {
-                    val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-                    audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-                    @Suppress("DEPRECATION")
-                    audioManager.isSpeakerphoneOn = true
+                    val bluetooth = call.argument<Boolean>("bluetoothHeadset") ?: false
+                    AudioRouteHelper.applyVoiceAudioProfile(this, bluetooth)
                     result.success(true)
                 }
                 "releaseAudioSession" -> {
-                    val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-                    audioManager.mode = AudioManager.MODE_NORMAL
+                    AudioRouteHelper.restoreMediaAudioProfile(this)
                     result.success(null)
                 }
                 "startSessionForeground" -> {

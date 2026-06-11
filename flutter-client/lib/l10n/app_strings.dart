@@ -7,6 +7,7 @@ abstract final class AppStrings {
   static const connectionStateDisconnected = 'Disconnected';
   static const connectionStateConnecting = 'Connecting…';
   static const connectionStateReconnecting = 'Reconnecting…';
+  static const connectionStatePausedPhoneCall = 'Paused (phone call)';
   static const connectionStateConnected = 'Connected';
   static const connectionStateParallelTx = 'Parallel transmission!';
   static const connectionStateCalling = 'Calling…';
@@ -48,6 +49,9 @@ abstract final class AppStrings {
   static const callSignal = 'Call';
   static const coreVersionFooter = 'Core';
   static const settingsTitle = 'Settings';
+  static const settingsAudio = 'Audio';
+  static const settingsPauseDuringPhoneCall = 'Pause relay during phone call';
+  static const settingsUseBluetoothHeadset = 'Use Bluetooth headset';
   static const settingsDisplay = 'Display';
   static const settingsOrientation = 'Screen orientation';
   static const settingsAbout = 'About';

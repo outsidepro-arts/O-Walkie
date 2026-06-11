@@ -110,6 +110,14 @@ final class SessionNetworkHandoffCommand extends SessionCommand {
   const SessionNetworkHandoffCommand();
 }
 
+final class SessionPauseRelayCommand extends SessionCommand {
+  const SessionPauseRelayCommand();
+}
+
+final class SessionResumeRelayCommand extends SessionCommand {
+  const SessionResumeRelayCommand();
+}
+
 /// Messages session worker → main isolate.
 sealed class SessionWorkerMessage {
   const SessionWorkerMessage();

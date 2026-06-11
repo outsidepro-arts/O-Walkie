@@ -72,11 +72,13 @@ abstract final class NativePlatform {
     return requestNotificationPermission();
   }
 
-  static Future<void> prepareAudioSession() async {
+  static Future<void> prepareAudioSession({bool bluetoothHeadset = false}) async {
     if (!isMobile) {
       return;
     }
-    await _channel.invokeMethod<void>('prepareAudioSession');
+    await _channel.invokeMethod<void>('prepareAudioSession', {
+      'bluetoothHeadset': bluetoothHeadset,
+    });
   }
 
   static Future<void> releaseAudioSession() async {

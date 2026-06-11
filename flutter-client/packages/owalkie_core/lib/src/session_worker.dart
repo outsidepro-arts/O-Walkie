@@ -33,6 +33,8 @@ class _SessionWorker {
   bool _hadConnected = false;
   bool _localTxActive = false;
   bool _pendingNetworkRecover = false;
+  bool _relayPausedExternally = false;
+  SessionConnectCommand? _lastConnect;
   int _lastRecoverAtMs = 0;
   bool _publishedConnected = false;
   bool _publishedConnecting = false;
@@ -103,7 +105,58 @@ class _SessionWorker {
         _relay.bindProcessNetwork(networkHandle);
       case SessionNetworkHandoffCommand():
         _recoverAfterNetworkHandoff();
+      case SessionPauseRelayCommand():
+        _pauseRelayForExternalReason();
+      case SessionResumeRelayCommand():
+        _resumeRelayAfterExternalPause();
     }
+  }
+
+  void _pauseRelayForExternalReason() {
+    if (_relayPausedExternally || !_desiredConnected) {
+      return;
+    }
+    _relayPausedExternally = true;
+    final id = _sessionId;
+    if (id != 0) {
+      _relay.pttUp(id);
+      _relay.disconnect(id);
+      _sessionId = 0;
+    }
+    _localTxActive = false;
+    _pendingNetworkRecover = false;
+    _publishState(connected: false, connecting: false);
+  }
+
+  void _resumeRelayAfterExternalPause() {
+    if (!_relayPausedExternally) {
+      return;
+    }
+    _relayPausedExternally = false;
+    if (!_desiredConnected) {
+      return;
+    }
+    final cmd = _lastConnect;
+    if (cmd == null) {
+      return;
+    }
+    if (_sessionId != 0) {
+      _relay.disconnect(_sessionId);
+      _sessionId = 0;
+    }
+    final id = _relay.prepare(
+      host: cmd.host,
+      port: cmd.port,
+      channel: cmd.channel,
+      repeater: cmd.repeater,
+    );
+    if (id == 0) {
+      _publishState(connected: false, connecting: false, error: 'prepare failed');
+      return;
+    }
+    _sessionId = id;
+    _publishState(connected: false, connecting: true);
+    _ensureClientReconnectLoop();
   }
 
   void _punchNat() {
@@ -143,7 +196,9 @@ class _SessionWorker {
   }
 
   void _startConnect(SessionConnectCommand cmd) {
+    _lastConnect = cmd;
     _desiredConnected = true;
+    _relayPausedExternally = false;
     if (_sessionId != 0 && _relay.sessionValid(_sessionId)) {
       if (_relay.sessionReady(_sessionId)) {
         _publishState(connected: true, connecting: false);
@@ -181,7 +236,7 @@ class _SessionWorker {
 
   Future<void> _clientReconnectLoop() async {
     var backoffMs = _initialBackoffMs;
-    while (_desiredConnected) {
+    while (_desiredConnected && !_relayPausedExternally) {
       if (_sessionId == 0 || !_relay.sessionValid(_sessionId)) {
         await Future<void>.delayed(const Duration(milliseconds: 500));
         continue;
@@ -218,6 +273,7 @@ class _SessionWorker {
   void _disconnect() {
     _desiredConnected = false;
     _hadConnected = false;
+    _relayPausedExternally = false;
     _localTxActive = false;
     _pendingNetworkRecover = false;
     final id = _sessionId;

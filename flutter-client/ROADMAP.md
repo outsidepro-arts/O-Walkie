@@ -140,7 +140,7 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 ---
 
-## Phase 4 — Android: background, network, audio policy *(in progress — 4c audio)*
+## Phase 4 — Android: background, network, audio policy *(in progress — 4d media keys)*
 
 ### 4a. Foreground service + notification *(done)*
 
@@ -164,14 +164,14 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 **Implementation:** persistent client reconnect loop, handle-based handoff debouncing, `SessionNetworkController` logging (`OwalkieFlutterNet`).
 
-### 4c. Audio routing and interruptions *(in progress)*
+### 4c. Audio routing and interruptions *(implemented — device test pending)*
 
 | Task | Solution |
 |------|----------|
-| `MODE_IN_COMMUNICATION` | Existing `MainActivity.kt` channel |
-| BT headset route | [`audio_session`](https://pub.dev/packages/audio_session) + optional Android channel |
-| Pause relay on phone call | [`audio_session`](https://pub.dev/packages/audio_session) `interruptionEventStream` (prefer over `READ_PHONE_STATE`) |
-| Mic source, warm mic, disable NS/AGC | **Custom** native audio layer |
+| `MODE_IN_COMMUNICATION` / BT route | `AudioRouteHelper.kt` + `prepareAudioSession(bluetoothHeadset:)` |
+| Pause relay on phone call | [`audio_session`](https://pub.dev/packages/audio_session) `interruptionEventStream` + `SessionPauseRelayCommand` |
+| Settings toggles | Pause during call (default on), Bluetooth headset |
+| Mic source, warm mic, disable NS/AGC | **Deferred** — custom native audio layer (Kotlin parity) |
 
 ### 4d. Media keys (PTT toggle)
 
