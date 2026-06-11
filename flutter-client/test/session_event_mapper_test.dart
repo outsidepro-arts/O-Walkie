@@ -70,6 +70,18 @@ void main() {
         info: 'true',
       );
       expect(next.signalChip, AppStrings.signalRxBusy);
+      expect(next.isReceivingBroadcast, isTrue);
+    });
+
+    test('parallel tx when transmitting and receiving', () {
+      const receiving = HomeScreenState(isReceivingBroadcast: true);
+      expect(receiving.parallelTxActive, isFalse);
+      final parallel = receiving.copyWith(txActive: true);
+      expect(parallel.parallelTxActive, isTrue);
+      expect(
+        parallel.connectionDisplayChip,
+        AppStrings.connectionStateParallelTx,
+      );
     });
   });
 

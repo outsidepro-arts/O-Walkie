@@ -103,7 +103,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ? A11yStrings.disconnectHint
             : A11yStrings.connectHint);
 
-    _maybeAnnounceConnection(state.connectionChip);
+    final connectionChip = state.connectionDisplayChip;
+    _maybeAnnounceConnection(connectionChip);
 
     return Semantics(
       label: A11yStrings.mainScrollHint,
@@ -116,10 +117,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const _HeaderRow(),
+                  _HeaderRow(
+                    repeaterEnabled: state.draftProfile.repeater,
+                    onRepeaterToggled: controller.setRepeaterMode,
+                  ),
                   const SizedBox(height: 8),
                   _StatusChips(
-                    connection: state.connectionChip,
+                    connection: connectionChip,
                     signal: state.signalChip,
                   ),
                   if (state.statusInfo != null) ...[
@@ -336,7 +340,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 }
 
 class _HeaderRow extends StatelessWidget {
-  const _HeaderRow();
+  const _HeaderRow({
+    required this.repeaterEnabled,
+    required this.onRepeaterToggled,
+  });
+
+  final bool repeaterEnabled;
+  final ValueChanged<bool> onRepeaterToggled;
 
   @override
   Widget build(BuildContext context) {
@@ -359,11 +369,18 @@ class _HeaderRow extends StatelessWidget {
           hint: A11yStrings.menuMoreHint,
           child: PopupMenuButton<String>(
             onSelected: (value) {
-              if (value == 'settings') {
+              if (value == 'repeater') {
+                onRepeaterToggled(!repeaterEnabled);
+              } else if (value == 'settings') {
                 context.push('/settings');
               }
             },
             itemBuilder: (context) => [
+              CheckedPopupMenuItem(
+                value: 'repeater',
+                checked: repeaterEnabled,
+                child: const Text(AppStrings.menuRepeaterMode),
+              ),
               const PopupMenuItem(
                 value: 'settings',
                 child: Text(AppStrings.menuSettings),

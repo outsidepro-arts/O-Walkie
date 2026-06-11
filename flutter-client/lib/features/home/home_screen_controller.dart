@@ -6,9 +6,12 @@ import 'package:owalkie_core/owalkie_core.dart';
 
 import '../../data/server_store.dart';
 import '../../domain/profile_save.dart';
+import '../../domain/ptt_burst_guard.dart';
 import '../../domain/server_profile.dart';
 import '../../l10n/app_strings.dart';
+import '../../platform/haptics.dart';
 import '../../platform/native_platform.dart';
+import '../../platform/screen_wake.dart';
 import 'home_screen_state.dart';
 import 'session_event_mapper.dart';
 
@@ -20,6 +23,9 @@ final homeScreenControllerProvider =
 class HomeScreenController extends Notifier<HomeScreenState> {
   SessionService? _session;
   StreamSubscription<SessionWorkerMessage>? _sessionSub;
+  final PttBurstGuard _pttBurstGuard = PttBurstGuard();
+  Timer? _txCountdownTimer;
+  bool _parallelTxVibrating = false;
 
   ServerStore get _store => ref.read(serverStoreProvider);
 
@@ -187,6 +193,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void _onSessionMessage(SessionWorkerMessage message) {
+    final prev = state;
     switch (message) {
       case SessionCoreInfoMessage(:final version, :final protocolVersion):
         state = state.copyWith(
@@ -212,10 +219,16 @@ class HomeScreenController extends Notifier<HomeScreenState> {
         } else if (!connected && !connecting && NativePlatform.isMobile) {
           unawaited(NativePlatform.releaseAudioSession());
         }
+        if (!connected && !connecting) {
+          _pttBurstGuard.reset();
+          _cancelTxCountdown();
+        }
         state = state.copyWith(
           isConnected: connected,
           isConnecting: connecting,
           isReconnecting: reconnecting,
+          txActive: connected ? state.txActive : false,
+          isReceivingBroadcast: connected ? state.isReceivingBroadcast : false,
           connectionChip: connectionChipForTransport(
             connected: connected,
             connecting: connecting,
@@ -230,12 +243,28 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           txActive: active,
           lastError: resultCode != 0 ? _pttError(resultCode) : state.lastError,
         );
+        if (!active) {
+          _cancelTxCountdown();
+        }
       case SessionNativeEventMessage(:final eventType, :final info):
         state = applyNativeSessionEvent(
           state,
           eventType: eventType,
           info: info,
         );
+        if (eventType == OwalkieEventType.txCountdownStart) {
+          _startTxCountdown(int.tryParse(info) ?? 0);
+        } else if (eventType == OwalkieEventType.txStop ||
+            eventType == OwalkieEventType.disconnected ||
+            eventType == OwalkieEventType.connectionFailed ||
+            eventType == OwalkieEventType.protocolError) {
+          _cancelTxCountdown();
+        }
+        if (eventType == OwalkieEventType.disconnected ||
+            eventType == OwalkieEventType.connectionFailed ||
+            eventType == OwalkieEventType.protocolError) {
+          _pttBurstGuard.reset();
+        }
       case SessionUnsupportedMessage():
         state = state.copyWith(
           sessionSupported: false,
@@ -244,6 +273,48 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       case SessionChannelActivityResultMessage():
         break;
     }
+    _syncSideEffects(prev);
+  }
+
+  void _syncSideEffects(HomeScreenState prev) {
+    final parallel = state.parallelTxActive;
+    if (parallel != _parallelTxVibrating) {
+      _parallelTxVibrating = parallel;
+      unawaited(Haptics.parallelTxCollision(active: parallel));
+    }
+    if (prev.txActive != state.txActive) {
+      unawaited(ScreenWake.setTransmitting(state.txActive));
+    }
+  }
+
+  void _startTxCountdown(int sec) {
+    _txCountdownTimer?.cancel();
+    if (sec <= 0) {
+      return;
+    }
+    state = state.copyWith(txCountdownSec: sec);
+    unawaited(Haptics.transmitTimeoutPulse());
+    var remaining = sec;
+    _txCountdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      remaining--;
+      if (remaining <= 0 || !state.txActive) {
+        timer.cancel();
+        _txCountdownTimer = null;
+        if (state.txCountdownSec != 0) {
+          state = state.copyWith(txCountdownSec: 0);
+        }
+        return;
+      }
+      state = state.copyWith(txCountdownSec: remaining);
+      if (state.txActive) {
+        unawaited(Haptics.transmitTimeoutPulse());
+      }
+    });
+  }
+
+  void _cancelTxCountdown() {
+    _txCountdownTimer?.cancel();
+    _txCountdownTimer = null;
   }
 
   void toggleConnectionDetails() {
@@ -331,6 +402,10 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (state.txActive) {
       return;
     }
+    if (!_pttBurstGuard.onPressAttempt()) {
+      return;
+    }
+    state = state.copyWith(isReceivingBroadcast: false);
     if (NativePlatform.isMobile) {
       unawaited(_pttDownAsync());
       return;
@@ -354,9 +429,14 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       return;
     }
     _session?.pttUp();
+    _pttBurstGuard.onRelease();
   }
 
   void _dispose() {
+    _cancelTxCountdown();
+    _pttBurstGuard.reset();
+    unawaited(Haptics.parallelTxCollision(active: false));
+    unawaited(ScreenWake.setTransmitting(false));
     _sessionSub?.cancel();
     _session?.dispose();
     _session = null;

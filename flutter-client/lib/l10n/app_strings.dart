@@ -3,10 +3,12 @@
 abstract final class AppStrings {
   static const appName = 'O-Walkie';
   static const menuMore = 'More';
+  static const menuRepeaterMode = 'Repeater mode';
   static const connectionStateDisconnected = 'Disconnected';
   static const connectionStateConnecting = 'Connecting…';
   static const connectionStateReconnecting = 'Reconnecting…';
   static const connectionStateConnected = 'Connected';
+  static const connectionStateParallelTx = 'Parallel transmission!';
   static const connectionStateUnsupported = 'Session unavailable';
   static const signalQualityDefault = 'Signal: —';
   static const signalRxActive = 'RX active';

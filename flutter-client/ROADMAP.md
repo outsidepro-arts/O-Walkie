@@ -27,11 +27,11 @@ There is **no** user setting to switch the screen button to “toggle-only” (r
 | Done | Missing / stubbed |
 |------|-------------------|
 | Connect / disconnect, hybrid PTT, RX volume | Roger/Call, scan logic |
+| PTT lock, TX countdown, repeater, parallel TX, burst guard | FGS, deep links |
 | Multi-profile persistence + Settings About | Full settings (mic, Tasker) |
-| `SessionService` + isolate worker | FGS, deep links |
-| Android/iOS mic permission + audio session | FGS, notifications, deep links |
+| `SessionService` + isolate worker | |
+| Android/iOS mic permission + audio session | FGS, notifications |
 | Windows session (vcpkg) | iOS full session |
-| Basic a11y on Home | PTT lock, TX countdown, repeater |
 | | Media keys, Tasker, phone-call pause |
 
 ---
@@ -94,7 +94,7 @@ Prerequisites: relay in LAN, Android APK or Windows dist with session enabled, s
 
 ---
 
-## Phase 2 — Protocol UX
+## Phase 2 — Protocol UX *(done)*
 
 **Goal:** MainActivity + WalkieService logic at UI level (no background service yet).
 
@@ -110,11 +110,13 @@ Prerequisites: relay in LAN, Android APK or Windows dist with session enabled, s
 
 ### Acceptance tests (Phase 2)
 
-- [ ] Repeater menu toggles mode while connected (second client sees effect)
-- [ ] Parallel TX → vibration (Android device)
-- [ ] TX keeps screen on (`wakelock_plus`)
-- [ ] PTT spam guard after rapid releases
-- [ ] Latch + hold PTT still behave per policy during lock countdown / RX busy chip
+- [x] Repeater menu toggles mode while connected (second client sees effect)
+- [x] Parallel TX → vibration (Android device)
+- [x] TX keeps screen on (`wakelock_plus`)
+- [x] PTT spam guard after rapid releases
+- [x] Latch + hold PTT still behave per policy during lock countdown / RX busy chip
+
+**Implementation:** repeater in More menu, `PttBurstGuard`, `wakelock_plus` on TX, `vibration` for parallel TX + TX countdown pulse, `connectionDisplayChip` for parallel transmission.
 
 ---
 

@@ -17,6 +17,7 @@ HomeScreenState applyNativeSessionEvent(
         pttServerLocked: false,
         pttLockSec: 0,
         txCountdownSec: 0,
+        isReceivingBroadcast: false,
       );
     case OwalkieEventType.disconnected:
     case OwalkieEventType.connectionFailed:
@@ -25,6 +26,7 @@ HomeScreenState applyNativeSessionEvent(
         pttLockSec: 0,
         txCountdownSec: 0,
         txActive: false,
+        isReceivingBroadcast: false,
         lastError: info.isNotEmpty ? info : state.lastError,
       );
     case OwalkieEventType.protocolError:
@@ -33,20 +35,26 @@ HomeScreenState applyNativeSessionEvent(
         pttLockSec: 0,
         txCountdownSec: 0,
         txActive: false,
+        isReceivingBroadcast: false,
         lastError: info.isNotEmpty ? info : 'Protocol error',
       );
     case OwalkieEventType.connectionLost:
       return state.copyWith(
         txActive: false,
+        isReceivingBroadcast: false,
         statusInfo: AppStrings.connectionStateReconnecting,
       );
     case OwalkieEventType.rxBroadcastStart:
       final busy = info == 'true';
       return state.copyWith(
+        isReceivingBroadcast: true,
         signalChip: busy ? AppStrings.signalRxBusy : AppStrings.signalRxActive,
       );
     case OwalkieEventType.rxBroadcastEnd:
-      return state.copyWith(signalChip: AppStrings.signalQualityDefault);
+      return state.copyWith(
+        isReceivingBroadcast: false,
+        signalChip: AppStrings.signalQualityDefault,
+      );
     case OwalkieEventType.pttLocked:
       final sec = int.tryParse(info) ?? 0;
       return state.copyWith(
@@ -65,6 +73,7 @@ HomeScreenState applyNativeSessionEvent(
     case OwalkieEventType.txStop:
       return state.copyWith(
         txCountdownSec: 0,
+        isReceivingBroadcast: false,
         statusInfo: info.isNotEmpty ? info : null,
       );
     default:
