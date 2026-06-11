@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:owalkie_core/owalkie_core.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:vibration/vibration.dart';
 
 import '../../data/audio_device_store.dart';
 import '../../data/microphone_source_store.dart';
@@ -58,7 +57,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   bool _skipNextManualDisconnectTone = false;
   static const _scanInterval = Duration(seconds: 10);
   static const _scanQueryTimeoutMs = 4000;
-  static const _scanActivityVibrationMs = 200;
   static const _rxVolumePreviewDelay = Duration(milliseconds: 120);
 
   ServerStore get _store => ref.read(serverStoreProvider);
@@ -837,14 +835,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       state.txActive || state.isReceivingBroadcast;
 
   Future<void> _playScanActivityFoundVibration() async {
-    if (!NativePlatform.isMobile) {
-      return;
-    }
-    final hasVibrator = await Vibration.hasVibrator();
-    if (hasVibrator != true) {
-      return;
-    }
-    await Vibration.vibrate(duration: _scanActivityVibrationMs);
+    await Haptics.scanActivityFound();
   }
 
   Future<void> _runScanLoop() async {
