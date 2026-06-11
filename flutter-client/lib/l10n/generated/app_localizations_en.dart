@@ -466,4 +466,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get a11yPttStopAction => 'Stop talking';
+
+  @override
+  String get a11yPttLockedAnnouncement => 'Locked';
+
+  @override
+  String get a11yPttUnlockedAnnouncement => 'Unlocked';
 }

@@ -474,4 +474,10 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get a11yPttStopAction => 'Остановить передачу';
+
+  @override
+  String get a11yPttLockedAnnouncement => 'Заблокировано';
+
+  @override
+  String get a11yPttUnlockedAnnouncement => 'Разблокировано';
 }

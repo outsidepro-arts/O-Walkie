@@ -378,6 +378,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ),
                     locked: state.pttServerLocked,
                     pttLockSec: state.pttLockSec,
+                    sessionConnected: state.isConnected,
                     onPttDown: controller.pttDown,
                     onPttUp: controller.pttUp,
                     onCall: controller.sendCall,
@@ -719,14 +720,39 @@ class _LabeledField extends StatelessWidget {
   }
 }
 
-class _RxVolumeSection extends StatelessWidget {
+class _RxVolumeSection extends StatefulWidget {
   const _RxVolumeSection({required this.percent, required this.onChanged});
 
   final int percent;
   final ValueChanged<int> onChanged;
 
   @override
+  State<_RxVolumeSection> createState() => _RxVolumeSectionState();
+}
+
+class _RxVolumeSectionState extends State<_RxVolumeSection> {
+  bool _a11yFocused = false;
+
+  void _onDidGainAccessibilityFocus() {
+    setState(() => _a11yFocused = true);
+  }
+
+  void _onDidLoseAccessibilityFocus() {
+    setState(() => _a11yFocused = false);
+  }
+
+  void _onChangeEnd(double value) {
+    final percent = value.round();
+    A11yAnnounce.whenFocused(
+      context,
+      focused: _a11yFocused,
+      message: AppStrings.rxVolumePercentAccessibility(percent),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final percent = widget.percent;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -759,12 +785,15 @@ class _RxVolumeSection extends StatelessWidget {
           decreasedValue: percent > 0
               ? AppStrings.rxVolumePercent(percent - 1)
               : null,
+          onDidGainAccessibilityFocus: _onDidGainAccessibilityFocus,
+          onDidLoseAccessibilityFocus: _onDidLoseAccessibilityFocus,
           child: Slider(
             value: percent.toDouble(),
             min: 0,
             max: 200,
             divisions: 200,
-            onChanged: (v) => onChanged(v.round()),
+            onChanged: (v) => widget.onChanged(v.round()),
+            onChangeEnd: _onChangeEnd,
           ),
         ),
       ],
@@ -779,6 +808,7 @@ class _PttArea extends StatelessWidget {
     required this.label,
     required this.locked,
     required this.pttLockSec,
+    required this.sessionConnected,
     required this.onPttDown,
     required this.onPttUp,
     required this.onCall,
@@ -789,6 +819,7 @@ class _PttArea extends StatelessWidget {
   final String label;
   final bool locked;
   final int pttLockSec;
+  final bool sessionConnected;
   final VoidCallback onPttDown;
   final VoidCallback onPttUp;
   final VoidCallback onCall;
@@ -805,6 +836,7 @@ class _PttArea extends StatelessWidget {
             active: active,
             locked: locked,
             pttLockSec: pttLockSec,
+            sessionConnected: sessionConnected,
             onPttDown: onPttDown,
             onPttUp: onPttUp,
             child: Container(

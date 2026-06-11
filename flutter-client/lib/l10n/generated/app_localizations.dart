@@ -955,6 +955,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Stop talking'**
   String get a11yPttStopAction;
+
+  /// No description provided for @a11yPttLockedAnnouncement.
+  ///
+  /// In en, this message translates to:
+  /// **'Locked'**
+  String get a11yPttLockedAnnouncement;
+
+  /// No description provided for @a11yPttUnlockedAnnouncement.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlocked'**
+  String get a11yPttUnlockedAnnouncement;
 }
 
 class _AppLocalizationsDelegate

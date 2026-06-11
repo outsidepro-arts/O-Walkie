@@ -5,13 +5,15 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../../a11y/a11y.dart';
+import '../../a11y/ptt_a11y.dart';
 import '../../l10n/a11y_strings.dart';
 import 'ptt_touch_policy.dart';
 
 /// On-screen PTT: tap toggles TX latch; hold = classic push-to-talk.
 ///
-/// Keyboard Space toggles (same as media-button policy). Screen reader uses
-/// short state descriptions (Kotlin parity) plus Start/Stop actions.
+/// Screen reader: short state labels (Kotlin parity), Start/Stop actions,
+/// lock/unlock announce only while a11y focus is here; countdown seconds
+/// read on focus, not re-announced every tick.
 class PttGestureButton extends StatefulWidget {
   const PttGestureButton({
     super.key,
@@ -19,6 +21,7 @@ class PttGestureButton extends StatefulWidget {
     required this.active,
     required this.locked,
     required this.pttLockSec,
+    required this.sessionConnected,
     required this.onPttDown,
     required this.onPttUp,
     required this.child,
@@ -28,6 +31,7 @@ class PttGestureButton extends StatefulWidget {
   final bool active;
   final bool locked;
   final int pttLockSec;
+  final bool sessionConnected;
   final VoidCallback onPttDown;
   final VoidCallback onPttUp;
   final Widget child;
@@ -39,12 +43,38 @@ class PttGestureButton extends StatefulWidget {
 class _PttGestureButtonState extends State<PttGestureButton> {
   bool _pointerDown = false;
   bool _holdMode = false;
+  bool _a11yFocused = false;
+  String? _frozenCountdownLabel;
   Timer? _holdTimer;
 
   @override
   void dispose() {
     _holdTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant PttGestureButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _maybeAnnounceServerPttLockChange(oldWidget);
+  }
+
+  void _maybeAnnounceServerPttLockChange(PttGestureButton oldWidget) {
+    if (!widget.sessionConnected) {
+      return;
+    }
+    final wasLocked = oldWidget.locked && !oldWidget.active;
+    final isLocked = widget.locked && !widget.active;
+    if (wasLocked == isLocked) {
+      return;
+    }
+    A11yAnnounce.whenFocused(
+      context,
+      focused: _a11yFocused,
+      message: isLocked
+          ? A11yStrings.pttLockedAnnouncement
+          : A11yStrings.pttUnlockedAnnouncement,
+    );
   }
 
   void _cancelHoldTimer() {
@@ -123,20 +153,39 @@ class _PttGestureButtonState extends State<PttGestureButton> {
     }
   }
 
+  PttA11yBucket _bucket() {
+    return resolvePttA11yBucket(
+      enabled: widget.enabled,
+      active: widget.active,
+      serverPttLocked: widget.locked,
+      pttLockSec: widget.pttLockSec,
+    );
+  }
+
   String _semanticsLabel() {
-    if (!widget.enabled) {
-      if (widget.locked && widget.pttLockSec > 0) {
-        return A11yStrings.pttCountdown(widget.pttLockSec);
+    return pttA11yLabelFor(
+      bucket: _bucket(),
+      pttLockSec: widget.pttLockSec,
+      frozenCountdownLabel:
+          _a11yFocused ? _frozenCountdownLabel : null,
+    );
+  }
+
+  void _onDidGainAccessibilityFocus() {
+    final bucket = _bucket();
+    setState(() {
+      _a11yFocused = true;
+      if (bucket == PttA11yBucket.countdown) {
+        _frozenCountdownLabel = A11yStrings.pttCountdown(widget.pttLockSec);
       }
-      if (widget.locked) {
-        return A11yStrings.pttLocked;
-      }
-      return A11yStrings.pttUnavailable;
-    }
-    if (widget.active) {
-      return A11yStrings.pttToggleHint;
-    }
-    return A11yStrings.pttHoldHint;
+    });
+  }
+
+  void _onDidLoseAccessibilityFocus() {
+    setState(() {
+      _a11yFocused = false;
+      _frozenCountdownLabel = null;
+    });
   }
 
   @override
@@ -160,6 +209,8 @@ class _PttGestureButtonState extends State<PttGestureButton> {
             enabled: widget.enabled,
             label: _semanticsLabel(),
             excludeSemantics: true,
+            onDidGainAccessibilityFocus: _onDidGainAccessibilityFocus,
+            onDidLoseAccessibilityFocus: _onDidLoseAccessibilityFocus,
             customSemanticsActions: widget.enabled
                 ? {
                     CustomSemanticsAction(label: A11yStrings.pttStartAction):

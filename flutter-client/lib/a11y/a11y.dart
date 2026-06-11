@@ -1,10 +1,48 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../l10n/a11y_strings.dart';
 
 // Dynamic status updates: use Semantics(liveRegion: true, label: ...) on the
-// widget whose text changes — not SemanticsService.sendAnnouncement (deprecated
-// on Android; see flutter/flutter#165510).
+// widget whose text changes — not SemanticsService.sendAnnouncement for bulk
+// updates (deprecated on Android; see flutter/flutter#165510).
+//
+// For Kotlin-style announceForAccessibility while a11y focus is on a control,
+// use [A11yAnnounce.whenFocused].
+
+/// Kotlin [View.announceForAccessibility] parity for Flutter.
+abstract final class A11yAnnounce {
+  static Future<void> whenSupported(
+    BuildContext context,
+    String message,
+  ) async {
+    if (!context.mounted) {
+      return;
+    }
+    if (!MediaQuery.supportsAnnounceOf(context)) {
+      return;
+    }
+    await SemanticsService.sendAnnouncement(
+      View.of(context),
+      message,
+      Directionality.of(context),
+    );
+  }
+
+  /// Speaks [message] only when [focused] is true (TalkBack focus on this node).
+  static void whenFocused(
+    BuildContext context, {
+    required bool focused,
+    required String message,
+  }) {
+    if (!focused) {
+      return;
+    }
+    unawaited(whenSupported(context, message));
+  }
+}
 
 /// Ensures interactive targets meet Material minimum touch size (48×48 logical px).
 class MinTouchTarget extends StatelessWidget {

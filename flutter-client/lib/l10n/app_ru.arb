@@ -149,5 +149,7 @@
   "a11yConnectUnavailableHint": "Сессия недоступна.",
   "a11yNotAvailableYet": "Недоступно",
   "a11yPttStartAction": "Начать передачу",
-  "a11yPttStopAction": "Остановить передачу"
+  "a11yPttStopAction": "Остановить передачу",
+  "a11yPttLockedAnnouncement": "Заблокировано",
+  "a11yPttUnlockedAnnouncement": "Разблокировано"
 }

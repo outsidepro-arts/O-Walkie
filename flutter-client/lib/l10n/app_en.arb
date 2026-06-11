@@ -199,5 +199,7 @@
   "a11yConnectUnavailableHint": "Session unavailable.",
   "a11yNotAvailableYet": "Not available",
   "a11yPttStartAction": "Start talking",
-  "a11yPttStopAction": "Stop talking"
+  "a11yPttStopAction": "Stop talking",
+  "a11yPttLockedAnnouncement": "Locked",
+  "a11yPttUnlockedAnnouncement": "Unlocked"
 }
