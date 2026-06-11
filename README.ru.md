@@ -35,6 +35,7 @@ O-Walkie намеренно моделирует поведение "живой 
 - `owalkie-core/` — общая C/C++ библиотека relay (managed-сессии, Opus, probe активности, Roger/Call PCM).
 - `android/` — Android-клиент (релиз); нативный relay через JNI → `owalkie-core`.
 - `windows-client-cpp/` — Windows desktop-клиент (релиз); `wxWidgets` + miniaudio, managed-сессия `owalkie-core`.
+- `flutter-client/` — **экспериментальный** кроссплатформенный клиент (Flutter UI + FFI `owalkie_core`). Пока не заменяет `android/` и `windows-client-cpp/`; на Android ставится рядом (`ru.outsidepro_arts.owalkie.flutter`). См. [flutter-client/README.md](flutter-client/README.md).
 
 ### Возможности клиентов
 

@@ -54,3 +54,27 @@ jobs:
           dotnet-version: "8.0.x"
       - name: Build Windows client prototype
         run: dotnet build "windows-client/src/OWalkie.Desktop.Wpf/OWalkie.Desktop.Wpf.csproj"
+
+  flutter-client:
+    name: Flutter client tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter-client
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve version from git
+        run: eval "$(./tool/version_from_git.sh)"
+      - name: Pub get
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+      - name: Test
+        run: flutter test

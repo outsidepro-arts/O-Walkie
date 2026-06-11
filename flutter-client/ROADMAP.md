@@ -270,7 +270,14 @@ Global hotkey uses native low-level keyboard hook: **hold = TX on, release = TX 
 
 ## Phase 9 — Polish and release
 
-Release signing, CI, git-tag versioning, expanded a11y tests, README feature flag.
+| Task | Status |
+|------|--------|
+| Git-tag versioning (`tool/version_from_git.*`, `--build-name` / `--build-number`) | done |
+| Android release signing (shared `android/keystore/`, debug fallback) | done |
+| CI: `flutter analyze` + `flutter test` | done |
+| Release on tag: experimental Flutter debug APK asset | done |
+| Expanded a11y widget tests | done |
+| README experimental feature flag (root + `flutter-client/`) | done |
 
 ### Acceptance tests (Phase 9)
 
@@ -293,7 +300,7 @@ Release signing, CI, git-tag versioning, expanded a11y tests, README feature fla
 | UI WAV | `audioplayers` | — |
 | Roger/Call uplink | — | FFI to core |
 | Tasker API | — | BroadcastReceiver |
-| Windows global PTT | `hotkey_manager` | — |
+| Windows global PTT | — | `WH_KEYBOARD_LL` in `windows/runner/global_ptt_hook.*` |
 
 ---
 

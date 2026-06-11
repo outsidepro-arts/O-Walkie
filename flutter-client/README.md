@@ -2,6 +2,8 @@
 
 Cross-platform shell for O-Walkie: **Flutter UI** + **`owalkie-core` FFI plugin**.
 
+> **Feature flag:** this tree is an **experimental** client. Use the release Kotlin app (`android/`) or C++ desktop (`windows-client-cpp/`) for production. The Flutter build installs as a separate Android app and is included in git-tag releases as `owalkie-flutter-android-*-debug.apk` for early testers.
+
 Migration plan and phases: [ROADMAP.md](ROADMAP.md).
 
 ## Prerequisites
@@ -30,9 +32,14 @@ powershell -File tool\build_all.ps1 -SkipAndroid
 # Android only (build + install):
 powershell -File tool\build_all.ps1 -SkipWindows
 
+# Android release APK (signed when android/keystore/release-keystore.properties exists):
+powershell -File tool\build_all.ps1 -SkipWindows -AndroidConfiguration Release -NoInstall
+
 # First-time Android native session (long vcpkg step):
 powershell -File tool\build_all.ps1 -PrepareAndroidNdk
 ```
+
+**Versioning:** `tool/version_from_git.ps1` (or `.sh`) reads git tags (`v*`) like the native Android client. `build_all.ps1` passes `--build-name` / `--build-number` to `flutter build`; Settings → About shows the same version via `package_info_plus`.
 
 Android **applicationId**: `ru.outsidepro_arts.owalkie.flutter` (launcher: **O-Walkie Flutter**) — installs next to native `ru.outsidepro_arts.owalkie`.
 

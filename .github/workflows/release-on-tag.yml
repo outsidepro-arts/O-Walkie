@@ -53,6 +53,24 @@ jobs:
           OWALKIE_VERSION_NAME: ${{ steps.ver.outputs.VERSION }}
         run: ./gradlew :app:assembleDebug --no-daemon
 
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Flutter experimental debug APK
+        working-directory: flutter-client
+        env:
+          OWALKIE_VERSION_NAME: ${{ steps.ver.outputs.VERSION }}
+        run: |
+          eval "$(./tool/version_from_git.sh)"
+          flutter pub get
+          flutter precache --android
+          flutter build apk --debug \
+            --build-name="${OWALKIE_VERSION_NAME}" \
+            --build-number="${OWALKIE_VERSION_CODE}"
+
       - name: Stage release assets
         run: |
           VERSION="${{ steps.ver.outputs.VERSION }}"
@@ -60,6 +78,8 @@ jobs:
             "${GITHUB_WORKSPACE}/owalkie-relay-${VERSION}-linux-amd64"
           cp "${GITHUB_WORKSPACE}/android/app/build/outputs/apk/debug/app-debug.apk" \
             "${GITHUB_WORKSPACE}/owalkie-android-${VERSION}-debug.apk"
+          cp "${GITHUB_WORKSPACE}/flutter-client/build/app/outputs/flutter-apk/app-debug.apk" \
+            "${GITHUB_WORKSPACE}/owalkie-flutter-android-${VERSION}-debug.apk"
 
       - name: Check if release already exists
         id: release_check
@@ -81,3 +101,4 @@ jobs:
           files: |
             owalkie-relay-${{ steps.ver.outputs.VERSION }}-linux-amd64
             owalkie-android-${{ steps.ver.outputs.VERSION }}-debug.apk
+            owalkie-flutter-android-${{ steps.ver.outputs.VERSION }}-debug.apk

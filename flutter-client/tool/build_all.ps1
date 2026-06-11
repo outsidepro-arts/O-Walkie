@@ -3,6 +3,8 @@ param(
     [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [ValidateSet("Debug", "Release")]
     [string]$WindowsConfiguration = "Release",
+    [ValidateSet("Debug", "Release")]
+    [string]$AndroidConfiguration = "Debug",
     [switch]$SkipWindows,
     [switch]$SkipAndroid,
     [switch]$SkipIosHint,
@@ -77,6 +79,9 @@ try {
     Write-Host "=== O-Walkie Flutter build ===" -ForegroundColor Cyan
     Write-Host "Project: $ProjectRoot"
 
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "version_from_git.ps1") -RepoRoot (Split-Path $ProjectRoot -Parent) | Out-Null
+    Write-Host "Version: $($env:OWALKIE_VERSION_NAME) ($($env:OWALKIE_VERSION_CODE))" -ForegroundColor DarkGray
+
     flutter pub get
     if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed" }
 
@@ -99,7 +104,7 @@ try {
     }
 
     if (-not $SkipAndroid) {
-        Write-Host "=== Android (debug APK) ===" -ForegroundColor Cyan
+        Write-Host "=== Android ($AndroidConfiguration APK) ===" -ForegroundColor Cyan
         $env:OWALKIE_FLUTTER_FULL_SESSION = "ON"
         if (-not $PrepareAndroidNdk) {
             $boostProbe = Join-Path $env:VCPKG_ROOT "installed\arm64-android\share\boost_headers\boost_headers-config.cmake"
@@ -121,13 +126,24 @@ try {
                 Remove-Item -Recurse -Force $cxx
             }
         }
-        flutter build apk --debug
-        if ($LASTEXITCODE -ne 0) { throw "flutter build apk --debug failed" }
-
-        $apk = Join-Path $ProjectRoot "build\app\outputs\flutter-apk\app-debug.apk"
+        $buildName = $env:OWALKIE_VERSION_NAME
+        $buildNumber = $env:OWALKIE_VERSION_CODE
+        if ($AndroidConfiguration -eq "Release") {
+            flutter build apk --release `
+                --build-name=$buildName `
+                --build-number=$buildNumber
+            if ($LASTEXITCODE -ne 0) { throw "flutter build apk --release failed" }
+            $apk = Join-Path $ProjectRoot "build\app\outputs\flutter-apk\app-release.apk"
+        } else {
+            flutter build apk --debug `
+                --build-name=$buildName `
+                --build-number=$buildNumber
+            if ($LASTEXITCODE -ne 0) { throw "flutter build apk --debug failed" }
+            $apk = Join-Path $ProjectRoot "build\app\outputs\flutter-apk\app-debug.apk"
+        }
         Write-Host "APK: $apk" -ForegroundColor Green
 
-        if (-not $NoInstall) {
+        if (-not $NoInstall -and $AndroidConfiguration -eq "Debug") {
             $adb = Get-AdbPath
             Install-DebugApk -ApkPath $apk -Adb $adb
         }

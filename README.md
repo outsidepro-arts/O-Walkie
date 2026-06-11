@@ -35,6 +35,7 @@ This design gives a more "alive" radio feeling for communication.
 - `owalkie-core/` — shared C/C++ relay library (managed sessions, Opus, activity probe, Roger/Call PCM).
 - `android/` — Android client (release); native relay via JNI → `owalkie-core`.
 - `windows-client-cpp/` — Windows desktop client (release); `wxWidgets` + miniaudio, `owalkie-core` managed session.
+- `flutter-client/` — **experimental** cross-platform client (Flutter UI + `owalkie_core` FFI). Not a production replacement for `android/` or `windows-client-cpp/` yet; installs side-by-side on Android (`ru.outsidepro_arts.owalkie.flutter`). See [flutter-client/README.md](flutter-client/README.md).
 
 ### Client highlights
 
