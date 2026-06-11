@@ -25,8 +25,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   late final TextEditingController _portCtrl;
   late final TextEditingController _channelCtrl;
 
-  String? _announcedConnectionChip;
-
   @override
   void initState() {
     super.initState();
@@ -73,22 +71,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         );
   }
 
-  void _maybeAnnounceConnection(String chip) {
-    if (_announcedConnectionChip == chip) {
-      return;
-    }
-    _announcedConnectionChip = chip;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      announceToScreenReader(
-        context,
-        '${A11yStrings.connectionStatus}: $chip',
-      );
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(homeScreenControllerProvider);
@@ -104,7 +86,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             : A11yStrings.connectHint);
 
     final connectionChip = state.connectionDisplayChip;
-    _maybeAnnounceConnection(connectionChip);
 
     return Semantics(
       label: A11yStrings.mainScrollHint,
@@ -314,6 +295,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     locked: state.pttServerLocked,
                     onPttDown: controller.pttDown,
                     onPttUp: controller.pttUp,
+                    onCall: controller.sendCall,
                   ),
                   const SizedBox(height: 12),
                   Semantics(
@@ -412,28 +394,26 @@ class _StatusChips extends StatelessWidget {
     final chipStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
           fontWeight: FontWeight.bold,
         );
-    return Semantics(
-      liveRegion: true,
-      child: Row(
-        children: [
-          Expanded(
-            child: Semantics(
-              label: '${A11yStrings.connectionStatus}: $connection',
-              child: _ChipBox(child: Text(connection, style: chipStyle)),
+    return Row(
+      children: [
+        Expanded(
+          child: Semantics(
+            liveRegion: true,
+            label: '${A11yStrings.connectionStatus}: $connection',
+            child: _ChipBox(child: Text(connection, style: chipStyle)),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Semantics(
+            label: '${A11yStrings.signalStatus}: $signal',
+            child: _ChipBox(
+              alignment: Alignment.centerRight,
+              child: Text(signal, style: chipStyle, textAlign: TextAlign.end),
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Semantics(
-              label: '${A11yStrings.signalStatus}: $signal',
-              child: _ChipBox(
-                alignment: Alignment.centerRight,
-                child: Text(signal, style: chipStyle, textAlign: TextAlign.end),
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -683,6 +663,7 @@ class _PttArea extends StatelessWidget {
     required this.locked,
     required this.onPttDown,
     required this.onPttUp,
+    required this.onCall,
   });
 
   final bool enabled;
@@ -691,6 +672,7 @@ class _PttArea extends StatelessWidget {
   final bool locked;
   final VoidCallback onPttDown;
   final VoidCallback onPttUp;
+  final VoidCallback onCall;
 
   @override
   Widget build(BuildContext context) {
@@ -733,14 +715,18 @@ class _PttArea extends StatelessWidget {
           Positioned(
             right: 0,
             bottom: 0,
-            child: UnavailableButton(
+            child: Semantics(
+              button: true,
               label: AppStrings.callSignal,
               hint: A11yStrings.callSignalHint,
+              enabled: enabled && !active && !locked,
               child: SizedBox(
                 width: 96,
                 height: 72,
                 child: OutlinedButton(
-                  onPressed: null,
+                  onPressed: enabled && !active && !locked
+                      ? onCall
+                      : null,
                   child: const Text(AppStrings.callSignal),
                 ),
               ),

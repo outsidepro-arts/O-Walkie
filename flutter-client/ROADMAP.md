@@ -120,7 +120,7 @@ Prerequisites: relay in LAN, Android APK or Windows dist with session enabled, s
 
 ---
 
-## Phase 3 — Roger / Call / UI sounds
+## Phase 3 — Roger / Call / UI sounds *(done)*
 
 | Task | Solution |
 |------|----------|
@@ -140,7 +140,7 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 ---
 
-## Phase 4 — Android: background, network, audio policy
+## Phase 4 — Android: background, network, audio policy *(in progress — 4a FGS)*
 
 ### 4a. Foreground service + notification
 

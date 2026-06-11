@@ -24,7 +24,7 @@ abstract final class A11yStrings {
   static const pttLockedHint = 'Server locked push-to-talk. Wait for unlock';
   static const pttStartAction = 'Start talking';
   static const pttStopAction = 'Stop talking';
-  static const callSignalHint = 'Call signal, not available in this version';
+  static const callSignalHint = 'Send call signal on the channel';
   static const menuMoreHint = 'Additional options and settings';
   static const coreVersionLabel = 'Application core version';
   static const mainScrollHint = 'Main screen';

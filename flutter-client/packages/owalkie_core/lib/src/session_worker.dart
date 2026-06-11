@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -9,6 +10,7 @@ import 'native_library.dart';
 import 'session_event_type.dart';
 import 'session_messages.dart';
 import 'session_relay_bindings.dart';
+import 'signal_point.dart';
 
 /// Background isolate: owns all session + audio FFI calls.
 @pragma('vm:entry-point')
@@ -33,6 +35,9 @@ class _SessionWorker {
 
   static const _initialBackoffMs = 1500;
   static const _maxBackoffMs = 8000;
+  static const _localPlaybackRate = 44100;
+  static const _rogerTailMs = 40;
+  static const _callLocalGain = 0.316;
 
   void run() {
     try {
@@ -67,8 +72,12 @@ class _SessionWorker {
         _disconnect();
       case SessionPttDownCommand():
         _pttDown();
-      case SessionPttUpCommand():
-        _pttUp();
+      case SessionPttUpCommand(:final rogerPoints):
+        _pttUp(rogerPoints);
+      case SessionSendCallCommand(:final points, :final repeatCount):
+        unawaited(_sendCall(points, repeatCount));
+      case SessionPlayLocalCommand(:final samples, :final sampleRate):
+        _playLocalUi(samples, sampleRate);
       case SessionSetRxVolumeCommand(:final percent):
         _relay.setRxVolumePercent(percent);
       case SessionSetRepeaterCommand(:final enabled):
@@ -189,15 +198,104 @@ class _SessionWorker {
     ));
   }
 
-  void _pttUp() {
+  List<SignalPoint> _toSignalPoints(
+    List<({double freqHz, int durationMs})> raw,
+  ) {
+    return [
+      for (final p in raw)
+        SignalPoint(freqHz: p.freqHz, durationMs: p.durationMs),
+    ];
+  }
+
+  List<SignalPoint> _expandedCallPoints(
+    List<({double freqHz, int durationMs})> raw,
+    int repeatCount,
+  ) {
+    final base = _toSignalPoints(raw);
+    final reps = repeatCount.clamp(1, 500);
+    if (reps <= 1) {
+      return base;
+    }
+    return [for (var i = 0; i < reps; i++) ...base];
+  }
+
+  void _pttUp(List<({double freqHz, int durationMs})> rogerRaw) {
     if (_sessionId == 0) {
       return;
     }
-    final rc = _relay.pttUp(_sessionId);
+    final rogerPoints = _toSignalPoints(rogerRaw);
+    Int16List? uplink;
+    Int16List? local;
+    if (rogerPoints.isNotEmpty) {
+      final codecRate = _relay.codecSampleRate;
+      uplink = _relay.generateSignalPcm(
+        points: rogerPoints,
+        sampleRate: codecRate,
+        tailMs: _rogerTailMs,
+      );
+      local = _relay.generateSignalPcm(
+        points: rogerPoints,
+        sampleRate: _localPlaybackRate,
+        tailMs: _rogerTailMs,
+      );
+    }
+    final rc = _relay.pttUpWithRoger(
+      sessionId: _sessionId,
+      rogerUplink: uplink,
+      rogerLocal: local,
+      localSampleRate: _localPlaybackRate,
+    );
     _mainPort.send(SessionWorkerMessage.pttResult(
       active: false,
       resultCode: rc,
     ));
+  }
+
+  void _playLocalUi(List<int> samples, int sampleRate) {
+    if (samples.isEmpty) {
+      return;
+    }
+    final pcm = Int16List(samples.length);
+    for (var i = 0; i < samples.length; i++) {
+      pcm[i] = samples[i];
+    }
+    _relay.playLocalPcm(pcm, sampleRate: sampleRate);
+  }
+
+  Future<void> _sendCall(
+    List<({double freqHz, int durationMs})> raw,
+    int repeatCount,
+  ) async {
+    if (_sessionId == 0) {
+      _mainPort.send(const SessionWorkerMessage.callResult(resultCode: -1));
+      return;
+    }
+    final points = _expandedCallPoints(raw, repeatCount);
+    if (points.isEmpty) {
+      _mainPort.send(const SessionWorkerMessage.callResult(resultCode: -1));
+      return;
+    }
+    final codecRate = _relay.codecSampleRate;
+    final uplink = _relay.generateSignalPcm(
+      points: points,
+      sampleRate: codecRate,
+    );
+    final local = _relay.generateSignalPcm(
+      points: points,
+      sampleRate: _localPlaybackRate,
+      gain: _callLocalGain,
+    );
+    if (uplink == null) {
+      _mainPort.send(const SessionWorkerMessage.callResult(resultCode: -1));
+      return;
+    }
+    final rc = _relay.sendCallSignal(
+      sessionId: _sessionId,
+      uplink: uplink,
+      local: local,
+      localSampleRate: _localPlaybackRate,
+    );
+    _mainPort.send(SessionWorkerMessage.callResult(resultCode: rc));
   }
 
   void _drainNativeEvents() {

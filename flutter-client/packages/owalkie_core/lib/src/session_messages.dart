@@ -26,7 +26,29 @@ final class SessionPttDownCommand extends SessionCommand {
 }
 
 final class SessionPttUpCommand extends SessionCommand {
-  const SessionPttUpCommand();
+  const SessionPttUpCommand({this.rogerPoints = const []});
+
+  final List<({double freqHz, int durationMs})> rogerPoints;
+}
+
+final class SessionSendCallCommand extends SessionCommand {
+  const SessionSendCallCommand({
+    required this.points,
+    this.repeatCount = 1,
+  });
+
+  final List<({double freqHz, int durationMs})> points;
+  final int repeatCount;
+}
+
+final class SessionPlayLocalCommand extends SessionCommand {
+  const SessionPlayLocalCommand({
+    required this.samples,
+    required this.sampleRate,
+  });
+
+  final List<int> samples;
+  final int sampleRate;
 }
 
 final class SessionSetRxVolumeCommand extends SessionCommand {
@@ -98,6 +120,10 @@ sealed class SessionWorkerMessage {
     required bool active,
     required int resultCode,
   }) = SessionPttResultMessage;
+
+  const factory SessionWorkerMessage.callResult({
+    required int resultCode,
+  }) = SessionCallResultMessage;
 }
 
 final class SessionUnsupportedMessage extends SessionWorkerMessage {
@@ -167,5 +193,11 @@ final class SessionPttResultMessage extends SessionWorkerMessage {
   });
 
   final bool active;
+  final int resultCode;
+}
+
+final class SessionCallResultMessage extends SessionWorkerMessage {
+  const SessionCallResultMessage({required this.resultCode});
+
   final int resultCode;
 }

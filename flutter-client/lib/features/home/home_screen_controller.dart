@@ -5,13 +5,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:owalkie_core/owalkie_core.dart';
 
 import '../../data/server_store.dart';
+import '../../data/signal_pattern_store.dart';
 import '../../domain/profile_save.dart';
 import '../../domain/ptt_burst_guard.dart';
 import '../../domain/server_profile.dart';
+import '../../domain/signal_point_codec.dart';
 import '../../l10n/app_strings.dart';
 import '../../platform/haptics.dart';
 import '../../platform/native_platform.dart';
 import '../../platform/screen_wake.dart';
+import '../../platform/ui_signal_player.dart';
 import 'home_screen_state.dart';
 import 'session_event_mapper.dart';
 
@@ -28,6 +31,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   bool _parallelTxVibrating = false;
 
   ServerStore get _store => ref.read(serverStoreProvider);
+  RogerPatternStore get _rogerStore => ref.read(rogerPatternStoreProvider);
+  CallingPatternStore get _callingStore => ref.read(callingPatternStoreProvider);
 
   @override
   HomeScreenState build() {
@@ -222,6 +227,16 @@ class HomeScreenController extends Notifier<HomeScreenState> {
         if (!connected && !connecting) {
           _pttBurstGuard.reset();
           _cancelTxCountdown();
+          if (state.isConnected) {
+            UiSignalPlayer.playManualDisconnect(_session);
+          }
+        } else if (connecting && !connected && !reconnecting && !state.isConnecting) {
+          UiSignalPlayer.playManualConnectStart(_session);
+        } else if (connected && !state.isConnected) {
+          UiSignalPlayer.playConnected(_session);
+        }
+        if (error != null && error.isNotEmpty) {
+          UiSignalPlayer.playConnectionError(_session);
         }
         state = state.copyWith(
           isConnected: connected,
@@ -229,6 +244,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           isReconnecting: reconnecting,
           txActive: connected ? state.txActive : false,
           isReceivingBroadcast: connected ? state.isReceivingBroadcast : false,
+          callActive: connected ? state.callActive : false,
           connectionChip: connectionChipForTransport(
             connected: connected,
             connecting: connecting,
@@ -272,6 +288,13 @@ class HomeScreenController extends Notifier<HomeScreenState> {
         );
       case SessionChannelActivityResultMessage():
         break;
+      case SessionCallResultMessage(:final resultCode):
+        state = state.copyWith(callActive: false);
+        if (resultCode != 0) {
+          state = state.copyWith(
+            lastError: 'Call signal failed (error $resultCode).',
+          );
+        }
     }
     _syncSideEffects(prev);
   }
@@ -428,8 +451,24 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (!state.txActive) {
       return;
     }
-    _session?.pttUp();
+    final roger = _rogerStore.getSelectedPattern();
+    _session?.pttUp(rogerPoints: encodeSignalPoints(roger.points));
     _pttBurstGuard.onRelease();
+  }
+
+  void sendCall() {
+    if (!state.isConnected || state.txActive || state.callActive || state.pttServerLocked) {
+      return;
+    }
+    final pattern = _callingStore.getSelectedPattern();
+    if (pattern.points.isEmpty) {
+      return;
+    }
+    state = state.copyWith(callActive: true, clearError: true);
+    _session?.sendCall(
+      points: encodeSignalPoints(pattern.points),
+      repeatCount: pattern.repeatCount ?? 1,
+    );
   }
 
   void _dispose() {

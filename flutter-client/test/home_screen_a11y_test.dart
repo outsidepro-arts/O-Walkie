@@ -1,26 +1,18 @@
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:owalkie_app/app/owalkie_app.dart';
 import 'package:owalkie_app/l10n/a11y_strings.dart';
 import 'package:owalkie_app/l10n/app_strings.dart';
+import 'test_app_scope.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
-  setUp(() {
-    SharedPreferences.setMockInitialValues({});
-  });
 
   testWidgets('home screen exposes key semantics for screen readers',
       (WidgetTester tester) async {
     final handle = tester.ensureSemantics();
 
-    await tester.pumpWidget(
-      const ProviderScope(child: OwalkieApp()),
-    );
+    await tester.pumpWidget(await buildTestApp());
     await tester.pumpAndSettle();
 
     expect(

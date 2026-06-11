@@ -17,6 +17,7 @@ class HomeScreenState {
     this.pttLockSec = 0,
     this.txCountdownSec = 0,
     this.isReceivingBroadcast = false,
+    this.callActive = false,
     this.connectionChip = AppStrings.connectionStateDisconnected,
     this.signalChip = AppStrings.signalQualityDefault,
     this.coreVersion = '',
@@ -42,6 +43,7 @@ class HomeScreenState {
   final int pttLockSec;
   final int txCountdownSec;
   final bool isReceivingBroadcast;
+  final bool callActive;
   final String connectionChip;
   final String signalChip;
   final String coreVersion;
@@ -61,9 +63,15 @@ class HomeScreenState {
 
   bool get parallelTxActive => txActive && isReceivingBroadcast;
 
-  String get connectionDisplayChip => parallelTxActive
-      ? AppStrings.connectionStateParallelTx
-      : connectionChip;
+  String get connectionDisplayChip {
+    if (callActive) {
+      return AppStrings.connectionStateCalling;
+    }
+    if (parallelTxActive) {
+      return AppStrings.connectionStateParallelTx;
+    }
+    return connectionChip;
+  }
 
   HomeScreenState copyWith({
     bool? connectionDetailsExpanded,
@@ -80,6 +88,7 @@ class HomeScreenState {
     int? pttLockSec,
     int? txCountdownSec,
     bool? isReceivingBroadcast,
+    bool? callActive,
     String? connectionChip,
     String? signalChip,
     String? coreVersion,
@@ -109,6 +118,7 @@ class HomeScreenState {
       txCountdownSec: txCountdownSec ?? this.txCountdownSec,
       isReceivingBroadcast:
           isReceivingBroadcast ?? this.isReceivingBroadcast,
+      callActive: callActive ?? this.callActive,
       connectionChip: connectionChip ?? this.connectionChip,
       signalChip: signalChip ?? this.signalChip,
       coreVersion: coreVersion ?? this.coreVersion,

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 
 import '../l10n/a11y_strings.dart';
+
+// Dynamic status updates: use Semantics(liveRegion: true, label: ...) on the
+// widget whose text changes — not SemanticsService.sendAnnouncement (deprecated
+// on Android; see flutter/flutter#165510).
 
 /// Ensures interactive targets meet Material minimum touch size (48×48 logical px).
 class MinTouchTarget extends StatelessWidget {
@@ -18,15 +21,6 @@ class MinTouchTarget extends StatelessWidget {
       child: child,
     );
   }
-}
-
-/// Announces [message] to screen readers when UI [liveRegion] is insufficient.
-void announceToScreenReader(BuildContext context, String message) {
-  final view = View.maybeOf(context);
-  if (view == null) {
-    return;
-  }
-  SemanticsService.sendAnnouncement(view, message, TextDirection.ltr);
 }
 
 /// Disabled control with an explicit screen reader explanation.

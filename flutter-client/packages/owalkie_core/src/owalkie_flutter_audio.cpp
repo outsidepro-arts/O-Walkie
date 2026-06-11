@@ -14,7 +14,9 @@
 
 #include <cstring>
 
+#include <chrono>
 #include <mutex>
+#include <thread>
 
 #include <vector>
 
@@ -542,6 +544,114 @@ void set_tx_frame_callback(TxFrameCallback cb, void* user) {
     g_tx_cb = cb;
 
     g_tx_user = user;
+
+}
+
+
+
+struct LocalPlayState {
+
+    const int16_t* samples = nullptr;
+
+    size_t position = 0;
+
+    size_t total = 0;
+
+};
+
+
+
+void local_play_data_cb(
+    ma_device* device,
+    void* output,
+    const void* /*input*/,
+    ma_uint32 frame_count) {
+
+    auto* st = static_cast<LocalPlayState*>(device->pUserData);
+
+    auto* out = static_cast<int16_t*>(output);
+
+    for (ma_uint32 i = 0; i < frame_count; ++i) {
+
+        if (st->position < st->total) {
+
+            out[i] = st->samples[st->position++];
+
+        } else {
+
+            out[i] = 0;
+
+        }
+
+    }
+
+}
+
+
+
+void play_local_pcm_blocking(const int16_t* samples, size_t count, int sample_rate_hz) {
+
+    if (!samples || count == 0 || sample_rate_hz <= 0) {
+
+        return;
+
+    }
+
+    std::unique_lock<std::mutex> lock(g_mu);
+
+    ensure_context();
+
+    if (!g_context_inited) {
+
+        return;
+
+    }
+
+    LocalPlayState state{samples, 0, count};
+
+    ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
+
+    cfg.playback.format = ma_format_s16;
+
+    cfg.playback.channels = 1;
+
+    cfg.sampleRate = static_cast<ma_uint32>(sample_rate_hz);
+
+    cfg.dataCallback = local_play_data_cb;
+
+    cfg.pUserData = &state;
+
+    ma_device dev{};
+
+    if (ma_device_init(&g_context, &cfg, &dev) != MA_SUCCESS) {
+
+        OWALKIE_AUDIO_LOGE("local play ma_device_init failed");
+
+        return;
+
+    }
+
+    if (ma_device_start(&dev) != MA_SUCCESS) {
+
+        ma_device_uninit(&dev);
+
+        return;
+
+    }
+
+    const auto duration_ms =
+
+        static_cast<int>((count * 1000LL) / sample_rate_hz) + 80;
+
+    lock.unlock();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
+
+    lock.lock();
+
+    ma_device_stop(&dev);
+
+    ma_device_uninit(&dev);
 
 }
 

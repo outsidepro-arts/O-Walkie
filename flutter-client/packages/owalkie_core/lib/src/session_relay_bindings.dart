@@ -1,7 +1,10 @@
 import 'dart:ffi' as ffi;
+import 'dart:typed_data';
+
 import 'package:ffi/ffi.dart';
 
 import 'native_library.dart';
+import 'signal_point.dart';
 
 final class OwalkiePolledEvent extends ffi.Struct {
   @ffi.Int32()
@@ -72,6 +75,23 @@ typedef _CheckActivity = int Function(
   ffi.Pointer<ffi.Int32> outActive,
 );
 
+final class OwalkieFlutterSignalSpec extends ffi.Struct {
+  external ffi.Pointer<ffi.Double> freqHz;
+  external ffi.Pointer<ffi.Int32> durationMs;
+
+  @ffi.Uint64()
+  external int pointCount;
+
+  @ffi.Int32()
+  external int tailMs;
+
+  @ffi.Int32()
+  external int repeatCount;
+
+  @ffi.Double()
+  external double gain;
+}
+
 /// Low-level FFI to owalkie_flutter_* session exports (worker isolate only).
 class SessionRelayBindings {
   SessionRelayBindings(this._lib);
@@ -128,7 +148,72 @@ class SessionRelayBindings {
     'owalkie_flutter_check_channel_activity',
   );
 
+  late final int Function() _codecSampleRate =
+      _lib.lookupFunction<ffi.Int32 Function(), int Function()>(
+    'owalkie_flutter_codec_sample_rate',
+  );
+
+  late final int Function() _codecFrameSamples =
+      _lib.lookupFunction<ffi.Int32 Function(), int Function()>(
+    'owalkie_flutter_codec_frame_samples',
+  );
+
+  late final _SignalGenerateNative = _lib.lookupFunction<
+      ffi.Int32 Function(
+        ffi.Pointer<OwalkieFlutterSignalSpec>,
+        ffi.Int32,
+        ffi.Pointer<ffi.Pointer<ffi.Int16>>,
+        ffi.Pointer<ffi.Uint64>,
+      ),
+      int Function(
+        ffi.Pointer<OwalkieFlutterSignalSpec>,
+        int,
+        ffi.Pointer<ffi.Pointer<ffi.Int16>>,
+        ffi.Pointer<ffi.Uint64>,
+      )>('owalkie_flutter_signal_generate');
+
+  late final void Function(ffi.Pointer<ffi.Int16>) _signalFree =
+      _lib.lookupFunction<ffi.Void Function(ffi.Pointer<ffi.Int16>), void Function(ffi.Pointer<ffi.Int16>)>(
+    'owalkie_flutter_signal_free_pcm',
+  );
+
+  late final void Function(ffi.Pointer<ffi.Int16>, int, int) _playLocal =
+      _lib.lookupFunction<ffi.Void Function(ffi.Pointer<ffi.Int16>, ffi.Uint64, ffi.Int32),
+          void Function(ffi.Pointer<ffi.Int16>, int, int)>('owalkie_flutter_play_local_pcm');
+
+  late final int Function(int, ffi.Pointer<ffi.Int16>, int, ffi.Pointer<ffi.Int16>, int, int)
+      _pttUpWithRoger = _lib.lookupFunction<
+          ffi.Int32 Function(
+            ffi.Int64,
+            ffi.Pointer<ffi.Int16>,
+            ffi.Uint64,
+            ffi.Pointer<ffi.Int16>,
+            ffi.Uint64,
+            ffi.Int32,
+          ),
+          int Function(int, ffi.Pointer<ffi.Int16>, int, ffi.Pointer<ffi.Int16>, int, int)>(
+    'owalkie_flutter_ptt_up_with_roger',
+  );
+
+  late final int Function(int, ffi.Pointer<ffi.Int16>, int, ffi.Pointer<ffi.Int16>, int, int)
+      _sendCall = _lib.lookupFunction<
+          ffi.Int32 Function(
+            ffi.Int64,
+            ffi.Pointer<ffi.Int16>,
+            ffi.Uint64,
+            ffi.Pointer<ffi.Int16>,
+            ffi.Uint64,
+            ffi.Int32,
+          ),
+          int Function(int, ffi.Pointer<ffi.Int16>, int, ffi.Pointer<ffi.Int16>, int, int)>(
+    'owalkie_flutter_send_call',
+  );
+
   bool get hasSession => _hasSession() != 0;
+
+  int get codecSampleRate => _codecSampleRate();
+
+  int get codecFrameSamples => _codecFrameSamples();
 
   void shutdown() => _shutdown();
 
@@ -201,6 +286,121 @@ class SessionRelayBindings {
     } finally {
       calloc.free(out);
     }
+  }
+
+  Int16List? generateSignalPcm({
+    required List<SignalPoint> points,
+    required int sampleRate,
+    int tailMs = 0,
+    int repeatCount = 1,
+    double gain = 0.26,
+  }) {
+    if (points.isEmpty) {
+      return null;
+    }
+    return using((arena) {
+      final n = points.length;
+      final freqs = arena<ffi.Double>(n);
+      final durs = arena<ffi.Int32>(n);
+      for (var i = 0; i < n; i++) {
+        freqs[i] = points[i].freqHz;
+        durs[i] = points[i].durationMs;
+      }
+      final spec = arena<OwalkieFlutterSignalSpec>();
+      spec.ref
+        ..freqHz = freqs
+        ..durationMs = durs
+        ..pointCount = n
+        ..tailMs = tailMs
+        ..repeatCount = repeatCount
+        ..gain = gain;
+      final outSamples = arena<ffi.Pointer<ffi.Int16>>();
+      final outCount = arena<ffi.Uint64>();
+      final rc = _SignalGenerateNative(spec, sampleRate, outSamples, outCount);
+      if (rc != 0) {
+        return null;
+      }
+      final count = outCount.value;
+      final copy = Int16List(count);
+      for (var i = 0; i < count; i++) {
+        copy[i] = outSamples.value[i];
+      }
+      _signalFree(outSamples.value);
+      return copy;
+    });
+  }
+
+  void playLocalPcm(Int16List pcm, {required int sampleRate}) {
+    if (pcm.isEmpty) {
+      return;
+    }
+    using((arena) {
+      final buf = arena<ffi.Int16>(pcm.length);
+      for (var i = 0; i < pcm.length; i++) {
+        buf[i] = pcm[i];
+      }
+      _playLocal(buf, pcm.length, sampleRate);
+    });
+  }
+
+  int pttUpWithRoger({
+    required int sessionId,
+    Int16List? rogerUplink,
+    Int16List? rogerLocal,
+    required int localSampleRate,
+  }) {
+    return using((arena) {
+      ffi.Pointer<ffi.Int16> upPtr = ffi.nullptr;
+      ffi.Pointer<ffi.Int16> locPtr = ffi.nullptr;
+      var upCount = 0;
+      var locCount = 0;
+      if (rogerUplink != null && rogerUplink.isNotEmpty) {
+        upPtr = arena<ffi.Int16>(rogerUplink.length);
+        for (var i = 0; i < rogerUplink.length; i++) {
+          upPtr[i] = rogerUplink[i];
+        }
+        upCount = rogerUplink.length;
+      }
+      if (rogerLocal != null && rogerLocal.isNotEmpty) {
+        locPtr = arena<ffi.Int16>(rogerLocal.length);
+        for (var i = 0; i < rogerLocal.length; i++) {
+          locPtr[i] = rogerLocal[i];
+        }
+        locCount = rogerLocal.length;
+      }
+      return _pttUpWithRoger(
+        sessionId,
+        upPtr,
+        upCount,
+        locPtr,
+        locCount,
+        localSampleRate,
+      );
+    });
+  }
+
+  int sendCallSignal({
+    required int sessionId,
+    required Int16List uplink,
+    Int16List? local,
+    required int localSampleRate,
+  }) {
+    return using((arena) {
+      final upPtr = arena<ffi.Int16>(uplink.length);
+      for (var i = 0; i < uplink.length; i++) {
+        upPtr[i] = uplink[i];
+      }
+      ffi.Pointer<ffi.Int16> locPtr = ffi.nullptr;
+      var locCount = 0;
+      if (local != null && local.isNotEmpty) {
+        locPtr = arena<ffi.Int16>(local.length);
+        for (var i = 0; i < local.length; i++) {
+          locPtr[i] = local[i];
+        }
+        locCount = local.length;
+      }
+      return _sendCall(sessionId, upPtr, uplink.length, locPtr, locCount, localSampleRate);
+    });
   }
 }
 

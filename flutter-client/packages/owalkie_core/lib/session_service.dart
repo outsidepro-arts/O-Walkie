@@ -83,7 +83,28 @@ class SessionService {
 
   void pttDown() => _workerPort?.send(const SessionPttDownCommand());
 
-  void pttUp() => _workerPort?.send(const SessionPttUpCommand());
+  void pttUp({
+    List<({double freqHz, int durationMs})> rogerPoints = const [],
+  }) {
+    _workerPort?.send(SessionPttUpCommand(rogerPoints: rogerPoints));
+  }
+
+  void sendCall({
+    required List<({double freqHz, int durationMs})> points,
+    int repeatCount = 1,
+  }) {
+    _workerPort?.send(SessionSendCallCommand(
+      points: points,
+      repeatCount: repeatCount,
+    ));
+  }
+
+  void playLocalSamples(List<int> samples, {int sampleRate = 44100}) {
+    _workerPort?.send(SessionPlayLocalCommand(
+      samples: samples,
+      sampleRate: sampleRate,
+    ));
+  }
 
   void setRxVolumePercent(int percent) {
     _workerPort?.send(SessionSetRxVolumeCommand(percent));

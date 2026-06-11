@@ -3,12 +3,15 @@
 
 #include "owalkie_core.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <deque>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 
 #ifdef OWALKIE_CORE_HAS_SESSION
 
@@ -20,6 +23,28 @@ constexpr size_t kMaxEvents = 256;
 
 std::atomic<owalkie_session_id> g_active_session{0};
 std::atomic<bool> g_ptt_active{false};
+std::atomic<int> g_codec_sample_rate{8000};
+std::atomic<int> g_codec_frame_samples{160};
+
+void stream_pcm_frames(
+    owalkie_session_id sid,
+    const int16_t* pcm,
+    size_t sample_count,
+    int frame_samples) {
+    if (!pcm || sample_count == 0 || frame_samples <= 0) {
+        return;
+    }
+    const size_t frame_sz = static_cast<size_t>(frame_samples);
+    std::vector<int16_t> frame(frame_sz, 0);
+    size_t offset = 0;
+    while (offset < sample_count) {
+        const size_t chunk = std::min(frame_sz, sample_count - offset);
+        std::fill(frame.begin(), frame.end(), 0);
+        std::memcpy(frame.data(), pcm + offset, chunk * sizeof(int16_t));
+        (void)owalkie_tx_submit(sid, OWALKIE_TX_PCM, frame.data(), frame.size(), nullptr, 0);
+        offset += chunk;
+    }
+}
 
 void push_event(owalkie_event_type type, owalkie_session_id sid, const char* info) {
     owalkie_flutter_polled_event ev{};
@@ -80,6 +105,8 @@ void on_session_event(void* /*user*/, owalkie_session_id sid, const owalkie_even
     if (ev->type == OWALKIE_EV_CONNECTED) {
         const auto& cfg = ev->u.welcome.config;
         owalkie_flutter_audio::configure(cfg.sample_rate, cfg.packet_ms);
+        g_codec_sample_rate.store(cfg.sample_rate);
+        g_codec_frame_samples.store(owalkie_frame_samples(cfg.sample_rate, cfg.packet_ms));
         owalkie_set_power_profile(sid, OWALKIE_POWER_FOREGROUND);
     }
     if (ev->type == OWALKIE_EV_DISCONNECTED ||
@@ -266,6 +293,16 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_ptt_down(int64_t session_id) {
 }
 
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_ptt_up(int64_t session_id) {
+    return owalkie_flutter_ptt_up_with_roger(session_id, nullptr, 0, nullptr, 0, 0);
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_ptt_up_with_roger(
+    int64_t session_id,
+    const int16_t* roger_uplink,
+    size_t roger_uplink_count,
+    const int16_t* roger_local,
+    size_t roger_local_count,
+    int32_t local_sample_rate_hz) {
 #ifdef OWALKIE_CORE_HAS_SESSION
     if (!g_ptt_active.exchange(false)) {
         return OWALKIE_OK;
@@ -275,14 +312,144 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_ptt_up(int64_t session_id) {
         return OWALKIE_ERR_INVALID_ARG;
     }
     const auto sid = static_cast<owalkie_session_id>(session_id);
+    const bool has_roger = roger_uplink != nullptr && roger_uplink_count > 0;
+    std::thread local_thread;
+    if (roger_local != nullptr && roger_local_count > 0 && local_sample_rate_hz > 0) {
+        local_thread = std::thread([roger_local, roger_local_count, local_sample_rate_hz]() {
+            owalkie_flutter_audio::play_local_pcm_blocking(
+                roger_local, roger_local_count, local_sample_rate_hz);
+        });
+    }
+    if (has_roger) {
+        (void)owalkie_tx_submit(sid, OWALKIE_TX_VOICE_END, nullptr, 0, nullptr, 0);
+        (void)owalkie_tx_wait_idle(sid, 500);
+        stream_pcm_frames(
+            sid, roger_uplink, roger_uplink_count, g_codec_frame_samples.load());
+        (void)owalkie_tx_wait_idle(sid, 500);
+    }
     (void)owalkie_tx_submit(sid, OWALKIE_TX_CLOSE, nullptr, 0, nullptr, 0);
     (void)owalkie_tx_wait_idle(sid, 500);
     owalkie_set_power_profile(sid, OWALKIE_POWER_FOREGROUND);
+    if (local_thread.joinable()) {
+        local_thread.join();
+    }
     return OWALKIE_OK;
 #else
     (void)session_id;
+    (void)roger_uplink;
+    (void)roger_uplink_count;
+    (void)roger_local;
+    (void)roger_local_count;
+    (void)local_sample_rate_hz;
     return OWALKIE_ERR_UNSUPPORTED;
 #endif
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_send_call(
+    int64_t session_id,
+    const int16_t* uplink_pcm,
+    size_t uplink_count,
+    const int16_t* local_pcm,
+    size_t local_count,
+    int32_t local_sample_rate_hz) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    if (session_id <= 0 || !uplink_pcm || uplink_count == 0) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    if (!owalkie_session_id_ready(static_cast<owalkie_session_id>(session_id))) {
+        return OWALKIE_ERR_NOT_READY;
+    }
+    const auto sid = static_cast<owalkie_session_id>(session_id);
+    std::thread local_thread;
+    if (local_pcm != nullptr && local_count > 0 && local_sample_rate_hz > 0) {
+        local_thread = std::thread([local_pcm, local_count, local_sample_rate_hz]() {
+            owalkie_flutter_audio::play_local_pcm_blocking(
+                local_pcm, local_count, local_sample_rate_hz);
+        });
+    }
+    owalkie_set_power_profile(sid, OWALKIE_POWER_ACTIVE_TX);
+    const owalkie_result open_res =
+        owalkie_tx_submit(sid, OWALKIE_TX_OPEN, nullptr, 0, nullptr, 0);
+    if (open_res != OWALKIE_OK) {
+        owalkie_set_power_profile(sid, OWALKIE_POWER_FOREGROUND);
+        if (local_thread.joinable()) {
+            local_thread.join();
+        }
+        return static_cast<int32_t>(open_res);
+    }
+    stream_pcm_frames(sid, uplink_pcm, uplink_count, g_codec_frame_samples.load());
+    (void)owalkie_tx_submit(sid, OWALKIE_TX_CLOSE, nullptr, 0, nullptr, 0);
+    (void)owalkie_tx_wait_idle(sid, 500);
+    owalkie_set_power_profile(sid, OWALKIE_POWER_FOREGROUND);
+    if (local_thread.joinable()) {
+        local_thread.join();
+    }
+    return OWALKIE_OK;
+#else
+    (void)session_id;
+    (void)uplink_pcm;
+    (void)uplink_count;
+    (void)local_pcm;
+    (void)local_count;
+    (void)local_sample_rate_hz;
+    return OWALKIE_ERR_UNSUPPORTED;
+#endif
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_codec_sample_rate(void) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    return g_codec_sample_rate.load();
+#else
+    return 8000;
+#endif
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_codec_frame_samples(void) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    return g_codec_frame_samples.load();
+#else
+    return 160;
+#endif
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_signal_generate(
+    const owalkie_flutter_signal_spec* spec,
+    int32_t sample_rate_hz,
+    int16_t** out_samples,
+    size_t* out_sample_count) {
+    if (!spec || !out_samples || !out_sample_count || sample_rate_hz <= 0) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    if (spec->point_count == 0) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    if (!spec->freq_hz || !spec->duration_ms) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    std::vector<owalkie_signal_point> pts(spec->point_count);
+    for (size_t i = 0; i < spec->point_count; ++i) {
+        pts[i].freq_hz = spec->freq_hz[i];
+        pts[i].duration_ms = spec->duration_ms[i];
+    }
+    owalkie_signal_pattern pattern{};
+    pattern.points = pts.data();
+    pattern.point_count = pts.size();
+    pattern.tail_ms = spec->tail_ms;
+    pattern.repeat_count = spec->repeat_count;
+    pattern.gain = spec->gain;
+    return static_cast<int32_t>(
+        owalkie_signal_generate_pcm(&pattern, sample_rate_hz, out_samples, out_sample_count));
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_signal_free_pcm(int16_t* samples) {
+    owalkie_signal_free_pcm(samples);
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_play_local_pcm(
+    const int16_t* samples,
+    size_t sample_count,
+    int32_t sample_rate_hz) {
+    owalkie_flutter_audio::play_local_pcm_blocking(samples, sample_count, sample_rate_hz);
 }
 
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_poll_event(owalkie_flutter_polled_event* out) {

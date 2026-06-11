@@ -59,6 +59,53 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_ptt_down(int64_t session_id);
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_ptt_up(int64_t session_id);
 
 /**
+ * End PTT with optional roger uplink/local PCM (already generated at codec/local rate).
+ * Pass null/0 count to skip roger (same as @c owalkie_flutter_ptt_up).
+ */
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_ptt_up_with_roger(
+    int64_t session_id,
+    const int16_t* roger_uplink,
+    size_t roger_uplink_count,
+    const int16_t* roger_local,
+    size_t roger_local_count,
+    int32_t local_sample_rate_hz);
+
+/** Stream a pre-generated call pattern on the uplink; optional local preview. */
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_send_call(
+    int64_t session_id,
+    const int16_t* uplink_pcm,
+    size_t uplink_count,
+    const int16_t* local_pcm,
+    size_t local_count,
+    int32_t local_sample_rate_hz);
+
+/** Codec sample rate / frame size from last OWALKIE_EV_CONNECTED welcome. */
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_codec_sample_rate(void);
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_codec_frame_samples(void);
+
+typedef struct owalkie_flutter_signal_spec {
+    const double* freq_hz;
+    const int32_t* duration_ms;
+    size_t point_count;
+    int32_t tail_ms;
+    int32_t repeat_count;
+    double gain;
+} owalkie_flutter_signal_spec;
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_signal_generate(
+    const owalkie_flutter_signal_spec* spec,
+    int32_t sample_rate_hz,
+    int16_t** out_samples,
+    size_t* out_sample_count);
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_signal_free_pcm(int16_t* samples);
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_play_local_pcm(
+    const int16_t* samples,
+    size_t sample_count,
+    int32_t sample_rate_hz);
+
+/**
  * Poll session events posted from native worker threads.
  * @return 1 when @p out is filled, 0 when queue is empty.
  */

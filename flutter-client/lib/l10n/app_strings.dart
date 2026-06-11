@@ -9,6 +9,7 @@ abstract final class AppStrings {
   static const connectionStateReconnecting = 'Reconnecting…';
   static const connectionStateConnected = 'Connected';
   static const connectionStateParallelTx = 'Parallel transmission!';
+  static const connectionStateCalling = 'Calling…';
   static const connectionStateUnsupported = 'Session unavailable';
   static const signalQualityDefault = 'Signal: —';
   static const signalRxActive = 'RX active';
@@ -61,4 +62,29 @@ abstract final class AppStrings {
       'Disconnect before switching connection profile.';
   static const cannotDeleteLastProfile = 'At least one profile is required.';
   static const profileSaved = 'Connection profile saved.';
+  static const rogerSignalLabel = 'Roger signal';
+  static const callSignalLabel = 'Call signal';
+  static const rogerCustomButton = 'Custom';
+  static const rogerCustomTitle = 'Custom Roger signal';
+  static const callCustomTitle = 'Custom call signal';
+  static const rogerNameHint = 'Signal name';
+  static const rogerPointsLabel = 'Segments';
+  static const rogerNewSegment = 'New segment';
+  static const rogerEditSegment = 'Edit segment';
+  static const rogerFrequencyHint = 'Frequency (Hz)';
+  static const rogerDurationHint = 'Duration (ms)';
+  static const rogerPointInvalid = 'Enter valid segment values (frequency >= 0, duration > 0).';
+  static const rogerPointsTooLong = 'Total signal length is too long for this mode.';
+  static const rogerPointPause = 'Pause';
+  static String rogerPointHz(int hz) => '$hz Hz';
+  static const rogerSave = 'Save';
+  static const rogerCancel = 'Cancel';
+  static const rogerPointsEmpty = 'No segments yet';
+  static const rogerNameRequired = 'Enter signal name';
+  static const rogerPointsRequired = 'Add at least one segment';
+  static const callRepeatLabel = 'Repeat count';
+  static const patternCopy = 'Copy pattern';
+  static const patternPaste = 'Paste pattern';
+  static const patternCopied = 'Pattern copied to clipboard';
+  static const patternPasteFailed = 'Could not paste pattern from clipboard';
 }

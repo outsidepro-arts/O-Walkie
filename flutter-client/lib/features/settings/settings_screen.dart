@@ -5,6 +5,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/orientation_store.dart';
+import '../../data/signal_pattern_store.dart';
+import '../../domain/signal_pattern.dart';
 import '../../l10n/app_strings.dart';
 
 const _githubUrl = 'https://github.com/outsidepro-arts/O-Walkie';
@@ -19,6 +21,10 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   PackageInfo? _packageInfo;
   ScreenOrientationMode _orientation = ScreenOrientationMode.followSystem;
+  List<SignalPattern> _rogerPatterns = [];
+  List<SignalPattern> _callingPatterns = [];
+  String? _selectedRogerId;
+  String? _selectedCallingId;
 
   @override
   void initState() {
@@ -29,12 +35,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _load() async {
     final info = await PackageInfo.fromPlatform();
     final orientation = await ref.read(orientationStoreProvider).load();
+    final rogerStore = ref.read(rogerPatternStoreProvider);
+    final callingStore = ref.read(callingPatternStoreProvider);
     if (!mounted) {
       return;
     }
     setState(() {
       _packageInfo = info;
       _orientation = orientation;
+      _rogerPatterns = rogerStore.getAllPatterns();
+      _callingPatterns = callingStore.getAllPatterns();
+      _selectedRogerId = rogerStore.getSelectedPattern().id;
+      _selectedCallingId = callingStore.getSelectedPattern().id;
+    });
+  }
+
+  Future<void> _reloadPatterns() async {
+    final rogerStore = ref.read(rogerPatternStoreProvider);
+    final callingStore = ref.read(callingPatternStoreProvider);
+    setState(() {
+      _rogerPatterns = rogerStore.getAllPatterns();
+      _callingPatterns = callingStore.getAllPatterns();
+      _selectedRogerId = rogerStore.getSelectedPattern().id;
+      _selectedCallingId = callingStore.getSelectedPattern().id;
     });
   }
 
@@ -96,6 +119,94 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 )
                 .toList(),
             onChanged: _setOrientation,
+          ),
+          const SizedBox(height: 24),
+          Text(
+            AppStrings.rogerSignalLabel,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            value: _selectedRogerId ??
+                (_rogerPatterns.isEmpty ? null : _rogerPatterns.first.id),
+            decoration: const InputDecoration(labelText: AppStrings.rogerSignalLabel),
+            items: [
+              for (final p in _rogerPatterns)
+                DropdownMenuItem(value: p.id, child: Text(p.name)),
+            ],
+            onChanged: (id) async {
+              if (id == null) {
+                return;
+              }
+              await ref.read(rogerPatternStoreProvider).setSelectedPattern(id);
+              setState(() => _selectedRogerId = id);
+            },
+          ),
+          Row(
+            children: [
+              TextButton(
+                onPressed: () async {
+                  await context.push('/signals/roger/edit');
+                  await _reloadPatterns();
+                },
+                child: const Text(AppStrings.rogerCustomButton),
+              ),
+              if (_selectedRogerId != null &&
+                  _rogerPatterns.any((p) => p.id == _selectedRogerId && !p.builtIn))
+                TextButton(
+                  onPressed: () async {
+                    await context.push(
+                      '/signals/roger/edit?id=$_selectedRogerId',
+                    );
+                    await _reloadPatterns();
+                  },
+                  child: const Text(AppStrings.rogerEditSegment),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            AppStrings.callSignalLabel,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            value: _selectedCallingId ??
+                (_callingPatterns.isEmpty ? null : _callingPatterns.first.id),
+            decoration: const InputDecoration(labelText: AppStrings.callSignalLabel),
+            items: [
+              for (final p in _callingPatterns)
+                DropdownMenuItem(value: p.id, child: Text(p.name)),
+            ],
+            onChanged: (id) async {
+              if (id == null) {
+                return;
+              }
+              await ref.read(callingPatternStoreProvider).setSelectedPattern(id);
+              setState(() => _selectedCallingId = id);
+            },
+          ),
+          Row(
+            children: [
+              TextButton(
+                onPressed: () async {
+                  await context.push('/signals/calling/edit');
+                  await _reloadPatterns();
+                },
+                child: const Text(AppStrings.rogerCustomButton),
+              ),
+              if (_selectedCallingId != null &&
+                  _callingPatterns.any((p) => p.id == _selectedCallingId && !p.builtIn))
+                TextButton(
+                  onPressed: () async {
+                    await context.push(
+                      '/signals/calling/edit?id=$_selectedCallingId',
+                    );
+                    await _reloadPatterns();
+                  },
+                  child: const Text(AppStrings.rogerEditSegment),
+                ),
+            ],
           ),
           const SizedBox(height: 24),
           Text(
