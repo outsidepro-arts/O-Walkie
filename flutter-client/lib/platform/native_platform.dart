@@ -12,6 +12,10 @@ abstract final class NativePlatform {
   static const notificationDisconnectEvent = 'notification_disconnect';
   static const networkValidatedEvent = 'network_validated';
   static const networkLostEvent = 'network_lost';
+  static const mediaPttToggleEvent = 'media_ptt_toggle';
+  static const hardwarePttDownEvent = 'hardware_ptt_down';
+  static const hardwarePttUpEvent = 'hardware_ptt_up';
+  static const hardwarePttBoundEvent = 'hardware_ptt_bound';
 
   static const signalWifi = 0;
   static const signalCell = 1;
@@ -133,4 +137,68 @@ abstract final class NativePlatform {
     }
     await _channel.invokeMethod<void>('openBatterySettings');
   }
+
+  static Future<void> syncPttMediaSession({required bool active}) async {
+    if (!isAndroid) {
+      return;
+    }
+    await _channel.invokeMethod<void>('syncPttMediaSession', {
+      'active': active,
+    });
+  }
+
+  static Future<HardwarePttBinding> getHardwarePttBinding() async {
+    if (!isAndroid) {
+      return const HardwarePttBinding.unassigned();
+    }
+    final map = await _channel.invokeMapMethod<String, dynamic>(
+      'getHardwarePttBinding',
+    );
+    if (map == null) {
+      return const HardwarePttBinding.unassigned();
+    }
+    return HardwarePttBinding(
+      keyCode: map['keyCode'] as int? ?? 0,
+      scanCode: map['scanCode'] as int? ?? 0,
+      assigned: map['assigned'] as bool? ?? false,
+    );
+  }
+
+  static Future<void> clearHardwarePttBinding() async {
+    if (!isAndroid) {
+      return;
+    }
+    await _channel.invokeMethod<void>('clearHardwarePttBinding');
+  }
+
+  static Future<void> startCaptureHardwarePttKey() async {
+    if (!isAndroid) {
+      return;
+    }
+    await _channel.invokeMethod<void>('startCaptureHardwarePttKey');
+  }
+
+  static Future<void> cancelCaptureHardwarePttKey() async {
+    if (!isAndroid) {
+      return;
+    }
+    await _channel.invokeMethod<void>('cancelCaptureHardwarePttKey');
+  }
+}
+
+class HardwarePttBinding {
+  const HardwarePttBinding({
+    required this.keyCode,
+    required this.scanCode,
+    required this.assigned,
+  });
+
+  const HardwarePttBinding.unassigned()
+      : keyCode = 0,
+        scanCode = 0,
+        assigned = false;
+
+  final int keyCode;
+  final int scanCode;
+  final bool assigned;
 }

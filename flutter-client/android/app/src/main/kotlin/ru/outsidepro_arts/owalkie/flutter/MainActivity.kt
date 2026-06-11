@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.KeyEvent
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -18,6 +19,8 @@ class MainActivity : FlutterActivity() {
     private var pendingMicResult: MethodChannel.Result? = null
     private var pendingNotificationResult: MethodChannel.Result? = null
     private var sessionNetworkController: SessionNetworkController? = null
+    private var capturingHardwarePttKey = false
+    private val hardwareKeyStore by lazy { PttHardwareKeyStore(this) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -49,6 +52,33 @@ class MainActivity : FlutterActivity() {
                 "releaseAudioSession" -> {
                     AudioRouteHelper.restoreMediaAudioProfile(this)
                     result.success(null)
+                }
+                "syncPttMediaSession" -> {
+                    val active = call.argument<Boolean>("active") ?: false
+                    PttMediaSessionHost.sync(this, active)
+                    result.success(true)
+                }
+                "getHardwarePttBinding" -> {
+                    val binding = hardwareKeyStore.getBinding()
+                    result.success(
+                        mapOf(
+                            "keyCode" to binding.keyCode,
+                            "scanCode" to binding.scanCode,
+                            "assigned" to binding.isAssigned(),
+                        ),
+                    )
+                }
+                "clearHardwarePttBinding" -> {
+                    hardwareKeyStore.clearBinding()
+                    result.success(true)
+                }
+                "startCaptureHardwarePttKey" -> {
+                    capturingHardwarePttKey = true
+                    result.success(true)
+                }
+                "cancelCaptureHardwarePttKey" -> {
+                    capturingHardwarePttKey = false
+                    result.success(true)
                 }
                 "startSessionForeground" -> {
                     val connected = call.argument<Boolean>("connected") ?: false
@@ -84,12 +114,51 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         handleBatterySettingsIntent(intent)
+        handleMediaButtonIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleBatterySettingsIntent(intent)
+        handleMediaButtonIntent(intent)
+    }
+
+    override fun onDestroy() {
+        PttMediaSessionHost.release()
+        super.onDestroy()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (capturingHardwarePttKey &&
+            event.action == KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0
+        ) {
+            hardwareKeyStore.setBinding(
+                PttHardwareKeyStore.Binding(
+                    keyCode = event.keyCode,
+                    scanCode = event.scanCode,
+                ),
+            )
+            capturingHardwarePttKey = false
+            PlatformEvents.emit(PlatformEvents.EVENT_HARDWARE_PTT_BOUND)
+            return true
+        }
+        if (hardwareKeyStore.matches(event)) {
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    if (event.repeatCount == 0) {
+                        PlatformEvents.emit(PlatformEvents.EVENT_HARDWARE_PTT_DOWN)
+                    }
+                    return true
+                }
+                KeyEvent.ACTION_UP -> {
+                    PlatformEvents.emit(PlatformEvents.EVENT_HARDWARE_PTT_UP)
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onRequestPermissionsResult(
@@ -112,6 +181,13 @@ class MainActivity : FlutterActivity() {
             }
         }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
+    private fun handleMediaButtonIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_MEDIA_BUTTON) {
+            return
+        }
+        PttMediaSessionHost.dispatchMediaButtonIntent(intent)
     }
 
     private fun handleBatterySettingsIntent(intent: Intent?) {

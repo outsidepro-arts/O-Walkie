@@ -41,6 +41,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       ref.read(phoneCallPauseStoreProvider);
   BluetoothHeadsetStore get _bluetoothHeadsetStore =>
       ref.read(bluetoothHeadsetStoreProvider);
+  MediaButtonPttStore get _mediaButtonPttStore =>
+      ref.read(mediaButtonPttStoreProvider);
   RogerPatternStore get _rogerStore => ref.read(rogerPatternStoreProvider);
   CallingPatternStore get _callingStore => ref.read(callingPatternStoreProvider);
 
@@ -57,6 +59,18 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   void _onPlatformEvent(String event) {
     if (event == NativePlatform.notificationDisconnectEvent) {
       unawaited(toggleConnection());
+      return;
+    }
+    if (event == NativePlatform.mediaPttToggleEvent) {
+      togglePttLatch();
+      return;
+    }
+    if (event == NativePlatform.hardwarePttDownEvent) {
+      pttDown();
+      return;
+    }
+    if (event == NativePlatform.hardwarePttUpEvent) {
+      pttUp();
       return;
     }
     if (event.startsWith('${NativePlatform.networkValidatedEvent}:')) {
@@ -139,6 +153,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (NativePlatform.isMobile) {
       unawaited(NativePlatform.releaseAudioSession());
     }
+    unawaited(_syncPttMediaSession());
     _session?.pauseRelay();
   }
 
@@ -151,6 +166,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       connectionChip: AppStrings.connectionStateConnecting,
       isConnecting: true,
     );
+    unawaited(_syncPttMediaSession());
     _session?.resumeRelay();
   }
 
@@ -369,6 +385,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           connecting: connecting,
           connected: connected,
         ));
+        unawaited(_syncPttMediaSession());
       case SessionPttResultMessage(:final active, :final resultCode):
         state = state.copyWith(
           txActive: active,
@@ -493,6 +510,31 @@ class HomeScreenController extends Notifier<HomeScreenState> {
         channel: channel ?? state.draftProfile.channel,
       ),
     );
+  }
+
+  Future<void> _syncPttMediaSession() async {
+    if (!NativePlatform.isAndroid) {
+      return;
+    }
+    final active = state.isConnected &&
+        !state.relayPausedForPhoneCall &&
+        _mediaButtonPttStore.isEnabled();
+    await NativePlatform.syncPttMediaSession(active: active);
+  }
+
+  void togglePttLatch() {
+    if (!pttEnabled(
+      sessionSupported: state.sessionSupported,
+      isConnected: state.isConnected,
+      pttServerLocked: state.pttServerLocked,
+    )) {
+      return;
+    }
+    if (state.txActive) {
+      pttUp();
+    } else {
+      pttDown();
+    }
   }
 
   Future<void> _syncSessionForeground({
@@ -639,6 +681,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       _sessionForegroundActive = false;
       unawaited(NativePlatform.stopSessionForeground());
     }
+    unawaited(NativePlatform.syncPttMediaSession(active: false));
     _sessionSub?.cancel();
     _session?.dispose();
     _session = null;

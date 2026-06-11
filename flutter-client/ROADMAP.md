@@ -164,7 +164,7 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 **Implementation:** persistent client reconnect loop, handle-based handoff debouncing, `SessionNetworkController` logging (`OwalkieFlutterNet`).
 
-### 4c. Audio routing and interruptions *(implemented — device test pending)*
+### 4c. Audio routing and interruptions *(done)*
 
 | Task | Solution |
 |------|----------|
@@ -186,9 +186,9 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 - [x] Notification disconnect action works
 - [x] Battery optimization prompt opens system screen
 - [x] Switch Wi‑Fi ↔ mobile → reconnect without app restart
-- [ ] Incoming phone call pauses TX/RX; resume after call
-- [ ] BT headset: route + media play/pause toggles latch; hardware PTT hold works
-- [ ] Battery optimization prompt opens system screen
+- [x] Incoming phone call pauses TX/RX; resume after call
+- [x] BT headset audio route (media PTT latch — 4d)
+- [x] BT headset play/pause toggles latch; hardware PTT hold works (4d)
 
 ---
 

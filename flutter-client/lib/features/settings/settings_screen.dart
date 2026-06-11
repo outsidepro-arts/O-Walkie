@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/audio_settings_store.dart';
 import '../../data/orientation_store.dart';
+import '../../features/home/home_screen_controller.dart';
 import '../../platform/native_platform.dart';
 import '../../data/signal_pattern_store.dart';
 import '../../domain/signal_pattern.dart';
@@ -29,6 +32,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String? _selectedCallingId;
   bool _pauseDuringPhoneCall = true;
   bool _useBluetoothHeadset = false;
+  bool _mediaButtonPtt = true;
+  HardwarePttBinding _hardwarePttBinding = const HardwarePttBinding.unassigned();
 
   @override
   void initState() {
@@ -43,6 +48,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final callingStore = ref.read(callingPatternStoreProvider);
     final phoneCallPause = ref.read(phoneCallPauseStoreProvider);
     final bluetoothHeadset = ref.read(bluetoothHeadsetStoreProvider);
+    final mediaButtonPtt = ref.read(mediaButtonPttStoreProvider);
+    final hardwareBinding = await NativePlatform.getHardwarePttBinding();
     if (!mounted) {
       return;
     }
@@ -55,6 +62,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _selectedCallingId = callingStore.getSelectedPattern().id;
       _pauseDuringPhoneCall = phoneCallPause.isEnabled();
       _useBluetoothHeadset = bluetoothHeadset.isEnabled();
+      _mediaButtonPtt = mediaButtonPtt.isEnabled();
+      _hardwarePttBinding = hardwareBinding;
     });
   }
 
@@ -75,6 +84,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (NativePlatform.isMobile) {
       await NativePlatform.prepareAudioSession(bluetoothHeadset: enabled);
     }
+  }
+
+  Future<void> _setMediaButtonPtt(bool? enabled) async {
+    if (enabled == null) {
+      return;
+    }
+    await ref.read(mediaButtonPttStoreProvider).setEnabled(enabled);
+    setState(() => _mediaButtonPtt = enabled);
+    if (NativePlatform.isAndroid) {
+      final connected = ref.read(homeScreenControllerProvider).isConnected;
+      await NativePlatform.syncPttMediaSession(active: enabled && connected);
+    }
+  }
+
+  String _hardwarePttLabel() {
+    if (!_hardwarePttBinding.assigned) {
+      return AppStrings.settingsHardwarePttUnassigned;
+    }
+    if (_hardwarePttBinding.scanCode > 0) {
+      return 'Scan code ${_hardwarePttBinding.scanCode}';
+    }
+    return 'Key code ${_hardwarePttBinding.keyCode}';
+  }
+
+  Future<void> _showHardwarePttDialog() async {
+    if (!NativePlatform.isAndroid) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => _HardwarePttKeyDialog(
+        initialBinding: _hardwarePttBinding,
+        onBound: (binding) {
+          if (!mounted) {
+            return;
+          }
+          setState(() => _hardwarePttBinding = binding);
+        },
+      ),
+    );
+    final binding = await NativePlatform.getHardwarePttBinding();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _hardwarePttBinding = binding);
   }
 
   Future<void> _reloadPatterns() async {
@@ -162,6 +217,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             value: _useBluetoothHeadset,
             onChanged: _setUseBluetoothHeadset,
           ),
+          if (NativePlatform.isAndroid) ...[
+            SwitchListTile(
+              title: const Text(AppStrings.settingsMediaButtonPtt),
+              value: _mediaButtonPtt,
+              onChanged: _setMediaButtonPtt,
+            ),
+            ListTile(
+              title: const Text(AppStrings.settingsHardwarePttKey),
+              subtitle: Text(_hardwarePttLabel()),
+              trailing: TextButton(
+                onPressed: _showHardwarePttDialog,
+                child: const Text(AppStrings.settingsHardwarePttAssign),
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
           Text(
             AppStrings.rogerSignalLabel,
@@ -280,5 +350,100 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ScreenOrientationMode.portrait => AppStrings.orientationPortrait,
       ScreenOrientationMode.landscape => AppStrings.orientationLandscape,
     };
+  }
+}
+
+class _HardwarePttKeyDialog extends StatefulWidget {
+  const _HardwarePttKeyDialog({
+    required this.initialBinding,
+    required this.onBound,
+  });
+
+  final HardwarePttBinding initialBinding;
+  final ValueChanged<HardwarePttBinding> onBound;
+
+  @override
+  State<_HardwarePttKeyDialog> createState() => _HardwarePttKeyDialogState();
+}
+
+class _HardwarePttKeyDialogState extends State<_HardwarePttKeyDialog> {
+  StreamSubscription<String>? _platformSub;
+  HardwarePttBinding _binding = const HardwarePttBinding.unassigned();
+  bool _capturing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _binding = widget.initialBinding;
+    _startCapture();
+  }
+
+  Future<void> _startCapture() async {
+    _platformSub = NativePlatform.platformEvents.listen((event) async {
+      if (event != NativePlatform.hardwarePttBoundEvent) {
+        return;
+      }
+      final binding = await NativePlatform.getHardwarePttBinding();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _binding = binding;
+        _capturing = false;
+      });
+      widget.onBound(binding);
+    });
+    setState(() => _capturing = true);
+    await NativePlatform.startCaptureHardwarePttKey();
+  }
+
+  @override
+  void dispose() {
+    unawaited(NativePlatform.cancelCaptureHardwarePttKey());
+    _platformSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _resetBinding() async {
+    await NativePlatform.clearHardwarePttBinding();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _binding = const HardwarePttBinding.unassigned();
+      _capturing = true;
+    });
+    widget.onBound(const HardwarePttBinding.unassigned());
+    await NativePlatform.startCaptureHardwarePttKey();
+  }
+
+  String _bindingLabel() {
+    if (!_binding.assigned) {
+      return AppStrings.settingsHardwarePttDialogWaiting;
+    }
+    if (_binding.scanCode > 0) {
+      return 'Scan code ${_binding.scanCode}';
+    }
+    return 'Key code ${_binding.keyCode}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text(AppStrings.settingsHardwarePttDialogTitle),
+      content: Text(_capturing && !_binding.assigned
+          ? AppStrings.settingsHardwarePttDialogWaiting
+          : _bindingLabel()),
+      actions: [
+        TextButton(
+          onPressed: _resetBinding,
+          child: const Text(AppStrings.settingsHardwarePttReset),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('OK'),
+        ),
+      ],
+    );
   }
 }

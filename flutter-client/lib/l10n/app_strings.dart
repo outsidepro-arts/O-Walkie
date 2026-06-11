@@ -52,6 +52,13 @@ abstract final class AppStrings {
   static const settingsAudio = 'Audio';
   static const settingsPauseDuringPhoneCall = 'Pause relay during phone call';
   static const settingsUseBluetoothHeadset = 'Use Bluetooth headset';
+  static const settingsMediaButtonPtt = 'Headset play/pause toggles transmit';
+  static const settingsHardwarePttKey = 'Hardware PTT key';
+  static const settingsHardwarePttUnassigned = 'Not assigned';
+  static const settingsHardwarePttAssign = 'Assign key';
+  static const settingsHardwarePttDialogTitle = 'Press hardware PTT key';
+  static const settingsHardwarePttDialogWaiting = 'Waiting for key press…';
+  static const settingsHardwarePttReset = 'Reset';
   static const settingsDisplay = 'Display';
   static const settingsOrientation = 'Screen orientation';
   static const settingsAbout = 'About';

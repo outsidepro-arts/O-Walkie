@@ -46,3 +46,7 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    implementation("androidx.media:media:1.7.0")
+}

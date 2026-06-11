@@ -11,6 +11,10 @@ final bluetoothHeadsetStoreProvider = Provider<BluetoothHeadsetStore>((ref) {
   return BluetoothHeadsetStore(ref.watch(sharedPreferencesProvider));
 });
 
+final mediaButtonPttStoreProvider = Provider<MediaButtonPttStore>((ref) {
+  return MediaButtonPttStore(ref.watch(sharedPreferencesProvider));
+});
+
 /// Pause relay transport during phone calls (Kotlin [PhoneCallRelayPauseStore]).
 class PhoneCallPauseStore {
   PhoneCallPauseStore(this._prefs);
@@ -35,6 +39,21 @@ class BluetoothHeadsetStore {
   final SharedPreferences _prefs;
 
   bool isEnabled() => _prefs.getBool(_key) ?? false;
+
+  Future<void> setEnabled(bool enabled) async {
+    await _prefs.setBool(_key, enabled);
+  }
+}
+
+/// Headset / media play-pause toggles TX latch (Kotlin [PttHardwareKeyStore] media flag).
+class MediaButtonPttStore {
+  MediaButtonPttStore(this._prefs);
+
+  static const _key = 'media_button_ptt';
+
+  final SharedPreferences _prefs;
+
+  bool isEnabled() => _prefs.getBool(_key) ?? true;
 
   Future<void> setEnabled(bool enabled) async {
     await _prefs.setBool(_key, enabled);
