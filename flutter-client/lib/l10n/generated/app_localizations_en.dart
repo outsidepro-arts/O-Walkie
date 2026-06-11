@@ -198,7 +198,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get pttHold => 'Hold or tap to talk';
+  String get pttHold => 'Hold to talk';
 
   @override
   String get pttStopTalking => 'Stop talking';
@@ -442,11 +442,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get a11yScanStateOff => 'Off';
 
   @override
-  String get a11yPttHoldHint => 'Press and hold, or double tap to transmit.';
+  String get a11yPttHoldHint =>
+      'Press and hold to transmit, or use the Start talking action.';
 
   @override
   String get a11yPttActiveHint =>
-      'Transmitting. Release, double tap, or press Stop to end.';
+      'Transmitting. Use the Stop talking action to end.';
 
   @override
   String get a11yPttUnavailable => 'PTT unavailable: not connected.';

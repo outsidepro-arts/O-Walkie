@@ -199,7 +199,7 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
-  String get pttHold => 'Удерживайте или нажмите для разговора';
+  String get pttHold => 'Удерживайте для разговора';
 
   @override
   String get pttStopTalking => 'Остановить передачу';
@@ -450,11 +450,11 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get a11yPttHoldHint =>
-      'Нажмите и удерживайте или дважды нажмите для передачи.';
+      'Нажмите и удерживайте для передачи или выберите «Начать передачу».';
 
   @override
   String get a11yPttActiveHint =>
-      'Идёт передача. Отпустите, дважды нажмите или выберите «Остановить передачу».';
+      'Идёт передача. Выберите «Остановить передачу», чтобы завершить.';
 
   @override
   String get a11yPttUnavailable => 'PTT недоступна: нет соединения.';

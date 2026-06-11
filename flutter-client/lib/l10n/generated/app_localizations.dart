@@ -455,7 +455,7 @@ abstract class AppLocalizations {
   /// No description provided for @pttHold.
   ///
   /// In en, this message translates to:
-  /// **'Hold or tap to talk'**
+  /// **'Hold to talk'**
   String get pttHold;
 
   /// No description provided for @pttStopTalking.
@@ -911,13 +911,13 @@ abstract class AppLocalizations {
   /// No description provided for @a11yPttHoldHint.
   ///
   /// In en, this message translates to:
-  /// **'Press and hold, or double tap to transmit.'**
+  /// **'Press and hold to transmit, or use the Start talking action.'**
   String get a11yPttHoldHint;
 
   /// No description provided for @a11yPttActiveHint.
   ///
   /// In en, this message translates to:
-  /// **'Transmitting. Release, double tap, or press Stop to end.'**
+  /// **'Transmitting. Use the Stop talking action to end.'**
   String get a11yPttActiveHint;
 
   /// No description provided for @a11yPttUnavailable.

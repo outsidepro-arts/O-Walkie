@@ -1,22 +1,33 @@
-/// Touch-screen PTT: short tap toggles TX latch; hold behaves as classic PTT.
+/// Touch-screen PTT: hold to talk; swipe up while holding to latch (messenger-style).
 abstract final class PttTouchPolicy {
-  static const holdThresholdMs = 280;
+  static const swipeUpLockThresholdPx = 48.0;
 }
 
 enum PttPointerUpAction {
   none,
-  toggleOn,
-  toggleOff,
-  releaseHold,
+  releaseTransmit,
+  releaseLatched,
+}
+
+/// True when the finger moved up far enough to latch TX.
+bool pttSwipeUpLockTriggered({
+  required double startY,
+  required double currentY,
+  double thresholdPx = PttTouchPolicy.swipeUpLockThresholdPx,
+}) {
+  return startY - currentY >= thresholdPx;
 }
 
 /// Resolves pointer-up after touch interaction (unit-testable).
 PttPointerUpAction pttPointerUpAction({
-  required bool holdMode,
-  required bool txActive,
+  required bool latched,
+  required bool tapToReleasePending,
 }) {
-  if (holdMode) {
-    return PttPointerUpAction.releaseHold;
+  if (tapToReleasePending) {
+    return PttPointerUpAction.releaseLatched;
   }
-  return txActive ? PttPointerUpAction.toggleOff : PttPointerUpAction.toggleOn;
+  if (!latched) {
+    return PttPointerUpAction.releaseTransmit;
+  }
+  return PttPointerUpAction.none;
 }

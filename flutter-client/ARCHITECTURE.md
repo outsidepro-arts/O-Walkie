@@ -6,7 +6,7 @@ Feature phases and plugin choices: [ROADMAP.md](ROADMAP.md).
 
 | Input | Behavior |
 |-------|----------|
-| On-screen button | Tap = TX latch; hold = push-to-talk (`ptt_gesture_button.dart`) |
+| On-screen button | Hold = push-to-talk; slide up while holding = latch; tap when latched = stop (`ptt_gesture_button.dart`) |
 | Hardware PTT | Hold-to-talk only |
 | Media play/pause | Toggle latch (planned) |
 | Space / a11y actions | Toggle latch |

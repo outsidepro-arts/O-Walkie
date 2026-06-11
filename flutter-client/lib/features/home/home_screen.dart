@@ -838,7 +838,7 @@ class _RxVolumeSectionState extends State<_RxVolumeSection> {
   }
 }
 
-class _PttArea extends StatelessWidget {
+class _PttArea extends StatefulWidget {
   const _PttArea({
     required this.enabled,
     required this.active,
@@ -862,37 +862,67 @@ class _PttArea extends StatelessWidget {
   final VoidCallback onCall;
 
   @override
+  State<_PttArea> createState() => _PttAreaState();
+}
+
+class _PttAreaState extends State<_PttArea> {
+  bool _pttLatched = false;
+
+  @override
+  void didUpdateWidget(covariant _PttArea oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.active && !widget.active) {
+      _pttLatched = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final buttonColor = !widget.active
+        ? scheme.primary
+        : _pttLatched
+            ? scheme.error
+            : scheme.primaryContainer;
+    final labelColor = !widget.active
+        ? scheme.onPrimary
+        : _pttLatched
+            ? scheme.onError
+            : scheme.onPrimaryContainer;
+
     return SizedBox(
       height: 220,
       child: Stack(
         alignment: Alignment.center,
         children: [
           Opacity(
-            opacity: enabled ? 1.0 : 0.5,
+            opacity: widget.enabled ? 1.0 : 0.5,
             child: PttGestureButton(
-              enabled: enabled,
-              active: active,
-              locked: locked,
-              pttLockSec: pttLockSec,
-              sessionConnected: sessionConnected,
-              onPttDown: onPttDown,
-              onPttUp: onPttUp,
+              enabled: widget.enabled,
+              active: widget.active,
+              locked: widget.locked,
+              pttLockSec: widget.pttLockSec,
+              sessionConnected: widget.sessionConnected,
+              onPttDown: widget.onPttDown,
+              onPttUp: widget.onPttUp,
+              onLatchedChanged: (latched) {
+                if (_pttLatched != latched) {
+                  setState(() => _pttLatched = latched);
+                }
+              },
               child: Container(
                 width: 190,
                 height: 190,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: active
-                      ? Theme.of(context).colorScheme.primaryContainer
-                      : Theme.of(context).colorScheme.primary,
+                  color: buttonColor,
                 ),
                 child: Text(
-                  label,
+                  widget.label,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onPrimary,
+                        color: labelColor,
                         fontWeight: FontWeight.bold,
                       ),
                 ),
@@ -903,12 +933,12 @@ class _PttArea extends StatelessWidget {
             right: 0,
             bottom: 0,
             child: Opacity(
-              opacity: enabled && !active ? 1.0 : 0.5,
+              opacity: widget.enabled && !widget.active ? 1.0 : 0.5,
               child: SizedBox(
                 width: 96,
                 height: 72,
                 child: OutlinedButton(
-                  onPressed: enabled && !active ? onCall : null,
+                  onPressed: widget.enabled && !widget.active ? widget.onCall : null,
                   child: Text(AppStrings.callSignal),
                 ),
               ),

@@ -10,7 +10,7 @@ See also: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 | Input | Behavior |
 |-------|----------|
-| **On-screen PTT button** | Short **tap** = TX latch until next tap; **hold** = classic push-to-talk |
+| **On-screen PTT button** | **Hold** = push-to-talk; **slide up while holding** = latch until tap; **tap when latched** = stop |
 | **Hardware PTT key** | Always hold-to-talk (Phase 4 / 6) |
 | **Media / headset play-pause** | Toggle TX latch (Phase 4d) |
 | **Keyboard Space** (focused) | Toggle TX latch |
@@ -57,8 +57,9 @@ There is **no** user setting to switch the screen button to “toggle-only” (r
 Prerequisites: relay in LAN, Android APK or Windows dist with session enabled, second client optional.
 
 - [ ] Connect → chip **Connected**; disconnect → **Disconnected**
-- [ ] Hold PTT under ~300 ms release → one TX burst; hold longer → TX while finger down
-- [ ] Short tap PTT → TX stays on until second tap (latch)
+- [ ] Hold PTT → TX while finger down; release stops unless slid up to latch
+- [ ] Slide up while holding PTT → latched TX (red button) until tap
+- [ ] Tap latched PTT → TX stops
 - [ ] Space with PTT focused → toggle latch
 - [ ] RX volume slider affects incoming audio
 - [ ] Kill Wi‑Fi briefly → **Reconnecting…**, then **Connected** when network returns
