@@ -113,6 +113,7 @@ String connectionChipForTransport({
 }
 
 String pttButtonLabel({
+  required bool pttUiEnabled,
   required bool txActive,
   required bool pttServerLocked,
   required int pttLockSec,
@@ -121,8 +122,12 @@ String pttButtonLabel({
   if (txActive) {
     return AppStrings.pttActive;
   }
-  if (pttServerLocked && pttLockSec > 0) {
-    return AppStrings.pttLockedCountdown(pttLockSec);
+  if (!pttUiEnabled) {
+    final blockedByServer = pttServerLocked && !txActive;
+    if (blockedByServer && pttLockSec > 0) {
+      return AppStrings.pttLockedCountdown(pttLockSec);
+    }
+    return AppStrings.pttUnavailable;
   }
   if (txCountdownSec > 0) {
     return AppStrings.pttTxCountdown(txCountdownSec);
@@ -134,6 +139,19 @@ bool pttEnabled({
   required bool sessionSupported,
   required bool isConnected,
   required bool pttServerLocked,
+  required bool pttBurstPressBlocked,
 }) {
-  return sessionSupported && isConnected && !pttServerLocked;
+  return sessionSupported &&
+      isConnected &&
+      !pttServerLocked &&
+      !pttBurstPressBlocked;
+}
+
+bool pttUiEnabledFor(HomeScreenState state) {
+  return pttEnabled(
+    sessionSupported: state.sessionSupported,
+    isConnected: state.isConnected,
+    pttServerLocked: state.pttServerLocked,
+    pttBurstPressBlocked: state.pttBurstPressBlocked,
+  );
 }

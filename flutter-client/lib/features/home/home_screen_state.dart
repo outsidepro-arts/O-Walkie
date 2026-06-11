@@ -15,6 +15,7 @@ class HomeScreenState {
     this.relayPausedForPhoneCall = false,
     this.txActive = false,
     this.pttServerLocked = false,
+    this.pttBurstPressBlocked = false,
     this.pttLockSec = 0,
     this.txCountdownSec = 0,
     this.isReceivingBroadcast = false,
@@ -47,6 +48,7 @@ class HomeScreenState {
   final bool relayPausedForPhoneCall;
   final bool txActive;
   final bool pttServerLocked;
+  final bool pttBurstPressBlocked;
   final int pttLockSec;
   final int txCountdownSec;
   final bool isReceivingBroadcast;
@@ -89,6 +91,7 @@ class HomeScreenState {
     bool? relayPausedForPhoneCall,
     bool? txActive,
     bool? pttServerLocked,
+    bool? pttBurstPressBlocked,
     int? pttLockSec,
     int? txCountdownSec,
     bool? isReceivingBroadcast,
@@ -124,6 +127,8 @@ class HomeScreenState {
           relayPausedForPhoneCall ?? this.relayPausedForPhoneCall,
       txActive: txActive ?? this.txActive,
       pttServerLocked: pttServerLocked ?? this.pttServerLocked,
+      pttBurstPressBlocked:
+          pttBurstPressBlocked ?? this.pttBurstPressBlocked,
       pttLockSec: pttLockSec ?? this.pttLockSec,
       txCountdownSec: txCountdownSec ?? this.txCountdownSec,
       isReceivingBroadcast:

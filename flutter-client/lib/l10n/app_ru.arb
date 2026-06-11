@@ -68,6 +68,7 @@
   "rxVolumePercentAccessibility": "{percent} процентов",
   "pttHold": "Удерживайте для разговора",
   "pttActive": "Передача…",
+  "pttUnavailable": "PTT недоступна: нет соединения",
   "pttLockedCountdown": "Заблокировано {sec} с",
   "pttTxCountdown": "Подождите {sec} с",
   "callSignal": "Вызов",

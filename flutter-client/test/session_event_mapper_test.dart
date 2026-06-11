@@ -154,9 +154,10 @@ void main() {
   });
 
   group('pttButtonLabel', () {
-    test('shows lock countdown', () {
+    test('shows lock countdown when server locked', () {
       expect(
         pttButtonLabel(
+          pttUiEnabled: false,
           txActive: false,
           pttServerLocked: true,
           pttLockSec: 4,
@@ -166,12 +167,35 @@ void main() {
       );
     });
 
-    test('pttEnabled respects server lock', () {
+    test('shows unavailable when disabled without countdown', () {
+      expect(
+        pttButtonLabel(
+          pttUiEnabled: false,
+          txActive: false,
+          pttServerLocked: false,
+          pttLockSec: 0,
+          txCountdownSec: 0,
+        ),
+        AppStrings.pttUnavailable,
+      );
+    });
+
+    test('pttEnabled respects server lock and burst guard', () {
       expect(
         pttEnabled(
           sessionSupported: true,
           isConnected: true,
           pttServerLocked: true,
+          pttBurstPressBlocked: false,
+        ),
+        isFalse,
+      );
+      expect(
+        pttEnabled(
+          sessionSupported: true,
+          isConnected: true,
+          pttServerLocked: false,
+          pttBurstPressBlocked: true,
         ),
         isFalse,
       );

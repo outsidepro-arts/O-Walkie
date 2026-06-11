@@ -205,6 +205,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get pttActive => 'Передача…';
 
   @override
+  String get pttUnavailable => 'PTT недоступна: нет соединения';
+
+  @override
   String pttLockedCountdown(int sec) {
     return 'Заблокировано $sec с';
   }

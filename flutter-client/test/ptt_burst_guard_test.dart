@@ -34,4 +34,15 @@ void main() {
     expect(guard.pressBlocked, isFalse);
     expect(guard.onPressAttempt(), isTrue);
   });
+
+  test('notifies when burst block toggles', () {
+    var blocked = false;
+    final guard = PttBurstGuard(onBlockedChanged: (value) => blocked = value);
+    guard.onRelease();
+    guard.onRelease();
+    guard.onRelease();
+    expect(blocked, isTrue);
+    guard.reset();
+    expect(blocked, isFalse);
+  });
 }

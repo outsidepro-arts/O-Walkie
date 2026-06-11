@@ -91,6 +91,7 @@ abstract final class AppStrings {
       _l.rxVolumePercentAccessibility(percent);
   static String get pttHold => _l.pttHold;
   static String get pttActive => _l.pttActive;
+  static String get pttUnavailable => _l.pttUnavailable;
   static String pttLockedCountdown(int sec) => _l.pttLockedCountdown(sec);
   static String pttTxCountdown(int sec) => _l.pttTxCountdown(sec);
   static String get callSignal => _l.callSignal;

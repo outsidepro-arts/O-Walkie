@@ -170,6 +170,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         : AppStrings.connectServer;
 
     final connectionChip = state.connectionDisplayChip;
+    final pttUiEnabled = pttUiEnabledFor(state);
 
     return Semantics(
       explicitChildNodes: true,
@@ -364,13 +365,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                   const SizedBox(height: 16),
                   _PttArea(
-                    enabled: pttEnabled(
-                      sessionSupported: state.sessionSupported,
-                      isConnected: state.isConnected,
-                      pttServerLocked: state.pttServerLocked,
-                    ),
+                    enabled: pttUiEnabled,
                     active: state.txActive,
                     label: pttButtonLabel(
+                      pttUiEnabled: pttUiEnabled,
                       txActive: state.txActive,
                       pttServerLocked: state.pttServerLocked,
                       pttLockSec: state.pttLockSec,
@@ -831,43 +829,49 @@ class _PttArea extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: [
-          PttGestureButton(
-            enabled: enabled,
-            active: active,
-            locked: locked,
-            pttLockSec: pttLockSec,
-            sessionConnected: sessionConnected,
-            onPttDown: onPttDown,
-            onPttUp: onPttUp,
-            child: Container(
-              width: 190,
-              height: 190,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: active
-                    ? Theme.of(context).colorScheme.primaryContainer
-                    : Theme.of(context).colorScheme.primary,
-              ),
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onPrimary,
-                      fontWeight: FontWeight.bold,
-                    ),
+          Opacity(
+            opacity: enabled ? 1.0 : 0.5,
+            child: PttGestureButton(
+              enabled: enabled,
+              active: active,
+              locked: locked,
+              pttLockSec: pttLockSec,
+              sessionConnected: sessionConnected,
+              onPttDown: onPttDown,
+              onPttUp: onPttUp,
+              child: Container(
+                width: 190,
+                height: 190,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: active
+                      ? Theme.of(context).colorScheme.primaryContainer
+                      : Theme.of(context).colorScheme.primary,
+                ),
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onPrimary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
               ),
             ),
           ),
           Positioned(
             right: 0,
             bottom: 0,
-            child: SizedBox(
-              width: 96,
-              height: 72,
-              child: OutlinedButton(
-                onPressed: enabled && !active && !locked ? onCall : null,
-                child: Text(AppStrings.callSignal),
+            child: Opacity(
+              opacity: enabled && !active ? 1.0 : 0.5,
+              child: SizedBox(
+                width: 96,
+                height: 72,
+                child: OutlinedButton(
+                  onPressed: enabled && !active ? onCall : null,
+                  child: Text(AppStrings.callSignal),
+                ),
               ),
             ),
           ),

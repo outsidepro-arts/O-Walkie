@@ -464,6 +464,12 @@ abstract class AppLocalizations {
   /// **'Talking…'**
   String get pttActive;
 
+  /// No description provided for @pttUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'PTT unavailable: no connection'**
+  String get pttUnavailable;
+
   /// No description provided for @pttLockedCountdown.
   ///
   /// In en, this message translates to:

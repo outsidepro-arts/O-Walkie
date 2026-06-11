@@ -88,6 +88,7 @@
   },
   "pttHold": "Hold to Talk",
   "pttActive": "Talking…",
+  "pttUnavailable": "PTT unavailable: no connection",
   "pttLockedCountdown": "Locked {sec} s",
   "@pttLockedCountdown": {
     "placeholders": {

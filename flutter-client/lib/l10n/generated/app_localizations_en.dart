@@ -204,6 +204,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get pttActive => 'Talking…';
 
   @override
+  String get pttUnavailable => 'PTT unavailable: no connection';
+
+  @override
   String pttLockedCountdown(int sec) {
     return 'Locked $sec s';
   }

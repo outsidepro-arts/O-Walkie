@@ -5,6 +5,10 @@ class PttBurstGuard {
   static const releaseBurstTimerMs = 1000;
   static const releaseBurstBlockThreshold = 3;
 
+  PttBurstGuard({this.onBlockedChanged});
+
+  void Function(bool blocked)? onBlockedChanged;
+
   int _releaseCount = 0;
   bool _pressBlocked = false;
   Timer? _decayTimer;
@@ -23,7 +27,7 @@ class PttBurstGuard {
   void onRelease() {
     _releaseCount++;
     if (_releaseCount >= releaseBurstBlockThreshold) {
-      _pressBlocked = true;
+      _setBlocked(true);
     }
     _scheduleDecay();
   }
@@ -32,7 +36,15 @@ class PttBurstGuard {
     _decayTimer?.cancel();
     _decayTimer = null;
     _releaseCount = 0;
-    _pressBlocked = false;
+    _setBlocked(false);
+  }
+
+  void _setBlocked(bool value) {
+    if (_pressBlocked == value) {
+      return;
+    }
+    _pressBlocked = value;
+    onBlockedChanged?.call(value);
   }
 
   void _scheduleDecay() {
@@ -41,7 +53,7 @@ class PttBurstGuard {
       const Duration(milliseconds: releaseBurstTimerMs),
       () {
         _releaseCount = 0;
-        _pressBlocked = false;
+        _setBlocked(false);
       },
     );
   }

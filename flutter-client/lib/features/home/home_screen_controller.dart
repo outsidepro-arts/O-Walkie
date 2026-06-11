@@ -64,6 +64,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   @override
   HomeScreenState build() {
     ref.onDispose(_dispose);
+    _pttBurstGuard.onBlockedChanged = _onPttBurstPressBlockedChanged;
     if (Platform.environment['FLUTTER_TEST'] != 'true') {
       if (NativePlatform.isMobile) {
         _platformSub ??= NativePlatform.platformEvents.listen(_onPlatformEvent);
@@ -75,6 +76,17 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       unawaited(_bootstrap());
     }
     return HomeScreenState();
+  }
+
+  void _onPttBurstPressBlockedChanged(bool blocked) {
+    state = state.copyWith(pttBurstPressBlocked: blocked);
+    _stopPttIfUiDisabled();
+  }
+
+  void _stopPttIfUiDisabled() {
+    if (!pttUiEnabledFor(state) && state.txActive) {
+      pttUp();
+    }
   }
 
   void _onWindowsGlobalPttEvent(String event) {
@@ -581,11 +593,15 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           _cancelTxCountdown();
         }
       case SessionNativeEventMessage(:final eventType, :final info):
+        if (eventType == OwalkieEventType.pttLocked && state.txActive) {
+          pttUp();
+        }
         state = applyNativeSessionEvent(
           state,
           eventType: eventType,
           info: info,
         );
+        _stopPttIfUiDisabled();
         if (eventType == OwalkieEventType.txCountdownStart) {
           _startTxCountdown(int.tryParse(info) ?? 0);
         } else if (eventType == OwalkieEventType.txStop ||
@@ -632,6 +648,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     if (prev.txActive != state.txActive) {
       unawaited(ScreenWake.setTransmitting(state.txActive));
+    }
+    if (pttUiEnabledFor(prev) && !pttUiEnabledFor(state) && state.txActive) {
+      pttUp();
     }
   }
 
@@ -899,11 +918,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void togglePttLatch() {
-    if (!pttEnabled(
-      sessionSupported: state.sessionSupported,
-      isConnected: state.isConnected,
-      pttServerLocked: state.pttServerLocked,
-    )) {
+    if (!pttUiEnabledFor(state)) {
       return;
     }
     if (state.txActive) {
@@ -976,17 +991,14 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void pttDown() {
-    if (!pttEnabled(
-      sessionSupported: state.sessionSupported,
-      isConnected: state.isConnected,
-      pttServerLocked: state.pttServerLocked,
-    )) {
+    if (!pttUiEnabledFor(state)) {
       return;
     }
     if (state.txActive) {
       return;
     }
     if (!_pttBurstGuard.onPressAttempt()) {
+      state = state.copyWith(pttBurstPressBlocked: _pttBurstGuard.pressBlocked);
       return;
     }
     state = state.copyWith(isReceivingBroadcast: false);
@@ -1018,7 +1030,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void sendCall() {
-    if (!state.isConnected || state.txActive || state.callActive || state.pttServerLocked) {
+    if (!pttUiEnabledFor(state) ||
+        state.txActive ||
+        state.callActive) {
       return;
     }
     final pattern = _callingStore.getSelectedPattern();
@@ -1034,6 +1048,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
 
   void _dispose() {
     _cancelTxCountdown();
+    _pttBurstGuard.onBlockedChanged = null;
     _pttBurstGuard.reset();
     unawaited(Haptics.parallelTxCollision(active: false));
     unawaited(ScreenWake.setTransmitting(false));

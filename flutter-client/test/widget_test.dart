@@ -11,6 +11,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(AppStrings.appName), findsOneWidget);
-    expect(find.text(AppStrings.pttHold), findsOneWidget);
+    expect(find.text(AppStrings.pttUnavailable), findsOneWidget);
   });
 }
