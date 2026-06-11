@@ -197,6 +197,19 @@ void main() {
   });
 
   group('pttButtonLabel', () {
+    test('shows stop label when transmitting', () {
+      expect(
+        pttButtonLabel(
+          pttUiEnabled: true,
+          txActive: true,
+          pttServerLocked: false,
+          pttLockSec: 0,
+          txCountdownSec: 0,
+        ),
+        AppStrings.pttStopTalking,
+      );
+    });
+
     test('shows lock countdown when server locked', () {
       expect(
         pttButtonLabel(

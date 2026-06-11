@@ -86,10 +86,10 @@
       "percent": { "type": "int" }
     }
   },
-  "pttHold": "Hold to Talk",
-  "pttActive": "Talking…",
+  "pttHold": "Hold or tap to talk",
+  "pttStopTalking": "Stop talking",
   "pttUnavailable": "PTT unavailable: no connection",
-  "pttLockedCountdown": "Locked {sec} s",
+  "pttLockedCountdown": "PTT in {sec} s",
   "@pttLockedCountdown": {
     "placeholders": {
       "sec": { "type": "int" }
@@ -187,8 +187,8 @@
   },
   "a11yScanStateOn": "On",
   "a11yScanStateOff": "Off",
-  "a11yPttHoldHint": "Press and hold to transmit.",
-  "a11yPttToggleHint": "Double tap to start or stop transmit.",
+  "a11yPttHoldHint": "Press and hold, or double tap to transmit.",
+  "a11yPttActiveHint": "Transmitting. Release, double tap, or press Stop to end.",
   "a11yPttUnavailable": "PTT unavailable: not connected.",
   "a11yPttLocked": "PTT is locked while the channel is busy.",
   "a11yPttCountdown": "PTT unlocks in {sec} seconds",

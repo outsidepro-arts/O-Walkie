@@ -12,7 +12,7 @@ abstract final class A11yStrings {
   static String get scanStateOn => _l.a11yScanStateOn;
   static String get scanStateOff => _l.a11yScanStateOff;
   static String get pttHoldHint => _l.a11yPttHoldHint;
-  static String get pttToggleHint => _l.a11yPttToggleHint;
+  static String get pttActiveHint => _l.a11yPttActiveHint;
   static String get pttUnavailable => _l.a11yPttUnavailable;
   static String get pttLocked => _l.a11yPttLocked;
   static String pttCountdown(int sec) => _l.a11yPttCountdown(sec);

@@ -90,7 +90,7 @@ abstract final class AppStrings {
   static String rxVolumePercentAccessibility(int percent) =>
       _l.rxVolumePercentAccessibility(percent);
   static String get pttHold => _l.pttHold;
-  static String get pttActive => _l.pttActive;
+  static String get pttStopTalking => _l.pttStopTalking;
   static String get pttUnavailable => _l.pttUnavailable;
   static String pttLockedCountdown(int sec) => _l.pttLockedCountdown(sec);
   static String pttTxCountdown(int sec) => _l.pttTxCountdown(sec);

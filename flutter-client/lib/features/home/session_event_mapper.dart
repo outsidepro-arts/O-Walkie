@@ -120,7 +120,7 @@ String pttButtonLabel({
   required int txCountdownSec,
 }) {
   if (txActive) {
-    return AppStrings.pttActive;
+    return AppStrings.pttStopTalking;
   }
   if (!pttUiEnabled) {
     final blockedByServer = pttServerLocked && !txActive;

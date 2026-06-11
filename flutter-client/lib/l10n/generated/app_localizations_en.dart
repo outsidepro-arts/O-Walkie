@@ -198,17 +198,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get pttHold => 'Hold to Talk';
+  String get pttHold => 'Hold or tap to talk';
 
   @override
-  String get pttActive => 'Talking…';
+  String get pttStopTalking => 'Stop talking';
 
   @override
   String get pttUnavailable => 'PTT unavailable: no connection';
 
   @override
   String pttLockedCountdown(int sec) {
-    return 'Locked $sec s';
+    return 'PTT in $sec s';
   }
 
   @override
@@ -442,10 +442,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get a11yScanStateOff => 'Off';
 
   @override
-  String get a11yPttHoldHint => 'Press and hold to transmit.';
+  String get a11yPttHoldHint => 'Press and hold, or double tap to transmit.';
 
   @override
-  String get a11yPttToggleHint => 'Double tap to start or stop transmit.';
+  String get a11yPttActiveHint =>
+      'Transmitting. Release, double tap, or press Stop to end.';
 
   @override
   String get a11yPttUnavailable => 'PTT unavailable: not connected.';

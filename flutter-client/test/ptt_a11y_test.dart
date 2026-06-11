@@ -44,9 +44,30 @@ void main() {
         PttA11yBucket.hold,
       );
     });
+
+    test('active when transmitting', () {
+      expect(
+        resolvePttA11yBucket(
+          enabled: true,
+          active: true,
+          serverPttLocked: false,
+          pttLockSec: 0,
+        ),
+        PttA11yBucket.active,
+      );
+    });
   });
 
   group('pttA11yLabelFor', () {
+    test('active hint when transmitting', () {
+      expect(
+        pttA11yLabelFor(
+          bucket: PttA11yBucket.active,
+          pttLockSec: 0,
+        ),
+        A11yStrings.pttActiveHint,
+      );
+    });
     test('freezes countdown label while focused', () {
       expect(
         pttA11yLabelFor(

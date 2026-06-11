@@ -215,12 +215,15 @@ class _PttGestureButtonState extends State<PttGestureButton> {
         onDidGainAccessibilityFocus: _onDidGainAccessibilityFocus,
         onDidLoseAccessibilityFocus: _onDidLoseAccessibilityFocus,
         customSemanticsActions: widget.enabled
-            ? {
-                CustomSemanticsAction(label: A11yStrings.pttStartAction):
-                    widget.onPttDown,
-                CustomSemanticsAction(label: A11yStrings.pttStopAction):
-                    widget.onPttUp,
-              }
+            ? widget.active
+                ? {
+                    CustomSemanticsAction(label: A11yStrings.pttStopAction):
+                        widget.onPttUp,
+                  }
+                : {
+                    CustomSemanticsAction(label: A11yStrings.pttStartAction):
+                        widget.onPttDown,
+                  }
             : const {},
         child: ExcludeSemantics(
           child: GestureDetector(
