@@ -10,6 +10,11 @@ abstract final class NativePlatform {
       EventChannel('ru.outsidepro_arts.owalkie.flutter/platform_events');
 
   static const notificationDisconnectEvent = 'notification_disconnect';
+  static const networkValidatedEvent = 'network_validated';
+  static const networkLostEvent = 'network_lost';
+
+  static const signalWifi = 0;
+  static const signalCell = 1;
 
   static bool get isMobile => Platform.isAndroid || Platform.isIOS;
 
@@ -104,6 +109,20 @@ abstract final class NativePlatform {
       return;
     }
     await _channel.invokeMethod<void>('stopSessionForeground');
+  }
+
+  static Future<void> startSessionNetworkMonitoring() async {
+    if (!isAndroid) {
+      return;
+    }
+    await _channel.invokeMethod<void>('startSessionNetworkMonitoring');
+  }
+
+  static Future<void> stopSessionNetworkMonitoring() async {
+    if (!isAndroid) {
+      return;
+    }
+    await _channel.invokeMethod<void>('stopSessionNetworkMonitoring');
   }
 
   static Future<void> openBatterySettings() async {

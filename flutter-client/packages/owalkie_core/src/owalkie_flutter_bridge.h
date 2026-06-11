@@ -125,6 +125,11 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_check_channel_activity(
     int32_t timeout_ms,
     int32_t* out_active);
 
+/** Optional UDP NAT punch after network handoff (mode 0=wifi, 1=cell for report/clear). */
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_punch_nat(int64_t session_id);
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_report_signal(int32_t mode, int32_t value);
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_clear_signal(int32_t mode);
+
 #ifdef __cplusplus
 }
 #endif

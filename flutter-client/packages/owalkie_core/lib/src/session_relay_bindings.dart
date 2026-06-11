@@ -195,6 +195,24 @@ class SessionRelayBindings {
     'owalkie_flutter_ptt_up_with_roger',
   );
 
+  late final int Function(int) _punchNat =
+      _lib.lookupFunction<ffi.Int32 Function(ffi.Int64), int Function(int)>(
+    'owalkie_flutter_punch_nat',
+  );
+
+  late final int Function(int, int) _reportSignal =
+      _lib.lookupFunction<ffi.Int32 Function(ffi.Int32, ffi.Int32), int Function(int, int)>(
+    'owalkie_flutter_report_signal',
+  );
+
+  late final int Function(int) _clearSignal =
+      _lib.lookupFunction<ffi.Int32 Function(ffi.Int32), int Function(int)>(
+    'owalkie_flutter_clear_signal',
+  );
+
+  static const int signalWifi = 0;
+  static const int signalCell = 1;
+
   late final int Function(int, ffi.Pointer<ffi.Int16>, int, ffi.Pointer<ffi.Int16>, int, int)
       _sendCall = _lib.lookupFunction<
           ffi.Int32 Function(
@@ -249,6 +267,13 @@ class SessionRelayBindings {
 
   int setRepeaterMode(int sessionId, {required bool enabled}) =>
       _setRepeater(sessionId, enabled ? 1 : 0);
+
+  int punchNat(int sessionId) => _punchNat(sessionId);
+
+  int reportSignal({required int mode, required int value}) =>
+      _reportSignal(mode, value);
+
+  int clearSignal(int mode) => _clearSignal(mode);
 
   ({int resultCode, bool active}) checkChannelActivity({
     required String host,

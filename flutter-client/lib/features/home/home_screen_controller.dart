@@ -31,6 +31,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   Timer? _txCountdownTimer;
   bool _parallelTxVibrating = false;
   bool _sessionForegroundActive = false;
+  bool _sessionNetworkMonitoring = false;
+  bool _pendingNetworkPunch = false;
 
   ServerStore get _store => ref.read(serverStoreProvider);
   RogerPatternStore get _rogerStore => ref.read(rogerPatternStoreProvider);
@@ -49,7 +51,49 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   void _onPlatformEvent(String event) {
     if (event == NativePlatform.notificationDisconnectEvent) {
       unawaited(toggleConnection());
+      return;
     }
+    if (event == NativePlatform.networkValidatedEvent) {
+      _onNetworkValidated();
+      return;
+    }
+    if (event.startsWith('signal_report:')) {
+      final parts = event.split(':');
+      if (parts.length == 3) {
+        final mode = int.tryParse(parts[1]);
+        final value = int.tryParse(parts[2]);
+        if (mode != null && value != null) {
+          _session?.reportSignal(mode: mode, value: value);
+        }
+      }
+      return;
+    }
+    if (event.startsWith('signal_clear:')) {
+      final parts = event.split(':');
+      if (parts.length == 2) {
+        final mode = int.tryParse(parts[1]);
+        if (mode != null) {
+          _session?.clearSignal(mode);
+        }
+      }
+    }
+  }
+
+  void _onNetworkValidated() {
+    final shouldPunch = state.isConnected || state.isReconnecting;
+    if (!shouldPunch) {
+      return;
+    }
+    _requestPunchNat();
+  }
+
+  void _requestPunchNat() {
+    if (state.txActive || state.callActive) {
+      _pendingNetworkPunch = true;
+      return;
+    }
+    _pendingNetworkPunch = false;
+    _session?.punchNat();
   }
 
   Future<void> _bootstrap() async {
@@ -321,6 +365,11 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (prev.txActive != state.txActive) {
       unawaited(ScreenWake.setTransmitting(state.txActive));
     }
+    final txOrCallEnded = (prev.txActive && !state.txActive) ||
+        (prev.callActive && !state.callActive);
+    if (txOrCallEnded && _pendingNetworkPunch) {
+      _requestPunchNat();
+    }
   }
 
   void _startTxCountdown(int sec) {
@@ -402,13 +451,22 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     final sessionDesired = connecting || connected;
     if (!sessionDesired) {
+      if (_sessionNetworkMonitoring) {
+        _sessionNetworkMonitoring = false;
+        await NativePlatform.stopSessionNetworkMonitoring();
+      }
       if (_sessionForegroundActive) {
         _sessionForegroundActive = false;
         await NativePlatform.stopSessionForeground();
       }
+      _pendingNetworkPunch = false;
       return;
     }
     await NativePlatform.ensureNotificationPermission();
+    if (!_sessionNetworkMonitoring) {
+      _sessionNetworkMonitoring = true;
+      await NativePlatform.startSessionNetworkMonitoring();
+    }
     if (!_sessionForegroundActive) {
       _sessionForegroundActive = true;
       await NativePlatform.startSessionForeground(connected: connected);
@@ -518,10 +576,15 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     unawaited(ScreenWake.setTransmitting(false));
     _platformSub?.cancel();
     _platformSub = null;
+    if (_sessionNetworkMonitoring) {
+      _sessionNetworkMonitoring = false;
+      unawaited(NativePlatform.stopSessionNetworkMonitoring());
+    }
     if (_sessionForegroundActive) {
       _sessionForegroundActive = false;
       unawaited(NativePlatform.stopSessionForeground());
     }
+    _pendingNetworkPunch = false;
     _sessionSub?.cancel();
     _session?.dispose();
     _session = null;

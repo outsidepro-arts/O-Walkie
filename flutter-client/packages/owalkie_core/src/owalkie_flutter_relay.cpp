@@ -517,4 +517,40 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_check_channel_activity(
 #endif
 }
 
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_punch_nat(int64_t session_id) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    if (session_id == 0) {
+        return OWALKIE_ERR_INVALID_ARG;
+    }
+    return static_cast<int32_t>(
+        owalkie_punch_nat(static_cast<owalkie_session_id>(session_id)));
+#else
+    (void)session_id;
+    return OWALKIE_ERR_UNSUPPORTED;
+#endif
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_report_signal(int32_t mode, int32_t value) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    const owalkie_signal_mode signal_mode =
+        mode == 1 ? OWALKIE_SIGNAL_CELL : OWALKIE_SIGNAL_WIFI;
+    return static_cast<int32_t>(owalkie_report_signal(signal_mode, value));
+#else
+    (void)mode;
+    (void)value;
+    return OWALKIE_ERR_UNSUPPORTED;
+#endif
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_clear_signal(int32_t mode) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    const owalkie_signal_mode signal_mode =
+        mode == 1 ? OWALKIE_SIGNAL_CELL : OWALKIE_SIGNAL_WIFI;
+    return static_cast<int32_t>(owalkie_clear_signal(signal_mode));
+#else
+    (void)mode;
+    return OWALKIE_ERR_UNSUPPORTED;
+#endif
+}
+
 } // extern "C"

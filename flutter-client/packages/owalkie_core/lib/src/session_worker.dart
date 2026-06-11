@@ -86,7 +86,20 @@ class _SessionWorker {
         _checkChannelActivity(message);
       case SessionShutdownCommand():
         _shutdown();
+      case SessionPunchNatCommand():
+        _punchNat();
+      case SessionReportSignalCommand(:final mode, :final value):
+        _relay.reportSignal(mode: mode, value: value);
+      case SessionClearSignalCommand(:final mode):
+        _relay.clearSignal(mode);
     }
+  }
+
+  void _punchNat() {
+    if (_sessionId == 0) {
+      return;
+    }
+    _relay.punchNat(_sessionId);
   }
 
   void _startConnect(SessionConnectCommand cmd) {
@@ -313,6 +326,7 @@ class _SessionWorker {
         case OwalkieEventType.connected:
           _hadConnected = true;
           _publishState(connected: true, connecting: false, clearError: true);
+          _relay.punchNat(_sessionId);
         case OwalkieEventType.connectionLost:
           _publishState(connected: false, connecting: true, reconnecting: true);
           if (_desiredConnected) {

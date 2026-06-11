@@ -114,6 +114,16 @@ class SessionService {
     _workerPort?.send(SessionSetRepeaterCommand(enabled));
   }
 
+  void punchNat() => _workerPort?.send(const SessionPunchNatCommand());
+
+  void reportSignal({required int mode, required int value}) {
+    _workerPort?.send(SessionReportSignalCommand(mode: mode, value: value));
+  }
+
+  void clearSignal(int mode) {
+    _workerPort?.send(SessionClearSignalCommand(mode));
+  }
+
   int _channelActivityRequestId = 0;
 
   /// One-shot channel activity probe (blocking in worker isolate).

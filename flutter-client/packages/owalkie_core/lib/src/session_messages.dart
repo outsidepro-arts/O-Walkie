@@ -83,6 +83,23 @@ final class SessionShutdownCommand extends SessionCommand {
   const SessionShutdownCommand();
 }
 
+final class SessionPunchNatCommand extends SessionCommand {
+  const SessionPunchNatCommand();
+}
+
+final class SessionReportSignalCommand extends SessionCommand {
+  const SessionReportSignalCommand({required this.mode, required this.value});
+
+  final int mode;
+  final int value;
+}
+
+final class SessionClearSignalCommand extends SessionCommand {
+  const SessionClearSignalCommand(this.mode);
+
+  final int mode;
+}
+
 /// Messages session worker → main isolate.
 sealed class SessionWorkerMessage {
   const SessionWorkerMessage();

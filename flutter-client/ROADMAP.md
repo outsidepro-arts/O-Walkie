@@ -140,7 +140,7 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 ---
 
-## Phase 4 — Android: background, network, audio policy *(in progress — 4b network)*
+## Phase 4 — Android: background, network, audio policy *(in progress — 4c audio)*
 
 ### 4a. Foreground service + notification *(done)*
 
@@ -153,14 +153,16 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 **Implementation:** `WalkieForegroundService.kt`, `PlatformEvents` EventChannel, `NativePlatform.startSessionForeground` wired from `HomeScreenController` on connect/disconnect.
 
-### 4b. Network and reconnect
+### 4b. Network and reconnect *(implemented — device test pending)*
 
-| Task | Plugin / custom |
-|------|-----------------|
-| Network validated / lost | [`connectivity_plus`](https://pub.dev/packages/connectivity_plus) |
-| `android_setprocnetwork` | **Custom** method channel (mirror JNI hook) |
-| Uplink signal byte | [`network_info_plus`](https://pub.dev/packages/network_info_plus) → FFI `owalkie_report_signal` |
-| NAT punch on handoff | FFI `owalkie_punch_nat` |
+| Task | Solution |
+|------|----------|
+| Network validated / lost | Kotlin `SessionNetworkController` + `ConnectivityManager.NetworkCallback` |
+| Process network bind | `ConnectivityManager.bindProcessToNetwork` (API 23+) |
+| Uplink signal byte | Wifi RSSI + cell level → FFI `owalkie_report_signal` |
+| NAT punch on handoff | FFI `owalkie_punch_nat` on validated network (deferred during TX/call) |
+
+**Implementation:** `SessionNetworkController.kt`, FFI `owalkie_flutter_punch_nat` / `report_signal` / `clear_signal`, wired from `HomeScreenController` platform events.
 
 ### 4c. Audio routing and interruptions
 

@@ -18,6 +18,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var pendingMicResult: MethodChannel.Result? = null
     private var pendingNotificationResult: MethodChannel.Result? = null
+    private var sessionNetworkController: SessionNetworkController? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -65,6 +66,14 @@ class MainActivity : FlutterActivity() {
                 }
                 "stopSessionForeground" -> {
                     WalkieForegroundService.stop(this)
+                    result.success(true)
+                }
+                "startSessionNetworkMonitoring" -> {
+                    sessionNetworkController()?.start()
+                    result.success(true)
+                }
+                "stopSessionNetworkMonitoring" -> {
+                    sessionNetworkController()?.stop()
                     result.success(true)
                 }
                 "openBatterySettings" -> {
@@ -168,6 +177,16 @@ class MainActivity : FlutterActivity() {
             arrayOf(Manifest.permission.POST_NOTIFICATIONS),
             NOTIFICATION_REQUEST,
         )
+    }
+
+    private fun sessionNetworkController(): SessionNetworkController {
+        val existing = sessionNetworkController
+        if (existing != null) {
+            return existing
+        }
+        val created = SessionNetworkController(this)
+        sessionNetworkController = created
+        return created
     }
 
     private fun openBatteryOptimizationSettings() {
