@@ -172,6 +172,7 @@
   "rogerNameRequired": "Enter signal name",
   "rogerPointsRequired": "Add at least one segment",
   "callRepeatLabel": "Repeat count",
+  "playSignalButton": "Play",
   "patternCopy": "Copy pattern",
   "patternPaste": "Paste pattern",
   "patternCopied": "Pattern copied to clipboard",

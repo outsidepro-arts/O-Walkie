@@ -166,6 +166,7 @@ abstract final class AppStrings {
   static String get rogerNameRequired => _l.rogerNameRequired;
   static String get rogerPointsRequired => _l.rogerPointsRequired;
   static String get callRepeatLabel => _l.callRepeatLabel;
+  static String get playSignalButton => _l.playSignalButton;
   static String get patternCopy => _l.patternCopy;
   static String get patternPaste => _l.patternPaste;
   static String get patternCopied => _l.patternCopied;

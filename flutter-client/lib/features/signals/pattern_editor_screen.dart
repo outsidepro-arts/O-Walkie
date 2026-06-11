@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/home/home_screen_controller.dart';
 import '../../data/signal_pattern_store.dart';
 import '../../domain/signal_pattern.dart';
 import '../../l10n/app_strings.dart';
@@ -181,6 +182,24 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
+  List<SignalPoint> _pointsForPlayback() {
+    if (widget.kind == SignalEditorKind.calling) {
+      final rep = int.tryParse(_repeatCtrl.text);
+      if (rep == null || rep < 1 || rep > 500) {
+        _showSnack(AppStrings.rogerPointInvalid);
+        return List<SignalPoint>.from(_points);
+      }
+      return expandSignalPoints(_points, repeatCount: rep);
+    }
+    return List<SignalPoint>.from(_points);
+  }
+
+  void _playPattern() {
+    ref
+        .read(homeScreenControllerProvider.notifier)
+        .previewSignalPattern(_pointsForPlayback());
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = widget.kind == SignalEditorKind.calling
@@ -250,6 +269,11 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
           OutlinedButton(
             onPressed: () => _addOrEditSegment(),
             child: Text(AppStrings.rogerNewSegment),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton(
+            onPressed: _playPattern,
+            child: Text(AppStrings.playSignalButton),
           ),
           const SizedBox(height: 24),
           FilledButton(

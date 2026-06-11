@@ -37,10 +37,7 @@ class SignalPattern {
 
   List<SignalPoint> expandedPoints() {
     final r = repeatCount?.clamp(1, 500) ?? 1;
-    if (r <= 1) {
-      return points;
-    }
-    return [for (var i = 0; i < r; i++) ...points];
+    return expandSignalPoints(points, repeatCount: r);
   }
 
   SignalPattern copyWith({
@@ -171,4 +168,15 @@ abstract final class BuiltInCallPatterns {
   );
 
   static List<SignalPattern> get all => [variant1, variant2, variant3];
+}
+
+List<SignalPoint> expandSignalPoints(
+  List<SignalPoint> base, {
+  required int repeatCount,
+}) {
+  final r = repeatCount.clamp(1, 500);
+  if (r <= 1) {
+    return base;
+  }
+  return [for (var i = 0; i < r; i++) ...base];
 }

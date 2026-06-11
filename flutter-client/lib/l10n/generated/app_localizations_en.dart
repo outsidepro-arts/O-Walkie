@@ -410,6 +410,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get callRepeatLabel => 'Repeat count';
 
   @override
+  String get playSignalButton => 'Play';
+
+  @override
   String get patternCopy => 'Copy pattern';
 
   @override

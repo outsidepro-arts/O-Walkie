@@ -132,6 +132,7 @@
   "rogerNameRequired": "Введите название сигнала",
   "rogerPointsRequired": "Добавьте хотя бы один сегмент",
   "callRepeatLabel": "Количество повторов",
+  "playSignalButton": "Проиграть",
   "patternCopy": "Копировать сигнал",
   "patternPaste": "Вставить сигнал",
   "patternCopied": "Последовательность сигнала скопирована",

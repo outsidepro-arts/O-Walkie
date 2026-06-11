@@ -416,6 +416,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get callRepeatLabel => 'Количество повторов';
 
   @override
+  String get playSignalButton => 'Проиграть';
+
+  @override
   String get patternCopy => 'Копировать сигнал';
 
   @override

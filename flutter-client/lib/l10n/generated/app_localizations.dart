@@ -848,6 +848,12 @@ abstract class AppLocalizations {
   /// **'Repeat count'**
   String get callRepeatLabel;
 
+  /// No description provided for @playSignalButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Play'**
+  String get playSignalButton;
+
   /// No description provided for @patternCopy.
   ///
   /// In en, this message translates to:

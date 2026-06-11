@@ -4,7 +4,12 @@ import 'dart:math' as math;
 import 'package:flutter/services.dart';
 
 import '../session_service.dart';
+import 'signal_pattern_pcm.dart';
+import 'signal_point.dart';
 import 'wav_pcm.dart';
+
+/// Tone segment for Roger/call preview from the app layer (no worker [SignalPoint] leak).
+typedef SignalPreviewSegment = ({double freqHz, int durationMs});
 
 /// Kotlin [UiSignalPlayer] + [WalkieService] local UI tones.
 ///
@@ -65,6 +70,21 @@ abstract final class UiSoundLibrary {
     }
     final safe = volumePercent.clamp(0, 200);
     _playSamples(session, WavPcm.applyGainPercent(pcm, safe));
+  }
+
+  /// Roger/call pattern preview (Kotlin [SignalPreviewPlayer] parity).
+  static void playSignalPatternPreview(
+    SessionService? session,
+    List<SignalPreviewSegment> segments,
+  ) {
+    if (segments.isEmpty) {
+      return;
+    }
+    final points = [
+      for (final s in segments)
+        SignalPoint(freqHz: s.freqHz, durationMs: s.durationMs),
+    ];
+    _playSamples(session, SignalPatternPcm.synthesize(points));
   }
 
   static void playConnected(SessionService? session) {

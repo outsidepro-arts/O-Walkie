@@ -17,11 +17,13 @@ import '../../domain/ptt_burst_guard.dart';
 import '../../domain/scan_endpoint.dart';
 import '../../domain/scan_mode.dart';
 import '../../domain/server_profile.dart';
+import '../../domain/signal_pattern.dart';
 import '../../domain/signal_point_codec.dart';
 import '../../l10n/app_strings.dart';
 import '../../platform/audio_interruption_manager.dart';
 import '../../platform/haptics.dart';
 import '../../platform/native_platform.dart';
+import '../../platform/signal_preview_player.dart';
 import '../../platform/screen_wake.dart';
 import '../../platform/ui_signal_player.dart';
 import '../../platform/windows/desktop_shell.dart';
@@ -1115,6 +1117,10 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       points: encodeSignalPoints(pattern.points),
       repeatCount: pattern.repeatCount ?? 1,
     );
+  }
+
+  void previewSignalPattern(List<SignalPoint> points) {
+    SignalPreviewPlayer.playPattern(_session, points);
   }
 
   void _dispose() {

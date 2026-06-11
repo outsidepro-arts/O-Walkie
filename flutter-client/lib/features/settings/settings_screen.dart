@@ -198,6 +198,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     });
   }
 
+  SignalPattern? _rogerPatternById(String? id) {
+    if (id == null) {
+      return null;
+    }
+    for (final p in _rogerPatterns) {
+      if (p.id == id) {
+        return p;
+      }
+    }
+    return null;
+  }
+
+  SignalPattern? _callingPatternById(String? id) {
+    if (id == null) {
+      return null;
+    }
+    for (final p in _callingPatterns) {
+      if (p.id == id) {
+        return p;
+      }
+    }
+    return null;
+  }
+
+  void _playSelectedRoger() {
+    final pattern = _rogerPatternById(_selectedRogerId) ??
+        (_rogerPatterns.isEmpty ? null : _rogerPatterns.first);
+    if (pattern == null) {
+      return;
+    }
+    ref
+        .read(homeScreenControllerProvider.notifier)
+        .previewSignalPattern(pattern.points);
+  }
+
+  void _playSelectedCall() {
+    final pattern = _callingPatternById(_selectedCallingId) ??
+        (_callingPatterns.isEmpty ? null : _callingPatterns.first);
+    if (pattern == null) {
+      return;
+    }
+    ref
+        .read(homeScreenControllerProvider.notifier)
+        .previewSignalPattern(pattern.expandedPoints());
+  }
+
   Future<void> _setOrientation(ScreenOrientationMode? mode) async {
     if (mode == null) {
       return;
@@ -331,21 +377,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
-            value: _selectedRogerId ??
-                (_rogerPatterns.isEmpty ? null : _rogerPatterns.first.id),
-            decoration: InputDecoration(labelText: AppStrings.rogerSignalLabel),
-            items: [
-              for (final p in _rogerPatterns)
-                DropdownMenuItem(value: p.id, child: Text(p.name)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _selectedRogerId ??
+                      (_rogerPatterns.isEmpty ? null : _rogerPatterns.first.id),
+                  decoration:
+                      InputDecoration(labelText: AppStrings.rogerSignalLabel),
+                  items: [
+                    for (final p in _rogerPatterns)
+                      DropdownMenuItem(value: p.id, child: Text(p.name)),
+                  ],
+                  onChanged: (id) async {
+                    if (id == null) {
+                      return;
+                    }
+                    await ref
+                        .read(rogerPatternStoreProvider)
+                        .setSelectedPattern(id);
+                    setState(() => _selectedRogerId = id);
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: _playSelectedRoger,
+                child: Text(AppStrings.playSignalButton),
+              ),
             ],
-            onChanged: (id) async {
-              if (id == null) {
-                return;
-              }
-              await ref.read(rogerPatternStoreProvider).setSelectedPattern(id);
-              setState(() => _selectedRogerId = id);
-            },
           ),
           Row(
             children: [
@@ -375,21 +436,38 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
-            value: _selectedCallingId ??
-                (_callingPatterns.isEmpty ? null : _callingPatterns.first.id),
-            decoration: InputDecoration(labelText: AppStrings.callSignalLabel),
-            items: [
-              for (final p in _callingPatterns)
-                DropdownMenuItem(value: p.id, child: Text(p.name)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _selectedCallingId ??
+                      (_callingPatterns.isEmpty
+                          ? null
+                          : _callingPatterns.first.id),
+                  decoration:
+                      InputDecoration(labelText: AppStrings.callSignalLabel),
+                  items: [
+                    for (final p in _callingPatterns)
+                      DropdownMenuItem(value: p.id, child: Text(p.name)),
+                  ],
+                  onChanged: (id) async {
+                    if (id == null) {
+                      return;
+                    }
+                    await ref
+                        .read(callingPatternStoreProvider)
+                        .setSelectedPattern(id);
+                    setState(() => _selectedCallingId = id);
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: _playSelectedCall,
+                child: Text(AppStrings.playSignalButton),
+              ),
             ],
-            onChanged: (id) async {
-              if (id == null) {
-                return;
-              }
-              await ref.read(callingPatternStoreProvider).setSelectedPattern(id);
-              setState(() => _selectedCallingId = id);
-            },
           ),
           Row(
             children: [
