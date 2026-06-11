@@ -203,10 +203,11 @@ Relay RX/TX stays in miniaudio (`owalkie_flutter_audio.cpp`).
 
 ### Acceptance tests (Phase 5)
 
-- [ ] `owalkie://connect/…` link fills profile (from browser / QR)
-- [ ] Share / import connection via clipboard
-- [ ] Scan finds activity on idle channel; continuous scan every ~10 s
-- [ ] Auto-connect on scan hit (if enabled in UI)
+- [x] `owalkie://connect/…` link fills profile (`app_links` + Android intent filter)
+- [x] Share / import connection via clipboard
+- [x] Scan finds activity on idle channel; continuous scan every ~10 s (FFI probe loop)
+- [x] Auto-connect on scan hit (one-shot and continuous modes)
+- [ ] Device verification: deep link from browser, scan on LAN relay
 
 ---
 

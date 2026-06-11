@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../a11y/a11y.dart';
+import '../../domain/scan_mode.dart';
 import '../../domain/server_profile.dart';
 import '../../l10n/a11y_strings.dart';
 import '../../l10n/app_strings.dart';
@@ -44,6 +45,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         );
       },
     );
+    ref.listenManual(
+      homeScreenControllerProvider.select((s) => s.statusMessage),
+      (previous, next) {
+        if (next == AppStrings.connectionLinkImported) {
+          _loadControllersFromProfile(
+            ref.read(homeScreenControllerProvider).draftProfile,
+          );
+        }
+      },
+    );
   }
 
   void _loadControllersFromProfile(ServerProfile profile) {
@@ -69,6 +80,76 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           portText: _portCtrl.text,
           channel: _channelCtrl.text,
         );
+  }
+
+  void _onScanPressed(bool scanActive) {
+    final controller = ref.read(homeScreenControllerProvider.notifier);
+    if (scanActive) {
+      controller.stopScanning();
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text(AppStrings.scanModeTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: const Text(AppStrings.scanModeOneShot),
+              onTap: () {
+                Navigator.of(dialogContext).pop();
+                controller.startScanning(ScanMode.oneShot);
+              },
+            ),
+            ListTile(
+              title: const Text(AppStrings.scanModeContinuous),
+              onTap: () {
+                Navigator.of(dialogContext).pop();
+                controller.startScanning(ScanMode.continuous);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _shareConnection() async {
+    _syncProfile();
+    final includeName = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text(AppStrings.shareConnection),
+        content: const Text(AppStrings.connectionLinkIncludeNamePrompt),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Yes'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('No'),
+          ),
+        ],
+      ),
+    );
+    if (includeName == null || !mounted) {
+      return;
+    }
+    await ref
+        .read(homeScreenControllerProvider.notifier)
+        .copyConnectionLinkToClipboard(includeName: includeName);
+  }
+
+  Future<void> _importConnection() async {
+    _syncProfile();
+    await ref.read(homeScreenControllerProvider.notifier).importConnectionFromClipboard();
+    if (!mounted) {
+      return;
+    }
+    final profile = ref.read(homeScreenControllerProvider).draftProfile;
+    _loadControllersFromProfile(profile);
   }
 
   @override
@@ -203,7 +284,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     const SizedBox(height: 8),
                     _CollapsedActions(
                       scanActive: state.scanActive,
-                      onToggleScan: controller.toggleScan,
+                      onToggleScan: () => _onScanPressed(state.scanActive),
                       connectLabel: connectLabel,
                       connectHint: connectHint,
                       onConnect: canConnect
@@ -253,6 +334,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                   }
                                 : null,
                             child: const Text(AppStrings.deleteServer),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: _shareConnection,
+                            child: const Text(AppStrings.shareConnection),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: _importConnection,
+                            child: const Text(AppStrings.importConnection),
                           ),
                         ),
                       ],

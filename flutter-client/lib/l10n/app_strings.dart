@@ -38,6 +38,21 @@ abstract final class AppStrings {
   static const moveServerDown = 'Move down';
   static const shareConnection = 'Share';
   static const importConnection = 'Import from clipboard';
+  static const connectionLinkCopied = 'Connection link copied';
+  static const connectionLinkIncludeNamePrompt =
+      'Add your connection name to the link?';
+  static const connectionLinkInvalid =
+      'No valid O-Walkie connection link in clipboard';
+  static const connectionLinkImported = 'Connection imported from link';
+  static const scanModeTitle = 'Scan mode';
+  static const scanModeOneShot = 'One-time';
+  static const scanModeContinuous = 'Continuous';
+  static const scanStartedAnnouncement = 'Scanning started';
+  static const scanStoppedAnnouncement = 'Scanning stopped';
+  static String scanFoundServerAnnouncement(String name) =>
+      'Activity found on $name, connecting';
+  static String scanFoundActivityToast(String name) =>
+      'Activity detected on $name';
   static const rxVolumeLabel = 'Incoming volume';
   static const rxVolumeValueDefault = '100%';
   static const pttHold = 'Hold to Talk';

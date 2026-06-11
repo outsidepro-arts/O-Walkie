@@ -1,14 +1,21 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:app_links/app_links.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:owalkie_core/owalkie_core.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:vibration/vibration.dart';
 
 import '../../data/audio_settings_store.dart';
 import '../../data/server_store.dart';
 import '../../data/signal_pattern_store.dart';
+import '../../domain/connection_link.dart';
 import '../../domain/profile_save.dart';
 import '../../domain/ptt_burst_guard.dart';
+import '../../domain/scan_endpoint.dart';
+import '../../domain/scan_mode.dart';
 import '../../domain/server_profile.dart';
 import '../../domain/signal_point_codec.dart';
 import '../../l10n/app_strings.dart';
@@ -35,6 +42,12 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   bool _sessionForegroundActive = false;
   bool _sessionNetworkMonitoring = false;
   AudioInterruptionManager? _audioInterruption;
+  StreamSubscription<Uri>? _deepLinkSub;
+  bool _scanLoopActive = false;
+  ScanMode? _scanMode;
+  static const _scanInterval = Duration(seconds: 10);
+  static const _scanQueryTimeoutMs = 4000;
+  static const _scanActivityVibrationMs = 200;
 
   ServerStore get _store => ref.read(serverStoreProvider);
   PhoneCallPauseStore get _phoneCallPauseStore =>
@@ -121,6 +134,99 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       onInterruptEnd: _resumeRelayAfterPhoneCall,
     );
     await _audioInterruption!.start();
+    await _initDeepLinks();
+  }
+
+  Future<void> _initDeepLinks() async {
+    if (Platform.environment['FLUTTER_TEST'] == 'true') {
+      return;
+    }
+    final appLinks = AppLinks();
+    final initial = await appLinks.getInitialLink();
+    if (initial != null) {
+      applyConnectionLink(initial);
+    }
+    _deepLinkSub ??= appLinks.uriLinkStream.listen(applyConnectionLink);
+  }
+
+  void applyConnectionLink(Uri uri, {bool announce = true}) {
+    final profile = parseConnectionProfileFromUri(uri);
+    if (profile == null) {
+      if (announce) {
+        state = state.copyWith(
+          lastError: AppStrings.connectionLinkInvalid,
+          clearStatusMessage: true,
+        );
+      }
+      return;
+    }
+    state = state.copyWith(
+      draftProfile: profile,
+      statusMessage: announce ? AppStrings.connectionLinkImported : null,
+      clearError: true,
+      clearStatusMessage: !announce,
+    );
+    if (state.isConnected || state.isConnecting || state.relayPausedForPhoneCall) {
+      unawaited(_reconnectToProfile(profile));
+    }
+  }
+
+  Future<void> _reconnectToProfile(ServerProfile profile) async {
+    final session = _session;
+    if (session == null) {
+      return;
+    }
+    session.disconnect();
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    session.connect(
+      host: profile.host.trim(),
+      port: profile.port,
+      channel: profile.channel,
+      repeater: profile.repeater,
+    );
+  }
+
+  String buildShareLink({required bool includeName}) {
+    var profile = state.draftProfile;
+    if (includeName && profile.name.trim().isEmpty) {
+      profile = profile.copyWith(name: 'Connection');
+    }
+    return buildConnectionDeepLink(profile, includeName: includeName);
+  }
+
+  Future<void> shareConnectionLink({required bool includeName}) async {
+    final link = buildShareLink(includeName: includeName);
+    await Share.share(link, subject: 'O-Walkie connection');
+  }
+
+  Future<void> copyConnectionLinkToClipboard({required bool includeName}) async {
+    final link = buildShareLink(includeName: includeName);
+    await Clipboard.setData(ClipboardData(text: link));
+    state = state.copyWith(
+      statusMessage: AppStrings.connectionLinkCopied,
+      clearError: true,
+    );
+  }
+
+  Future<void> importConnectionFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (text.isEmpty) {
+      state = state.copyWith(
+        lastError: AppStrings.connectionLinkInvalid,
+        clearStatusMessage: true,
+      );
+      return;
+    }
+    final profile = parseConnectionProfileFromLink(text);
+    if (profile == null) {
+      state = state.copyWith(
+        lastError: AppStrings.connectionLinkInvalid,
+        clearStatusMessage: true,
+      );
+      return;
+    }
+    applyConnectionLink(Uri.parse(extractConnectionLink(text) ?? text));
   }
 
   Future<void> _applyVoiceAudioRoute() async {
@@ -484,8 +590,139 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     _session?.setRxVolumePercent(value);
   }
 
-  void toggleScan() {
-    state = state.copyWith(scanActive: !state.scanActive);
+  void startScanning(ScanMode mode) {
+    if (_scanLoopActive || state.profiles.isEmpty) {
+      return;
+    }
+    if (state.isConnected || state.isConnecting || state.relayPausedForPhoneCall) {
+      // Scan is allowed while connected (skips current profile).
+    }
+    _scanMode = mode;
+    _scanLoopActive = true;
+    state = state.copyWith(
+      scanActive: true,
+      statusMessage: AppStrings.scanStartedAnnouncement,
+      clearError: true,
+    );
+    unawaited(_runScanLoop());
+  }
+
+  void stopScanning({bool announce = true}) {
+    if (!_scanLoopActive && !state.scanActive) {
+      return;
+    }
+    _scanLoopActive = false;
+    _scanMode = null;
+    state = state.copyWith(
+      scanActive: false,
+      statusMessage: announce ? AppStrings.scanStoppedAnnouncement : state.statusMessage,
+    );
+  }
+
+  bool _hasCurrentConnectionActivity() =>
+      state.txActive || state.isReceivingBroadcast;
+
+  Future<void> _playScanActivityFoundVibration() async {
+    if (!NativePlatform.isMobile) {
+      return;
+    }
+    final hasVibrator = await Vibration.hasVibrator();
+    if (hasVibrator != true) {
+      return;
+    }
+    await Vibration.vibrate(duration: _scanActivityVibrationMs);
+  }
+
+  Future<void> _runScanLoop() async {
+    await _ensureSession();
+    while (_scanLoopActive) {
+      if (state.profiles.isEmpty) {
+        await Future<void>.delayed(_scanInterval);
+        continue;
+      }
+      final snapshot = List<ServerProfile>.from(state.profiles);
+      final skipIndex =
+          state.isConnected ? state.selectedServerIndex : -1;
+      ServerProfile? foundProfile;
+      var foundIndex = -1;
+      for (var index = 0; index < snapshot.length; index++) {
+        if (index == skipIndex) {
+          continue;
+        }
+        final profile = snapshot[index];
+        final endpoint = resolveProfileEndpoint(profile.host, profile.port);
+        if (endpoint == null) {
+          continue;
+        }
+        final result = await _session?.checkChannelActivity(
+          host: endpoint.host,
+          port: endpoint.port,
+          channel: profile.channel,
+          timeoutMs: _scanQueryTimeoutMs,
+        );
+        if (result != null && result.active) {
+          foundProfile = profile;
+          foundIndex = state.profiles.indexWhere(
+            (p) =>
+                p.name == profile.name &&
+                p.host == profile.host &&
+                p.channel == profile.channel,
+          );
+          if (foundIndex < 0) {
+            foundIndex = index;
+          }
+          break;
+        }
+      }
+      if (!_scanLoopActive) {
+        break;
+      }
+      if (foundProfile != null) {
+        final profile = foundProfile;
+        if (_hasCurrentConnectionActivity()) {
+          state = state.copyWith(
+            statusMessage: AppStrings.scanFoundActivityToast(profile.name),
+          );
+          await _playScanActivityFoundVibration();
+          await Future<void>.delayed(_scanInterval);
+          continue;
+        }
+        final idx = foundIndex.clamp(0, state.profiles.length - 1);
+        if (state.profiles.isNotEmpty && idx != state.selectedServerIndex) {
+          selectProfile(idx);
+        }
+        state = state.copyWith(
+          draftProfile: profile,
+          statusMessage: AppStrings.scanFoundServerAnnouncement(profile.name),
+        );
+        await _connectToProfileFromScan(profile);
+        if (_scanMode == ScanMode.oneShot) {
+          stopScanning(announce: false);
+          break;
+        }
+        await Future<void>.delayed(_scanInterval);
+        continue;
+      }
+      await Future<void>.delayed(_scanInterval);
+    }
+  }
+
+  Future<void> _connectToProfileFromScan(ServerProfile profile) async {
+    await _ensureSession();
+    final session = _session;
+    if (session == null) {
+      return;
+    }
+    if (state.isConnected || state.isConnecting) {
+      session.disconnect();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    session.connect(
+      host: profile.host.trim(),
+      port: profile.port,
+      channel: profile.channel,
+      repeater: profile.repeater,
+    );
   }
 
   void setRepeaterMode(bool enabled) {
@@ -671,6 +908,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     unawaited(ScreenWake.setTransmitting(false));
     _platformSub?.cancel();
     _platformSub = null;
+    _deepLinkSub?.cancel();
+    _deepLinkSub = null;
+    stopScanning(announce: false);
     unawaited(_audioInterruption?.stop());
     _audioInterruption = null;
     if (_sessionNetworkMonitoring) {
