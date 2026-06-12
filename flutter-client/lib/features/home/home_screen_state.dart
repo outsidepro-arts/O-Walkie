@@ -3,7 +3,7 @@ import '../../l10n/app_strings.dart';
 
 class HomeScreenState {
   HomeScreenState({
-    this.connectionDetailsExpanded = true,
+    this.connectionDetailsExpanded = false,
     this.profiles = const [ServerProfile()],
     this.selectedServerIndex = 0,
     this.draftProfile = const ServerProfile(),
@@ -80,6 +80,16 @@ class HomeScreenState {
 
   bool get hasNextProfile =>
       canNavigateProfiles && selectedServerIndex < profiles.length - 1;
+
+  /// Move up/down in list (Kotlin [updateServerNavigationButtons] reorder row).
+  bool get canReorderProfiles =>
+      connectionDetailsExpanded && profiles.isNotEmpty;
+
+  bool get canMoveProfileUp =>
+      canReorderProfiles && selectedServerIndex > 0;
+
+  bool get canMoveProfileDown =>
+      canReorderProfiles && selectedServerIndex < profiles.length - 1;
 
   bool get canSwitchProfiles => canSelectProfiles && profiles.length > 1;
 

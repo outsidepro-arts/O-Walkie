@@ -13,6 +13,9 @@ import '../../l10n/app_strings.dart';
 
 enum SignalEditorKind { roger, calling }
 
+/// Fixed viewport so action buttons stay put as segments are added or removed.
+const _segmentListHeight = 288.0;
+
 class PatternEditorScreen extends ConsumerStatefulWidget {
   const PatternEditorScreen({
     super.key,
@@ -247,25 +250,34 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
           const SizedBox(height: 16),
           Text(AppStrings.rogerPointsLabel, style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
-          if (_points.isEmpty)
-            Text(AppStrings.rogerPointsEmpty)
-          else
-            for (var i = 0; i < _points.length; i++)
-              ListTile(
-                title: Text(
-                  _points[i].freqHz <= 0
-                      ? AppStrings.rogerPointPause
-                      : AppStrings.rogerPointHz(_points[i].freqHz.toInt()),
-                ),
-                subtitle: Text(
-                  AppStrings.rogerPointDurationMs(_points[i].durationMs),
-                ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.edit),
-                  onPressed: () => _addOrEditSegment(i),
-                ),
-                onTap: () => _addOrEditSegment(i),
-              ),
+          SizedBox(
+            height: _segmentListHeight,
+            child: _points.isEmpty
+                ? Align(
+                    alignment: Alignment.topLeft,
+                    child: Text(AppStrings.rogerPointsEmpty),
+                  )
+                : ListView.separated(
+                    itemCount: _points.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 1),
+                    itemBuilder: (context, i) => ListTile(
+                      title: Text(
+                        _points[i].freqHz <= 0
+                            ? AppStrings.rogerPointPause
+                            : AppStrings.rogerPointHz(_points[i].freqHz.toInt()),
+                      ),
+                      subtitle: Text(
+                        AppStrings.rogerPointDurationMs(_points[i].durationMs),
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.edit),
+                        onPressed: () => _addOrEditSegment(i),
+                      ),
+                      onTap: () => _addOrEditSegment(i),
+                    ),
+                  ),
+          ),
           OutlinedButton(
             onPressed: () => _addOrEditSegment(),
             child: Text(AppStrings.rogerNewSegment),

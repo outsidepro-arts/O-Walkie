@@ -10,9 +10,12 @@ import '../../a11y/a11y.dart';
 import '../../domain/scan_mode.dart';
 import '../../domain/server_profile.dart';
 import '../../a11y/a11y_slider_field.dart';
+import '../../a11y/a11y_desktop_numeric_field.dart';
+import '../../platform/native_platform.dart';
 import '../../l10n/a11y_strings.dart';
 import '../../l10n/app_strings.dart';
 import 'home_screen_controller.dart';
+import 'home_screen_state.dart';
 import 'ptt_gesture_button.dart';
 import 'session_event_mapper.dart';
 
@@ -170,223 +173,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ? AppStrings.disconnectServer
         : AppStrings.connectServer;
 
-    final connectionChip = state.connectionDisplayChip;
     final pttUiEnabled = pttUiEnabledFor(state);
 
     return Scaffold(
-        body: SafeArea(
-          child: FocusTraversalGroup(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _HeaderRow(
-                    repeaterEnabled: state.draftProfile.repeater,
-                    onRepeaterToggled: controller.setRepeaterMode,
-                  ),
-                  const SizedBox(height: 8),
-                  _StatusChips(
-                    connection: connectionChip,
-                    signal: state.signalChip,
-                  ),
-                  if (state.statusInfo != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      state.statusInfo!,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                  if (state.statusMessage != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      state.statusMessage!,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                    ),
-                  ],
-                  if (state.lastError != null) ...[
-                    const SizedBox(height: 8),
-                    Semantics(
-                      liveRegion: true,
-                      child: Text(
-                        state.lastError!,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context).colorScheme.error,
-                            ),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  ExcludeSemantics(
-                    child: Text(
-                      AppStrings.serverProfiles,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  DropdownButtonFormField<int>(
-                    value: state.selectedServerIndex
-                        .clamp(0, state.profiles.length - 1),
-                    decoration: InputDecoration(
-                      labelText: AppStrings.serverProfiles,
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                      items: [
-                        for (var i = 0; i < state.profiles.length; i++)
-                          DropdownMenuItem(
-                            value: i,
-                            child: Text(
-                              state.profiles[i].name.isEmpty
-                                  ? AppStrings.profileNumberFallback(i + 1)
-                                  : state.profiles[i].name,
-                            ),
-                          ),
-                      ],
-                      onChanged: state.canSelectProfiles
-                          ? (index) {
-                              if (index != null) {
-                                controller.selectProfile(index);
-                                _loadControllersFromProfile(
-                                  ref
-                                      .read(homeScreenControllerProvider)
-                                      .profiles[index],
-                                );
-                              }
-                            }
-                          : null,
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton(
-                    onPressed: controller.toggleConnectionDetails,
-                    child: Text(
-                      state.connectionDetailsExpanded
-                          ? AppStrings.collapseConnectionDetails
-                          : AppStrings.expandConnectionDetails,
-                    ),
-                  ),
-                  if (!state.connectionDetailsExpanded) ...[
-                    const SizedBox(height: 8),
-                    _CollapsedActions(
-                      scanActive: state.scanActive,
-                      onToggleScan: () => _onScanPressed(state.scanActive),
+      body: SafeArea(
+        child: FocusTraversalGroup(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (state.connectionDetailsExpanded) ...[
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    child: _buildConnectionScrollContent(
+                      state: state,
+                      controller: controller,
                       connectLabel: connectLabel,
                       canConnect: canConnect,
-                      onConnect: canConnect
-                          ? () {
-                              unawaited(controller.connectToSelectedProfile());
-                            }
-                          : null,
-                      onPrevious: state.canNavigateProfiles
-                          ? controller.previousProfile
-                          : null,
-                      hasPrevious: state.hasPreviousProfile,
-                      onNext: state.canNavigateProfiles
-                          ? controller.nextProfile
-                          : null,
-                      hasNext: state.hasNextProfile,
                     ),
-                  ],
-                  if (state.connectionDetailsExpanded) ...[
-                    const SizedBox(height: 8),
-                    _ConnectionDetailsForm(
-                      nameCtrl: _nameCtrl,
-                      hostCtrl: _hostCtrl,
-                      portCtrl: _portCtrl,
-                      channelCtrl: _channelCtrl,
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () async {
-                              _syncProfile();
-                              await controller.saveCurrentProfile();
-                              _loadControllersFromProfile(
-                                ref.read(homeScreenControllerProvider).profile,
-                              );
-                            },
-                            child: Text(AppStrings.saveServer),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: state.profiles.length > 1
-                                ? () {
-                                    _syncProfile();
-                                    controller.deleteCurrentProfile();
-                                  }
-                                : null,
-                            child: Text(AppStrings.deleteServer),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: _shareConnection,
-                            child: Text(AppStrings.shareConnection),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: _importConnection,
-                            child: Text(AppStrings.importConnection),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    _ConnectButton(
-                      label: connectLabel,
-                      enabled: canConnect,
-                      onPressed: canConnect
-                          ? () {
-                              _syncProfile();
-                              controller.toggleConnection();
-                            }
-                          : null,
-                    ),
-                  ],
-                  const SizedBox(height: 24),
-                  A11ySliderField(
-                    value: state.rxVolumePercent.toDouble(),
-                    min: 0,
-                    max: 200,
-                    divisions: 200,
-                    title: AppStrings.rxVolumeLabel,
-                    displayValue:
-                        AppStrings.rxVolumePercent(state.rxVolumePercent),
-                    semanticsLabel:
-                        '${AppStrings.rxVolumeLabel} ${AppStrings.rxVolumePercentAccessibility(state.rxVolumePercent)}',
-                    semanticsValue:
-                        AppStrings.rxVolumePercent(state.rxVolumePercent),
-                    increasedValue: state.rxVolumePercent < 200
-                        ? AppStrings.rxVolumePercent(state.rxVolumePercent + 1)
-                        : null,
-                    decreasedValue: state.rxVolumePercent > 0
-                        ? AppStrings.rxVolumePercent(state.rxVolumePercent - 1)
-                        : null,
-                    onChanged: (value) =>
-                        controller.setRxVolume(value.round()),
-                    onChangeEnd: (value) =>
-                        controller.finishRxVolumePreview(value.round()),
-                    announceOnChangeEnd: (value) =>
-                        AppStrings.rxVolumePercentAccessibility(value.round()),
                   ),
-                  const SizedBox(height: 16),
-                  _PttArea(
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: _PttArea(
                     enabled: pttUiEnabled,
                     active: state.txActive,
                     label: pttButtonLabel(
@@ -399,24 +210,311 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     locked: state.pttServerLocked,
                     pttLockSec: state.pttLockSec,
                     sessionConnected: state.isConnected,
+                    expanded: false,
                     onPttDown: controller.pttDown,
                     onPttUp: controller.pttUp,
                     onCall: controller.sendCall,
                   ),
-                  const SizedBox(height: 12),
-                  ExcludeSemantics(
-                    child: Text(
-                      '${AppStrings.coreVersionFooter}: ${state.coreVersion} · '
-                      '${AppStrings.protocolLabel} ${state.protocolVersion}',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                ),
+              ] else
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          child: _buildConnectionScrollContent(
+                            state: state,
+                            controller: controller,
+                            connectLabel: connectLabel,
+                            canConnect: canConnect,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: _PttArea(
+                            enabled: pttUiEnabled,
+                            active: state.txActive,
+                            label: pttButtonLabel(
+                              pttUiEnabled: pttUiEnabled,
+                              txActive: state.txActive,
+                              pttServerLocked: state.pttServerLocked,
+                              pttLockSec: state.pttLockSec,
+                              txCountdownSec: state.txCountdownSec,
+                            ),
+                            locked: state.pttServerLocked,
+                            pttLockSec: state.pttLockSec,
+                            sessionConnected: state.isConnected,
+                            expanded: true,
+                            onPttDown: controller.pttDown,
+                            onPttUp: controller.pttUp,
+                            onCall: controller.sendCall,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: ExcludeSemantics(
+                  child: Text(
+                    '${AppStrings.coreVersionFooter}: ${state.coreVersion} · '
+                    '${AppStrings.protocolLabel} ${state.protocolVersion}',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildConnectionScrollContent({
+    required HomeScreenState state,
+    required HomeScreenController controller,
+    required String connectLabel,
+    required bool canConnect,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _HeaderRow(
+          repeaterEnabled: state.draftProfile.repeater,
+          onRepeaterToggled: controller.setRepeaterMode,
+        ),
+        const SizedBox(height: 8),
+        _StatusChips(
+          connection: state.connectionDisplayChip,
+          signal: state.signalChip,
+        ),
+        if (state.statusInfo != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            state.statusInfo!,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+        if (state.statusMessage != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            state.statusMessage!,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+          ),
+        ],
+        if (state.lastError != null) ...[
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              state.lastError!,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+        ExcludeSemantics(
+          child: Text(
+            AppStrings.serverProfiles,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        DropdownButtonFormField<int>(
+          value: state.selectedServerIndex.clamp(0, state.profiles.length - 1),
+          decoration: InputDecoration(
+            labelText: AppStrings.serverProfiles,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+          items: [
+            for (var i = 0; i < state.profiles.length; i++)
+              DropdownMenuItem(
+                value: i,
+                child: Text(
+                  state.profiles[i].name.isEmpty
+                      ? AppStrings.profileNumberFallback(i + 1)
+                      : state.profiles[i].name,
+                ),
+              ),
+          ],
+          onChanged: state.canSelectProfiles
+              ? (index) {
+                  if (index != null) {
+                    controller.selectProfile(index);
+                    _loadControllersFromProfile(
+                      ref.read(homeScreenControllerProvider).profiles[index],
+                    );
+                  }
+                }
+              : null,
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton(
+          onPressed: controller.toggleConnectionDetails,
+          child: Text(
+            state.connectionDetailsExpanded
+                ? AppStrings.collapseConnectionDetails
+                : AppStrings.expandConnectionDetails,
+          ),
+        ),
+        if (!state.connectionDetailsExpanded) ...[
+          const SizedBox(height: 8),
+          _CollapsedActions(
+            scanActive: state.scanActive,
+            onToggleScan: () => _onScanPressed(state.scanActive),
+            connectLabel: connectLabel,
+            canConnect: canConnect,
+            onConnect: canConnect
+                ? () {
+                    unawaited(controller.connectToSelectedProfile());
+                  }
+                : null,
+            onPrevious:
+                state.canNavigateProfiles ? controller.previousProfile : null,
+            hasPrevious: state.hasPreviousProfile,
+            onNext: state.canNavigateProfiles ? controller.nextProfile : null,
+            hasNext: state.hasNextProfile,
+          ),
+        ],
+        if (state.connectionDetailsExpanded) ...[
+          const SizedBox(height: 8),
+          _ConnectionDetailsForm(
+            nameCtrl: _nameCtrl,
+            hostCtrl: _hostCtrl,
+            portCtrl: _portCtrl,
+            channelCtrl: _channelCtrl,
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () async {
+                    _syncProfile();
+                    await controller.saveCurrentProfile();
+                    _loadControllersFromProfile(
+                      ref.read(homeScreenControllerProvider).profile,
+                    );
+                  },
+                  child: Text(AppStrings.saveServer),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: state.profiles.length > 1
+                      ? () {
+                          _syncProfile();
+                          controller.deleteCurrentProfile();
+                        }
+                      : null,
+                  child: Text(AppStrings.deleteServer),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: state.canMoveProfileUp
+                      ? controller.moveProfileUp
+                      : null,
+                  child: Text(AppStrings.moveServerUp),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: state.canMoveProfileDown
+                      ? controller.moveProfileDown
+                      : null,
+                  child: Text(AppStrings.moveServerDown),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _shareConnection,
+                  child: Text(AppStrings.shareConnection),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _importConnection,
+                  child: Text(AppStrings.importConnection),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _ConnectButton(
+            label: connectLabel,
+            enabled: canConnect,
+            onPressed: canConnect
+                ? () {
+                    _syncProfile();
+                    controller.toggleConnection();
+                  }
+                : null,
+          ),
+        ],
+        const SizedBox(height: 24),
+        if (NativePlatform.isDesktop)
+          A11yDesktopNumericField(
+            value: state.rxVolumePercent,
+            min: 0,
+            max: 200,
+            step: 5,
+            title: AppStrings.rxVolumeLabel,
+            suffix: '%',
+            maxDigits: 3,
+            onChanged: controller.setRxVolume,
+            onCommit: controller.finishRxVolumePreview,
+          )
+        else
+          A11ySliderField(
+            value: state.rxVolumePercent.toDouble(),
+            min: 0,
+            max: 200,
+            divisions: 200,
+            semanticStep: 5,
+            title: AppStrings.rxVolumeLabel,
+            displayValue: AppStrings.rxVolumePercent(state.rxVolumePercent),
+            semanticsLabel:
+                '${AppStrings.rxVolumeLabel} ${AppStrings.rxVolumePercentAccessibility(state.rxVolumePercent)}',
+            semanticsValue: AppStrings.rxVolumePercent(state.rxVolumePercent),
+            formatStepValue: (value) => AppStrings.rxVolumePercent(value.round()),
+            onChanged: (value) => controller.setRxVolume(value.round()),
+            onChangeEnd: (value) =>
+                controller.finishRxVolumePreview(value.round()),
+            announceOnChangeEnd: (value) =>
+                AppStrings.rxVolumePercentAccessibility(value.round()),
+          ),
+        const SizedBox(height: 16),
+      ],
     );
   }
 }
@@ -780,6 +878,7 @@ class _PttArea extends StatefulWidget {
     required this.locked,
     required this.pttLockSec,
     required this.sessionConnected,
+    required this.expanded,
     required this.onPttDown,
     required this.onPttUp,
     required this.onCall,
@@ -791,9 +890,14 @@ class _PttArea extends StatefulWidget {
   final bool locked;
   final int pttLockSec;
   final bool sessionConnected;
+  final bool expanded;
   final VoidCallback onPttDown;
   final VoidCallback onPttUp;
   final VoidCallback onCall;
+
+  static const _compactHeight = 220.0;
+  static const _minCircleSize = 190.0;
+  static const _maxCircleSize = 320.0;
 
   @override
   State<_PttArea> createState() => _PttAreaState();
@@ -824,62 +928,78 @@ class _PttAreaState extends State<_PttArea> {
             ? scheme.onError
             : scheme.onPrimaryContainer;
 
-    return SizedBox(
-      height: 220,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Opacity(
-            opacity: widget.enabled ? 1.0 : 0.5,
-            child: PttGestureButton(
-              enabled: widget.enabled,
-              active: widget.active,
-              locked: widget.locked,
-              pttLockSec: widget.pttLockSec,
-              sessionConnected: widget.sessionConnected,
-              onPttDown: widget.onPttDown,
-              onPttUp: widget.onPttUp,
-              onLatchedChanged: (latched) {
-                if (_pttLatched != latched) {
-                  setState(() => _pttLatched = latched);
-                }
-              },
-              child: Container(
-                width: 190,
-                height: 190,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: buttonColor,
-                ),
-                child: Text(
-                  widget.label,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: labelColor,
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: Opacity(
-              opacity: widget.enabled && !widget.active ? 1.0 : 0.5,
-              child: SizedBox(
-                width: 96,
-                height: 72,
-                child: OutlinedButton(
-                  onPressed: widget.enabled && !widget.active ? widget.onCall : null,
-                  child: Text(AppStrings.callSignal),
+    Widget buildArea(double height) {
+      final circleSize = widget.expanded
+          ? (height * 0.72).clamp(_PttArea._minCircleSize, _PttArea._maxCircleSize)
+          : _PttArea._minCircleSize;
+
+      return SizedBox(
+        height: height,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Opacity(
+              opacity: widget.enabled ? 1.0 : 0.5,
+              child: PttGestureButton(
+                enabled: widget.enabled,
+                active: widget.active,
+                locked: widget.locked,
+                pttLockSec: widget.pttLockSec,
+                sessionConnected: widget.sessionConnected,
+                onPttDown: widget.onPttDown,
+                onPttUp: widget.onPttUp,
+                onLatchedChanged: (latched) {
+                  if (_pttLatched != latched) {
+                    setState(() => _pttLatched = latched);
+                  }
+                },
+                child: Container(
+                  width: circleSize,
+                  height: circleSize,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: buttonColor,
+                  ),
+                  child: Text(
+                    widget.label,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: labelColor,
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
-      ),
-    );
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Opacity(
+                opacity: widget.enabled && !widget.active ? 1.0 : 0.5,
+                child: SizedBox(
+                  width: 96,
+                  height: 72,
+                  child: OutlinedButton(
+                    onPressed:
+                        widget.enabled && !widget.active ? widget.onCall : null,
+                    child: Text(AppStrings.callSignal),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (widget.expanded) {
+      return LayoutBuilder(
+        builder: (context, constraints) =>
+            buildArea(constraints.maxHeight),
+      );
+    }
+
+    return buildArea(_PttArea._compactHeight);
   }
 }

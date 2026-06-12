@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../a11y/a11y_spin_box_field.dart';
+import '../../a11y/a11y_desktop_numeric_field.dart';
 import '../../a11y/settings_section.dart';
 import '../../data/vibration_imitation_store.dart';
 import '../../l10n/app_strings.dart';
@@ -73,7 +73,7 @@ class _VibrationImitationSettingsScreenState
                 SettingsSection(
                   title: AppStrings.settingsVibrationImitationFrequency,
                   children: [
-                    A11ySpinBoxField(
+                    A11yDesktopNumericField(
                       value: _hz,
                       min: VibrationImitation.minFreqHz.round(),
                       max: VibrationImitation.maxFreqHz.round(),
@@ -87,7 +87,7 @@ class _VibrationImitationSettingsScreenState
                 SettingsSection(
                   title: AppStrings.settingsVibrationImitationVolume,
                   children: [
-                    A11ySpinBoxField(
+                    A11yDesktopNumericField(
                       value: _volume,
                       min: 0,
                       max: 100,

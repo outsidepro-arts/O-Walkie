@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'a11y.dart';
-
 /// Numeric stepper with [TextField] and +/- buttons (Windows AXTree-safe).
 class A11ySpinBoxField extends StatefulWidget {
   const A11ySpinBoxField({
@@ -112,11 +110,10 @@ class _A11ySpinBoxFieldState extends State<A11ySpinBoxField> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            MinTouchTarget(
-              child: TextButton(
-                onPressed: canDecrease ? _decrease : null,
-                child: Text('−${widget.step}'),
-              ),
+            IconButton(
+              tooltip: '−${widget.step}',
+              onPressed: canDecrease ? _decrease : null,
+              icon: const Icon(Icons.remove),
             ),
             Expanded(
               child: TextField(
@@ -136,11 +133,10 @@ class _A11ySpinBoxFieldState extends State<A11ySpinBoxField> {
                 onSubmitted: _commitFromField,
               ),
             ),
-            MinTouchTarget(
-              child: TextButton(
-                onPressed: canIncrease ? _increase : null,
-                child: Text('+${widget.step}'),
-              ),
+            IconButton(
+              tooltip: '+${widget.step}',
+              onPressed: canIncrease ? _increase : null,
+              icon: const Icon(Icons.add),
             ),
           ],
         ),
