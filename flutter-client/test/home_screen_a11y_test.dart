@@ -33,7 +33,7 @@ void main() {
     final connection = tester.getSemantics(
       find.bySemanticsLabel(AppStrings.connectionStateDisconnected),
     );
-    expect(connection.hasFlag(SemanticsFlag.isLiveRegion), isTrue);
+    expect(connection.hasFlag(SemanticsFlag.isLiveRegion), isFalse);
 
     final more = tester.getSemantics(find.bySemanticsLabel(AppStrings.menuMore));
     expect(more.label, AppStrings.menuMore);

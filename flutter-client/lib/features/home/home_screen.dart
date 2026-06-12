@@ -60,6 +60,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     ref.listenManual(
       homeScreenControllerProvider.select((s) => s.statusMessage),
       (previous, next) {
+        if (next != null && next != previous && mounted) {
+          A11yAnnounce.confirmation(context, next);
+          ref
+              .read(homeScreenControllerProvider.notifier)
+              .clearStatusMessage();
+        }
         if (next == AppStrings.connectionLinkImported) {
           _loadControllersFromProfile(
             ref.read(homeScreenControllerProvider).draftProfile,
@@ -302,15 +308,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           Text(
             state.statusInfo!,
             style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
-        if (state.statusMessage != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            state.statusMessage!,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.primary,
-                ),
           ),
         ],
         if (state.lastError != null) ...[
@@ -624,47 +621,20 @@ class _StatusChips extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: Semantics(
-            liveRegion: true,
+          child: A11yLiveStatusChip(
             label: connection,
-            excludeSemantics: true,
-            child: _ChipBox(child: Text(connection, style: chipStyle)),
+            child: Text(connection, style: chipStyle),
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
-          child: Semantics(
+          child: A11yLiveStatusChip(
             label: signal,
-            excludeSemantics: true,
-            child: _ChipBox(
-              alignment: Alignment.centerRight,
-              child: Text(signal, style: chipStyle, textAlign: TextAlign.end),
-            ),
+            alignment: Alignment.centerRight,
+            child: Text(signal, style: chipStyle, textAlign: TextAlign.end),
           ),
         ),
       ],
-    );
-  }
-}
-
-class _ChipBox extends StatelessWidget {
-  const _ChipBox({required this.child, this.alignment = Alignment.centerLeft});
-
-  final Widget child;
-  final Alignment alignment;
-
-  @override
-  Widget build(BuildContext context) {
-    return ExcludeSemantics(
-      child: Container(
-        alignment: alignment,
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: child,
-      ),
     );
   }
 }

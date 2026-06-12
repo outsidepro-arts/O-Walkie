@@ -154,6 +154,8 @@
   "cannotSwitchProfileConnected": "Disconnect before switching connection profile.",
   "cannotDeleteLastProfile": "At least one profile is required.",
   "profileSaved": "Connection profile saved.",
+  "profileDeleted": "Server deleted",
+  "connectingToSelectedServer": "Connecting to selected server",
   "rogerSignalLabel": "Roger signal",
   "callSignalLabel": "Call signal",
   "rogerCustomButton": "Custom",

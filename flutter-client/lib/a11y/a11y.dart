@@ -5,12 +5,12 @@ import 'package:flutter/semantics.dart';
 
 import '../l10n/a11y_strings.dart';
 
-// Dynamic status updates: use Semantics(liveRegion: true, label: ...) on the
-// widget whose text changes — not SemanticsService.sendAnnouncement for bulk
-// updates (deprecated on Android; see flutter/flutter#165510).
+// Status chips: use [A11yLiveStatusChip] — liveRegion toggles on
+// onDidGainAccessibilityFocus / onDidLoseAccessibilityFocus so updates are
+// spoken only while TalkBack/Narrator focus is on that chip.
 //
-// For Kotlin-style announceForAccessibility while a11y focus is on a control,
-// use [A11yAnnounce.whenFocused].
+// For Kotlin showConfirmation (Toast + announceForAccessibility), use
+// [A11yAnnounce.confirmation].
 
 /// Kotlin [View.announceForAccessibility] parity for Flutter.
 abstract final class A11yAnnounce {
@@ -41,6 +41,79 @@ abstract final class A11yAnnounce {
       return;
     }
     unawaited(whenSupported(context, message));
+  }
+
+  /// Kotlin [MainActivity.showConfirmation]: SnackBar + a11y announcement.
+  static void confirmation(BuildContext context, String message) {
+    if (!context.mounted) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    unawaited(whenSupported(context, message));
+  }
+}
+
+/// Status chip that speaks [label] on focus and auto-announces changes only
+/// while accessibility focus is on this node (dynamic liveRegion).
+class A11yLiveStatusChip extends StatefulWidget {
+  const A11yLiveStatusChip({
+    super.key,
+    required this.label,
+    required this.child,
+    this.alignment = Alignment.centerLeft,
+  });
+
+  final String label;
+  final Widget child;
+  final Alignment alignment;
+
+  @override
+  State<A11yLiveStatusChip> createState() => _A11yLiveStatusChipState();
+}
+
+class _A11yLiveStatusChipState extends State<A11yLiveStatusChip> {
+  bool _a11yFocused = false;
+
+  void _onDidGainAccessibilityFocus() {
+    if (!_a11yFocused) {
+      setState(() => _a11yFocused = true);
+    }
+  }
+
+  void _onDidLoseAccessibilityFocus() {
+    if (_a11yFocused) {
+      setState(() => _a11yFocused = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: widget.label,
+      liveRegion: _a11yFocused,
+      excludeSemantics: true,
+      onDidGainAccessibilityFocus: _onDidGainAccessibilityFocus,
+      onDidLoseAccessibilityFocus: _onDidLoseAccessibilityFocus,
+      child: ExcludeSemantics(
+        child: Container(
+          alignment: widget.alignment,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: widget.child,
+        ),
+      ),
+    );
   }
 }
 

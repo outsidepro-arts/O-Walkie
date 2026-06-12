@@ -380,6 +380,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get profileSaved => 'Connection profile saved.';
 
   @override
+  String get profileDeleted => 'Server deleted';
+
+  @override
+  String get connectingToSelectedServer => 'Connecting to selected server';
+
+  @override
   String get rogerSignalLabel => 'Roger signal';
 
   @override

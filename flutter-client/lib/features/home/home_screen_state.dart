@@ -68,8 +68,7 @@ class HomeScreenState {
   /// Active form profile (draft, not necessarily persisted yet).
   ServerProfile get profile => draftProfile;
 
-  bool get canSelectProfiles =>
-      !isConnected && !isConnecting && profiles.isNotEmpty;
+  bool get canSelectProfiles => profiles.isNotEmpty;
 
   /// Prev/next server buttons (Kotlin [updateServerNavigationButtons]).
   bool get canNavigateProfiles =>

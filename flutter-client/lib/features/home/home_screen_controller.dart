@@ -517,8 +517,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       profiles: list,
       selectedServerIndex: newIndex,
       draftProfile: list[newIndex],
+      statusMessage: AppStrings.profileDeleted,
       clearError: true,
-      clearStatusMessage: true,
+      clearStatusMessage: false,
     );
   }
 
@@ -763,6 +764,13 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     state = state.copyWith(
       connectionDetailsExpanded: !state.connectionDetailsExpanded,
     );
+  }
+
+  void clearStatusMessage() {
+    if (state.statusMessage == null) {
+      return;
+    }
+    state = state.copyWith(clearStatusMessage: true);
   }
 
   void setRxVolume(int percent) {
@@ -1087,6 +1095,11 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       port: p.port,
       channel: p.channel,
       repeater: p.repeater,
+    );
+    state = state.copyWith(
+      statusMessage: AppStrings.connectingToSelectedServer,
+      clearError: true,
+      clearStatusMessage: false,
     );
   }
 

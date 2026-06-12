@@ -800,6 +800,18 @@ abstract class AppLocalizations {
   /// **'Connection profile saved.'**
   String get profileSaved;
 
+  /// No description provided for @profileDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Server deleted'**
+  String get profileDeleted;
+
+  /// No description provided for @connectingToSelectedServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting to selected server'**
+  String get connectingToSelectedServer;
+
   /// No description provided for @rogerSignalLabel.
   ///
   /// In en, this message translates to:

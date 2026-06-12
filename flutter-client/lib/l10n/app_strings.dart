@@ -174,6 +174,9 @@ abstract final class AppStrings {
       _l.cannotSwitchProfileConnected;
   static String get cannotDeleteLastProfile => _l.cannotDeleteLastProfile;
   static String get profileSaved => _l.profileSaved;
+  static String get profileDeleted => _l.profileDeleted;
+  static String get connectingToSelectedServer =>
+      _l.connectingToSelectedServer;
   static String get rogerSignalLabel => _l.rogerSignalLabel;
   static String get callSignalLabel => _l.callSignalLabel;
   static String get rogerCustomButton => _l.rogerCustomButton;

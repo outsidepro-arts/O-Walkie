@@ -124,6 +124,8 @@
   "cannotSwitchProfileConnected": "Отключитесь перед сменой профиля подключения.",
   "cannotDeleteLastProfile": "Нужен хотя бы один профиль.",
   "profileSaved": "Профиль подключения сохранён.",
+  "profileDeleted": "Сервер удален",
+  "connectingToSelectedServer": "Подключение к выбранному серверу",
   "rogerSignalLabel": "Сигнал Роджер",
   "callSignalLabel": "Сигнал вызова",
   "rogerCustomButton": "Свой",

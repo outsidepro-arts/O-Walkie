@@ -386,6 +386,12 @@ class AppLocalizationsRu extends AppLocalizations {
   String get profileSaved => 'Профиль подключения сохранён.';
 
   @override
+  String get profileDeleted => 'Сервер удален';
+
+  @override
+  String get connectingToSelectedServer => 'Подключение к выбранному серверу';
+
+  @override
   String get rogerSignalLabel => 'Сигнал Роджер';
 
   @override

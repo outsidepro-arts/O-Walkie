@@ -53,5 +53,54 @@ void main() {
       expect(controller.state.profile.host, '192.168.1.10');
       expect(controller.state.profile.port, 5501);
     });
+
+    test('selectProfile switches saved profile while connected', () {
+      const team = ServerProfile(
+        name: 'Team',
+        host: '192.168.1.10',
+        port: 5501,
+        channel: 'alpha',
+      );
+      const demo = ServerProfile(
+        name: 'Demo',
+        host: '127.0.0.1',
+        port: 5500,
+        channel: 'beta',
+      );
+      final controller = container.read(homeScreenControllerProvider.notifier);
+      controller.state = controller.state.copyWith(
+        profiles: [team, demo],
+        selectedServerIndex: 0,
+        draftProfile: team,
+        isConnected: true,
+      );
+
+      controller.selectProfile(1);
+
+      expect(controller.state.selectedServerIndex, 1);
+      expect(controller.state.draftProfile, demo);
+      expect(controller.state.lastError, isNull);
+    });
+
+    test('selectProfile ignores same index', () {
+      const team = ServerProfile(
+        name: 'Team',
+        host: '192.168.1.10',
+        port: 5501,
+        channel: 'alpha',
+      );
+      final controller = container.read(homeScreenControllerProvider.notifier);
+      controller.state = controller.state.copyWith(
+        profiles: [team],
+        selectedServerIndex: 0,
+        draftProfile: team,
+        isConnected: true,
+      );
+
+      controller.selectProfile(0);
+
+      expect(controller.state.selectedServerIndex, 0);
+      expect(controller.state.draftProfile, team);
+    });
   });
 }
