@@ -398,13 +398,14 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void selectProfile(int index) {
-    if (_rejectIfConnected()) {
-      return;
-    }
     if (index < 0 || index >= state.profiles.length) {
       return;
     }
+    if (index == state.selectedServerIndex) {
+      return;
+    }
     _applySelectedProfile(index);
+    unawaited(_reconnectToSelectedServerIfRequested());
   }
 
   void syncDraftFromSelectedProfile() {
@@ -447,6 +448,34 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       return;
     }
     _applySelectedProfile(target);
+    UiSignalPlayer.playSwitch(_session);
+    unawaited(_reconnectToSelectedServerIfRequested());
+  }
+
+  void moveProfileUp() => moveProfileInList(-1);
+
+  void moveProfileDown() => moveProfileInList(1);
+
+  Future<void> moveProfileInList(int offset) async {
+    if (!state.canReorderProfiles || state.profiles.isEmpty) {
+      return;
+    }
+    final from = state.selectedServerIndex.clamp(0, state.profiles.length - 1);
+    final to = (from + offset).clamp(0, state.profiles.length - 1);
+    if (from == to) {
+      return;
+    }
+    final list = [...state.profiles];
+    final item = list.removeAt(from);
+    list.insert(to, item);
+    await _persistProfiles(list);
+    state = state.copyWith(
+      profiles: list,
+      selectedServerIndex: to,
+      draftProfile: list[to],
+      clearError: true,
+      clearStatusMessage: true,
+    );
     UiSignalPlayer.playSwitch(_session);
     unawaited(_reconnectToSelectedServerIfRequested());
   }

@@ -89,7 +89,7 @@ void main() {
         isConnected: true,
       );
       expect(state.canNavigateProfiles, isTrue);
-      expect(state.canSelectProfiles, isFalse);
+      expect(state.canSelectProfiles, isTrue);
       expect(state.hasPreviousProfile, isFalse);
       expect(state.hasNextProfile, isTrue);
     });
@@ -117,6 +117,31 @@ void main() {
         ],
       );
       expect(state.canNavigateProfiles, isFalse);
+    });
+
+    test('canReorderProfiles when details expanded', () {
+      final state = HomeScreenState(
+        connectionDetailsExpanded: true,
+        profiles: const [
+          ServerProfile(name: 'a', host: '1', port: 1, channel: 'c'),
+          ServerProfile(name: 'b', host: '2', port: 2, channel: 'c'),
+        ],
+        selectedServerIndex: 1,
+      );
+      expect(state.canReorderProfiles, isTrue);
+      expect(state.canMoveProfileUp, isTrue);
+      expect(state.canMoveProfileDown, isFalse);
+    });
+
+    test('canReorderProfiles false when collapsed', () {
+      final state = HomeScreenState(
+        connectionDetailsExpanded: false,
+        profiles: const [
+          ServerProfile(name: 'a', host: '1', port: 1, channel: 'c'),
+          ServerProfile(name: 'b', host: '2', port: 2, channel: 'c'),
+        ],
+      );
+      expect(state.canReorderProfiles, isFalse);
     });
   });
 
