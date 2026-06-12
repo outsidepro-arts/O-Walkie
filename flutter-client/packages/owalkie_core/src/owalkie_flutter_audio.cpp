@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -771,6 +772,8 @@ namespace owalkie_flutter_audio {
 
 void shutdown() {
 
+    stop_local_pcm_loop();
+
     std::lock_guard<std::mutex> lock(g_mu);
 
     close_capture_locked();
@@ -1026,6 +1029,185 @@ void play_local_pcm_blocking(const int16_t* samples, size_t count, int sample_ra
     ma_device_stop(&dev);
 
     ma_device_uninit(&dev);
+
+}
+
+
+
+namespace {
+
+
+
+std::mutex g_local_pcm_loop_mu;
+
+std::thread g_local_pcm_loop_thread;
+
+std::atomic<bool> g_local_pcm_loop_stop{true};
+
+
+
+struct LoopPlayState {
+
+    const int16_t* samples = nullptr;
+
+    size_t total = 0;
+
+    size_t position = 0;
+
+    std::atomic<bool>* stop_flag = nullptr;
+
+};
+
+
+
+void local_pcm_loop_data_cb(
+    ma_device* device,
+    void* output,
+    const void* /*input*/,
+    ma_uint32 frame_count) {
+
+    auto* st = static_cast<LoopPlayState*>(device->pUserData);
+
+    auto* out = static_cast<int16_t*>(output);
+
+    const ma_uint32 bpf = ma_get_bytes_per_frame(ma_format_s16, 1);
+
+    if (!st || !st->samples || st->total == 0 ||
+        (st->stop_flag && st->stop_flag->load(std::memory_order_acquire))) {
+
+        std::memset(output, 0, frame_count * bpf);
+
+        return;
+
+    }
+
+    for (ma_uint32 i = 0; i < frame_count; ++i) {
+
+        out[i] = st->samples[st->position % st->total];
+
+        st->position++;
+
+    }
+
+}
+
+
+
+void join_local_pcm_loop_thread_locked() {
+
+    g_local_pcm_loop_stop.store(true, std::memory_order_release);
+
+    if (g_local_pcm_loop_thread.joinable()) {
+
+        g_local_pcm_loop_thread.join();
+
+    }
+
+}
+
+
+
+} // namespace
+
+
+
+void start_local_pcm_loop(const int16_t* samples, size_t count, int sample_rate_hz) {
+
+    if (!samples || count == 0 || sample_rate_hz <= 0) {
+
+        return;
+
+    }
+
+    auto pcm = std::make_shared<std::vector<int16_t>>(samples, samples + count);
+
+    std::lock_guard<std::mutex> lock(g_local_pcm_loop_mu);
+
+    join_local_pcm_loop_thread_locked();
+
+    g_local_pcm_loop_stop.store(false, std::memory_order_release);
+
+    g_local_pcm_loop_thread = std::thread([pcm, sample_rate_hz]() {
+
+        LoopPlayState state{pcm->data(), pcm->size(), 0, &g_local_pcm_loop_stop};
+
+        ma_device dev{};
+
+        bool dev_open = false;
+
+        {
+
+            std::lock_guard<std::mutex> audio_lock(g_mu);
+
+            ensure_context();
+
+            if (!g_context_inited) {
+
+                return;
+
+            }
+
+            ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
+
+            cfg.playback.pDeviceID = resolve_playback_device_id_locked();
+
+            cfg.playback.format = ma_format_s16;
+
+            cfg.playback.channels = 1;
+
+            cfg.sampleRate = static_cast<ma_uint32>(sample_rate_hz);
+
+            cfg.dataCallback = local_pcm_loop_data_cb;
+
+            cfg.pUserData = &state;
+
+            if (ma_device_init(&g_context, &cfg, &dev) != MA_SUCCESS) {
+
+                OWALKIE_AUDIO_LOGE("local pcm loop ma_device_init failed");
+
+                return;
+
+            }
+
+            if (ma_device_start(&dev) != MA_SUCCESS) {
+
+                ma_device_uninit(&dev);
+
+                return;
+
+            }
+
+            dev_open = true;
+
+        }
+
+        while (!g_local_pcm_loop_stop.load(std::memory_order_acquire)) {
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        }
+
+        if (dev_open) {
+
+            std::lock_guard<std::mutex> audio_lock(g_mu);
+
+            ma_device_stop(&dev);
+
+            ma_device_uninit(&dev);
+
+        }
+
+    });
+
+}
+
+
+
+void stop_local_pcm_loop() {
+
+    std::lock_guard<std::mutex> lock(g_local_pcm_loop_mu);
+
+    join_local_pcm_loop_thread_locked();
 
 }
 

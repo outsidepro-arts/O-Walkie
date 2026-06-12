@@ -25,6 +25,11 @@ void set_tx_frame_callback(TxFrameCallback cb, void* user);
 /** One-shot local speaker playback (UI tones / roger preview). Blocks until done. */
 void play_local_pcm_blocking(const int16_t* samples, size_t count, int sample_rate_hz);
 
+/** Loop @p samples on a background playback device until [stop_local_pcm_loop]. */
+void start_local_pcm_loop(const int16_t* samples, size_t count, int sample_rate_hz);
+
+void stop_local_pcm_loop();
+
 int32_t list_capture_devices(AudioDeviceEntry* out, int32_t max_count);
 int32_t list_playback_devices(AudioDeviceEntry* out, int32_t max_count);
 void set_capture_device_index(int32_t index);

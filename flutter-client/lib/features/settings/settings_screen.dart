@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../a11y/settings_section.dart';
 import '../../data/audio_device_store.dart';
 import '../../data/microphone_source_store.dart';
 import '../../data/audio_settings_store.dart';
@@ -13,7 +14,10 @@ import '../../data/orientation_store.dart';
 import '../../data/windows_settings_store.dart';
 import '../../domain/microphone_source_option.dart';
 import '../../features/home/home_screen_controller.dart';
+import '../../features/home/home_screen_state.dart';
 import '../../platform/audio_device_service.dart';
+import '../../data/vibration_imitation_store.dart';
+import '../../platform/haptics.dart';
 import '../../platform/microphone_source_service.dart';
 import '../../platform/native_platform.dart';
 import '../../platform/windows/desktop_shell.dart';
@@ -52,14 +56,46 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   int _outputDeviceIndex = -1;
   List<MicrophoneSourceOption> _microphoneSources = [];
   String _selectedMicrophoneSourceId = MicrophoneSourceStore.defaultId;
+  bool _ready = false;
+
+  ProviderSubscription<HomeScreenState>? _sessionListener;
 
   @override
   void initState() {
     super.initState();
+    _sessionListener = ref.listenManual(
+      homeScreenControllerProvider,
+      (previous, next) {
+        if (next.sessionSupported && previous?.sessionSupported != true) {
+          unawaited(_reloadAudioDevices());
+        }
+      },
+    );
     _load();
   }
 
+  @override
+  void dispose() {
+    _sessionListener?.close();
+    super.dispose();
+  }
+
   Future<void> _reloadAudioDevices() async {
+    final snapshot = await _loadAudioDeviceSnapshot();
+    if (!mounted || snapshot == null) {
+      return;
+    }
+    setState(() {
+      _microphoneSources = snapshot.microphoneSources;
+      _selectedMicrophoneSourceId = snapshot.selectedMicrophoneSourceId;
+      _inputDevices = snapshot.inputDevices;
+      _outputDevices = snapshot.outputDevices;
+      _inputDeviceIndex = snapshot.inputDeviceIndex;
+      _outputDeviceIndex = snapshot.outputDeviceIndex;
+    });
+  }
+
+  Future<_AudioDeviceSnapshot?> _loadAudioDeviceSnapshot() async {
     if (MicrophoneSourceService.isSupported) {
       final micStore = ref.read(microphoneSourceStoreProvider);
       final options = await MicrophoneSourceService.listOptions();
@@ -68,17 +104,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         selectedId = options.first.id;
         await micStore.setSelectedId(selectedId);
       }
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _microphoneSources = options;
-        _selectedMicrophoneSourceId = selectedId;
-      });
-      return;
+      return _AudioDeviceSnapshot(
+        microphoneSources: options,
+        selectedMicrophoneSourceId: selectedId,
+      );
     }
     if (!AudioDeviceService.showsPhysicalAudioDevices) {
-      return;
+      return const _AudioDeviceSnapshot();
     }
     final audioDeviceStore = ref.read(audioDeviceStoreProvider);
     final inputDevices = await AudioDeviceService.listInputDevices();
@@ -124,15 +156,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         );
       }
     }
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _inputDevices = inputDevices;
-      _outputDevices = outputDevices;
-      _inputDeviceIndex = inputIndex;
-      _outputDeviceIndex = outputIndex;
-    });
+    return _AudioDeviceSnapshot(
+      inputDevices: inputDevices,
+      outputDevices: outputDevices,
+      inputDeviceIndex: inputIndex,
+      outputDeviceIndex: outputIndex,
+    );
   }
 
   Future<void> _load() async {
@@ -149,6 +178,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final windowsStore = ref.read(windowsSettingsStoreProvider);
     final globalBinding = windowsStore.loadBinding();
     final minimizeToTray = windowsStore.minimizeToTrayOnClose();
+    final audioSnapshot = await _loadAudioDeviceSnapshot();
     if (!mounted) {
       return;
     }
@@ -166,8 +196,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _hardwarePttBinding = hardwareBinding;
       _globalPttBinding = globalBinding;
       _minimizeToTray = minimizeToTray;
+      if (audioSnapshot != null) {
+        _microphoneSources = audioSnapshot.microphoneSources;
+        _selectedMicrophoneSourceId = audioSnapshot.selectedMicrophoneSourceId;
+        _inputDevices = audioSnapshot.inputDevices;
+        _outputDevices = audioSnapshot.outputDevices;
+        _inputDeviceIndex = audioSnapshot.inputDeviceIndex;
+        _outputDeviceIndex = audioSnapshot.outputDeviceIndex;
+      }
+      _ready = true;
     });
-    await _reloadAudioDevices();
+    if (Haptics.showsDesktopSettings) {
+      Haptics.applyFromStore(ref.read(vibrationImitationStoreProvider));
+    }
   }
 
   int _dropdownDeviceIndex(int index, List<NativeAudioDevice> devices) {
@@ -423,11 +464,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(homeScreenControllerProvider, (previous, next) {
-      if (next.sessionSupported && previous?.sessionSupported != true) {
-        unawaited(_reloadAudioDevices());
-      }
-    });
+    if (!_ready) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(AppStrings.settingsTitle),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => context.pop(),
+          ),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
 
     final version = _packageInfo?.version ?? '…';
     final build = _packageInfo?.buildNumber ?? '';
@@ -443,274 +491,281 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text(
-            AppStrings.settingsDisplay,
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: 8),
-          DropdownButtonFormField<ScreenOrientationMode>(
-            value: _orientation,
-            decoration: InputDecoration(
-              labelText: AppStrings.settingsOrientation,
-            ),
-            items: ScreenOrientationMode.values
-                .map(
-                  (m) => DropdownMenuItem(
-                    value: m,
-                    child: Text(_orientationLabel(m)),
-                  ),
-                )
-                .toList(),
-            onChanged: _setOrientation,
-          ),
-          const SizedBox(height: 24),
-          Text(
-            AppStrings.settingsAudio,
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          if (MicrophoneSourceService.isSupported &&
-              _microphoneSources.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              value: _selectedMicrophoneSourceId,
-              decoration: InputDecoration(
-                labelText: AppStrings.settingsAudioInputDevice,
+          SettingsSection(
+            title: AppStrings.settingsDisplay,
+            children: [
+              DropdownButtonFormField<ScreenOrientationMode>(
+                value: _orientation,
+                decoration: InputDecoration(
+                  labelText: AppStrings.settingsOrientation,
+                ),
+                items: ScreenOrientationMode.values
+                    .map(
+                      (m) => DropdownMenuItem(
+                        value: m,
+                        child: Text(_orientationLabel(m)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: _setOrientation,
               ),
-              items: [
-                for (final option in _microphoneSources)
-                  DropdownMenuItem(
-                    value: option.id,
-                    child: Text(option.displayTitle),
+            ],
+          ),
+          SettingsSection(
+            title: AppStrings.settingsAudio,
+            children: [
+              if (MicrophoneSourceService.isSupported &&
+                  _microphoneSources.isNotEmpty)
+                DropdownButtonFormField<String>(
+                  value: _selectedMicrophoneSourceId,
+                  decoration: InputDecoration(
+                    labelText: AppStrings.settingsAudioInputDevice,
                   ),
+                  items: [
+                    for (final option in _microphoneSources)
+                      DropdownMenuItem(
+                        value: option.id,
+                        child: Text(option.displayTitle),
+                      ),
+                  ],
+                  onChanged: _setMicrophoneSource,
+                ),
+              if (AudioDeviceService.showsPhysicalAudioDevices &&
+                  _inputDevices.isNotEmpty) ...[
+                if (MicrophoneSourceService.isSupported &&
+                    _microphoneSources.isNotEmpty)
+                  const SizedBox(height: 8),
+                DropdownButtonFormField<int>(
+                  value: _dropdownDeviceIndex(_inputDeviceIndex, _inputDevices),
+                  decoration: InputDecoration(
+                    labelText: AppStrings.settingsAudioInputDevice,
+                  ),
+                  items: _audioDeviceMenuItems(_inputDevices),
+                  onChanged: _setInputDevice,
+                ),
               ],
-              onChanged: _setMicrophoneSource,
-            ),
-          ],
-          if (AudioDeviceService.showsPhysicalAudioDevices &&
-              _inputDevices.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            DropdownButtonFormField<int>(
-              value: _dropdownDeviceIndex(_inputDeviceIndex, _inputDevices),
-              decoration: InputDecoration(
-                labelText: AppStrings.settingsAudioInputDevice,
+              if (AudioDeviceService.showsPhysicalAudioDevices &&
+                  _outputDevices.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int>(
+                  value: _dropdownDeviceIndex(_outputDeviceIndex, _outputDevices),
+                  decoration: InputDecoration(
+                    labelText: AppStrings.settingsAudioOutputDevice,
+                  ),
+                  items: _audioDeviceMenuItems(_outputDevices),
+                  onChanged: _setOutputDevice,
+                ),
+              ],
+              SwitchListTile(
+                title: Text(AppStrings.settingsPauseDuringPhoneCall),
+                value: _pauseDuringPhoneCall,
+                onChanged: _setPauseDuringPhoneCall,
               ),
-              items: _audioDeviceMenuItems(_inputDevices),
-              onChanged: _setInputDevice,
-            ),
-          ],
-          if (AudioDeviceService.showsPhysicalAudioDevices &&
-              _outputDevices.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            DropdownButtonFormField<int>(
-              value: _dropdownDeviceIndex(_outputDeviceIndex, _outputDevices),
-              decoration: InputDecoration(
-                labelText: AppStrings.settingsAudioOutputDevice,
+              SwitchListTile(
+                title: Text(AppStrings.settingsUseBluetoothHeadset),
+                value: _useBluetoothHeadset,
+                onChanged: _setUseBluetoothHeadset,
               ),
-              items: _audioDeviceMenuItems(_outputDevices),
-              onChanged: _setOutputDevice,
-            ),
-          ],
-          SwitchListTile(
-            title: Text(AppStrings.settingsPauseDuringPhoneCall),
-            value: _pauseDuringPhoneCall,
-            onChanged: _setPauseDuringPhoneCall,
+              if (Haptics.showsDesktopSettings)
+                ListTile(
+                  title: Text(AppStrings.settingsVibrationImitation),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/settings/vibration-imitation'),
+                ),
+              if (NativePlatform.isAndroid) ...[
+                SwitchListTile(
+                  title: Text(AppStrings.settingsMediaButtonPtt),
+                  value: _mediaButtonPtt,
+                  onChanged: _setMediaButtonPtt,
+                ),
+                ListTile(
+                  title: Text(AppStrings.settingsHardwarePttKey),
+                  subtitle: Text(_hardwarePttLabel()),
+                  trailing: TextButton(
+                    onPressed: _showHardwarePttDialog,
+                    child: Text(AppStrings.settingsHardwarePttAssign),
+                  ),
+                ),
+                SwitchListTile(
+                  title: Text(AppStrings.settingsExternalControl),
+                  value: _externalControl,
+                  onChanged: _setExternalControl,
+                ),
+              ],
+            ],
           ),
-          SwitchListTile(
-            title: Text(AppStrings.settingsUseBluetoothHeadset),
-            value: _useBluetoothHeadset,
-            onChanged: _setUseBluetoothHeadset,
-          ),
-          if (NativePlatform.isAndroid) ...[
-            SwitchListTile(
-              title: Text(AppStrings.settingsMediaButtonPtt),
-              value: _mediaButtonPtt,
-              onChanged: _setMediaButtonPtt,
+          if (NativePlatform.isWindows)
+            SettingsSection(
+              title: AppStrings.settingsWindows,
+              children: [
+                ListTile(
+                  title: Text(AppStrings.settingsGlobalPttHotkey),
+                  subtitle: Text(
+                    _globalPttBinding?.displayName ??
+                        AppStrings.settingsGlobalPttHotkeyUnassigned,
+                  ),
+                  trailing: Wrap(
+                    spacing: 4,
+                    children: [
+                      TextButton(
+                        onPressed: _showGlobalPttHotkeyDialog,
+                        child: Text(AppStrings.settingsGlobalPttHotkeyAssign),
+                      ),
+                      if (_globalPttBinding != null)
+                        TextButton(
+                          onPressed: _clearGlobalPttHotkey,
+                          child: Text(AppStrings.settingsGlobalPttHotkeyClear),
+                        ),
+                    ],
+                  ),
+                ),
+                SwitchListTile(
+                  title: Text(AppStrings.settingsMinimizeToTray),
+                  value: _minimizeToTray,
+                  onChanged: _setMinimizeToTray,
+                ),
+              ],
             ),
-            ListTile(
-              title: Text(AppStrings.settingsHardwarePttKey),
-              subtitle: Text(_hardwarePttLabel()),
-              trailing: TextButton(
-                onPressed: _showHardwarePttDialog,
-                child: Text(AppStrings.settingsHardwarePttAssign),
-              ),
-            ),
-            SwitchListTile(
-              title: Text(AppStrings.settingsExternalControl),
-              value: _externalControl,
-              onChanged: _setExternalControl,
-            ),
-          ],
-          if (NativePlatform.isWindows) ...[
-            const SizedBox(height: 24),
-            Text(
-              AppStrings.settingsWindows,
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            ListTile(
-              title: Text(AppStrings.settingsGlobalPttHotkey),
-              subtitle: Text(
-                _globalPttBinding?.displayName ??
-                    AppStrings.settingsGlobalPttHotkeyUnassigned,
-              ),
-              trailing: Wrap(
-                spacing: 4,
+          SettingsSection(
+            title: AppStrings.rogerSignalLabel,
+            children: [
+              if (_rogerPatterns.isNotEmpty)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _selectedRogerId ?? _rogerPatterns.first.id,
+                        decoration: InputDecoration(
+                          labelText: AppStrings.rogerSignalLabel,
+                        ),
+                        items: [
+                          for (final p in _rogerPatterns)
+                            DropdownMenuItem(value: p.id, child: Text(p.name)),
+                        ],
+                        onChanged: (id) async {
+                          if (id == null) {
+                            return;
+                          }
+                          await ref
+                              .read(rogerPatternStoreProvider)
+                              .setSelectedPattern(id);
+                          setState(() => _selectedRogerId = id);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: _playSelectedRoger,
+                      child: Text(AppStrings.playSignalButton),
+                    ),
+                  ],
+                ),
+              Row(
                 children: [
                   TextButton(
-                    onPressed: _showGlobalPttHotkeyDialog,
-                    child: Text(AppStrings.settingsGlobalPttHotkeyAssign),
+                    onPressed: () async {
+                      await context.push('/signals/roger/edit');
+                      await _reloadPatterns();
+                    },
+                    child: Text(AppStrings.rogerCustomButton),
                   ),
-                  if (_globalPttBinding != null)
+                  if (_selectedRogerId != null &&
+                      _rogerPatterns.any(
+                        (p) => p.id == _selectedRogerId && !p.builtIn,
+                      ))
                     TextButton(
-                      onPressed: _clearGlobalPttHotkey,
-                      child: Text(AppStrings.settingsGlobalPttHotkeyClear),
+                      onPressed: () async {
+                        await context.push(
+                          '/signals/roger/edit?id=$_selectedRogerId',
+                        );
+                        await _reloadPatterns();
+                      },
+                      child: Text(AppStrings.rogerEditSegment),
                     ),
                 ],
               ),
-            ),
-            SwitchListTile(
-              title: Text(AppStrings.settingsMinimizeToTray),
-              value: _minimizeToTray,
-              onChanged: _setMinimizeToTray,
-            ),
-          ],
-          const SizedBox(height: 24),
-          Text(
-            AppStrings.rogerSignalLabel,
-            style: Theme.of(context).textTheme.titleSmall,
+            ],
           ),
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          SettingsSection(
+            title: AppStrings.callSignalLabel,
             children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _selectedRogerId ??
-                      (_rogerPatterns.isEmpty ? null : _rogerPatterns.first.id),
-                  decoration:
-                      InputDecoration(labelText: AppStrings.rogerSignalLabel),
-                  items: [
-                    for (final p in _rogerPatterns)
-                      DropdownMenuItem(value: p.id, child: Text(p.name)),
+              if (_callingPatterns.isNotEmpty)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _selectedCallingId ?? _callingPatterns.first.id,
+                        decoration: InputDecoration(
+                          labelText: AppStrings.callSignalLabel,
+                        ),
+                        items: [
+                          for (final p in _callingPatterns)
+                            DropdownMenuItem(value: p.id, child: Text(p.name)),
+                        ],
+                        onChanged: (id) async {
+                          if (id == null) {
+                            return;
+                          }
+                          await ref
+                              .read(callingPatternStoreProvider)
+                              .setSelectedPattern(id);
+                          setState(() => _selectedCallingId = id);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: _playSelectedCall,
+                      child: Text(AppStrings.playSignalButton),
+                    ),
                   ],
-                  onChanged: (id) async {
-                    if (id == null) {
-                      return;
-                    }
-                    await ref
-                        .read(rogerPatternStoreProvider)
-                        .setSelectedPattern(id);
-                    setState(() => _selectedRogerId = id);
-                  },
                 ),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: _playSelectedRoger,
-                child: Text(AppStrings.playSignalButton),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () async {
+                      await context.push('/signals/calling/edit');
+                      await _reloadPatterns();
+                    },
+                    child: Text(AppStrings.rogerCustomButton),
+                  ),
+                  if (_selectedCallingId != null &&
+                      _callingPatterns.any(
+                        (p) => p.id == _selectedCallingId && !p.builtIn,
+                      ))
+                    TextButton(
+                      onPressed: () async {
+                        await context.push(
+                          '/signals/calling/edit?id=$_selectedCallingId',
+                        );
+                        await _reloadPatterns();
+                      },
+                      child: Text(AppStrings.rogerEditSegment),
+                    ),
+                ],
               ),
             ],
           ),
-          Row(
+          SettingsSection(
+            title: AppStrings.settingsAbout,
+            spacingAfter: 0,
             children: [
-              TextButton(
-                onPressed: () async {
-                  await context.push('/signals/roger/edit');
-                  await _reloadPatterns();
-                },
-                child: Text(AppStrings.rogerCustomButton),
+              ListTile(
+                title: Text(AppStrings.settingsAppVersion),
+                subtitle: Text(build.isEmpty ? version : '$version ($build)'),
               ),
-              if (_selectedRogerId != null &&
-                  _rogerPatterns.any((p) => p.id == _selectedRogerId && !p.builtIn))
-                TextButton(
-                  onPressed: () async {
-                    await context.push(
-                      '/signals/roger/edit?id=$_selectedRogerId',
-                    );
-                    await _reloadPatterns();
-                  },
-                  child: Text(AppStrings.rogerEditSegment),
-                ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            AppStrings.callSignalLabel,
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _selectedCallingId ??
-                      (_callingPatterns.isEmpty
-                          ? null
-                          : _callingPatterns.first.id),
-                  decoration:
-                      InputDecoration(labelText: AppStrings.callSignalLabel),
-                  items: [
-                    for (final p in _callingPatterns)
-                      DropdownMenuItem(value: p.id, child: Text(p.name)),
-                  ],
-                  onChanged: (id) async {
-                    if (id == null) {
-                      return;
-                    }
-                    await ref
-                        .read(callingPatternStoreProvider)
-                        .setSelectedPattern(id);
-                    setState(() => _selectedCallingId = id);
-                  },
-                ),
+              ListTile(
+                title: Text(AppStrings.settingsProtocolVersion),
+                subtitle: const Text('2'),
               ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: _playSelectedCall,
-                child: Text(AppStrings.playSignalButton),
+              ListTile(
+                title: Text(AppStrings.settingsGitHub),
+                trailing: const Icon(Icons.open_in_new),
+                onTap: _openGitHub,
               ),
             ],
-          ),
-          Row(
-            children: [
-              TextButton(
-                onPressed: () async {
-                  await context.push('/signals/calling/edit');
-                  await _reloadPatterns();
-                },
-                child: Text(AppStrings.rogerCustomButton),
-              ),
-              if (_selectedCallingId != null &&
-                  _callingPatterns.any((p) => p.id == _selectedCallingId && !p.builtIn))
-                TextButton(
-                  onPressed: () async {
-                    await context.push(
-                      '/signals/calling/edit?id=$_selectedCallingId',
-                    );
-                    await _reloadPatterns();
-                  },
-                  child: Text(AppStrings.rogerEditSegment),
-                ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Text(
-            AppStrings.settingsAbout,
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: 8),
-          ListTile(
-            title: Text(AppStrings.settingsAppVersion),
-            subtitle: Text(build.isEmpty ? version : '$version ($build)'),
-          ),
-          ListTile(
-            title: Text(AppStrings.settingsProtocolVersion),
-            subtitle: const Text('2'),
-          ),
-          ListTile(
-            title: Text(AppStrings.settingsGitHub),
-            trailing: const Icon(Icons.open_in_new),
-            onTap: _openGitHub,
           ),
         ],
       ),
@@ -724,6 +779,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ScreenOrientationMode.landscape => AppStrings.orientationLandscape,
     };
   }
+}
+
+class _AudioDeviceSnapshot {
+  const _AudioDeviceSnapshot({
+    this.microphoneSources = const [],
+    this.selectedMicrophoneSourceId = MicrophoneSourceStore.defaultId,
+    this.inputDevices = const [],
+    this.outputDevices = const [],
+    this.inputDeviceIndex = -1,
+    this.outputDeviceIndex = -1,
+  });
+
+  final List<MicrophoneSourceOption> microphoneSources;
+  final String selectedMicrophoneSourceId;
+  final List<NativeAudioDevice> inputDevices;
+  final List<NativeAudioDevice> outputDevices;
+  final int inputDeviceIndex;
+  final int outputDeviceIndex;
 }
 
 class _GlobalPttHotkeyDialog extends StatefulWidget {

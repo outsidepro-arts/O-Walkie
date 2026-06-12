@@ -584,6 +584,30 @@ abstract class AppLocalizations {
   /// **'Use Bluetooth headset'**
   String get settingsUseBluetoothHeadset;
 
+  /// No description provided for @settingsVibrationImitation.
+  ///
+  /// In en, this message translates to:
+  /// **'Vibration imitation'**
+  String get settingsVibrationImitation;
+
+  /// No description provided for @settingsVibrationImitationFrequency.
+  ///
+  /// In en, this message translates to:
+  /// **'Frequency (Hz)'**
+  String get settingsVibrationImitationFrequency;
+
+  /// No description provided for @settingsVibrationImitationVolume.
+  ///
+  /// In en, this message translates to:
+  /// **'Volume'**
+  String get settingsVibrationImitationVolume;
+
+  /// No description provided for @settingsVibrationImitationPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview'**
+  String get settingsVibrationImitationPreview;
+
   /// No description provided for @settingsExternalControl.
   ///
   /// In en, this message translates to:

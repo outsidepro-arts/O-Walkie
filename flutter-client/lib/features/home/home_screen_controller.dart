@@ -23,6 +23,7 @@ import '../../domain/signal_point_codec.dart';
 import '../../l10n/app_strings.dart';
 import '../../platform/audio_device_service.dart';
 import '../../platform/audio_interruption_manager.dart';
+import '../../data/vibration_imitation_store.dart';
 import '../../platform/haptics.dart';
 import '../../platform/native_platform.dart';
 import '../../platform/signal_preview_player.dart';
@@ -207,6 +208,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       onInterruptEnd: _resumeRelayAfterPhoneCall,
     );
     await _audioInterruption!.start();
+    if (Haptics.showsDesktopSettings) {
+      Haptics.applyFromStore(ref.read(vibrationImitationStoreProvider));
+    }
     await _initDeepLinks();
   }
 

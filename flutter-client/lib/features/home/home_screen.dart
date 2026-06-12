@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import '../../a11y/a11y.dart';
 import '../../domain/scan_mode.dart';
 import '../../domain/server_profile.dart';
+import '../../a11y/a11y_slider_field.dart';
 import '../../l10n/a11y_strings.dart';
 import '../../l10n/app_strings.dart';
 import 'home_screen_controller.dart';
@@ -359,10 +360,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ),
                   ],
                   const SizedBox(height: 24),
-                  _RxVolumeSection(
-                    percent: state.rxVolumePercent,
-                    onChanged: controller.setRxVolume,
-                    onChangeEnd: controller.finishRxVolumePreview,
+                  A11ySliderField(
+                    value: state.rxVolumePercent.toDouble(),
+                    min: 0,
+                    max: 200,
+                    divisions: 200,
+                    title: AppStrings.rxVolumeLabel,
+                    displayValue:
+                        AppStrings.rxVolumePercent(state.rxVolumePercent),
+                    semanticsLabel:
+                        '${AppStrings.rxVolumeLabel} ${AppStrings.rxVolumePercentAccessibility(state.rxVolumePercent)}',
+                    semanticsValue:
+                        AppStrings.rxVolumePercent(state.rxVolumePercent),
+                    increasedValue: state.rxVolumePercent < 200
+                        ? AppStrings.rxVolumePercent(state.rxVolumePercent + 1)
+                        : null,
+                    decreasedValue: state.rxVolumePercent > 0
+                        ? AppStrings.rxVolumePercent(state.rxVolumePercent - 1)
+                        : null,
+                    onChanged: (value) =>
+                        controller.setRxVolume(value.round()),
+                    onChangeEnd: (value) =>
+                        controller.finishRxVolumePreview(value.round()),
+                    announceOnChangeEnd: (value) =>
+                        AppStrings.rxVolumePercentAccessibility(value.round()),
                   ),
                   const SizedBox(height: 16),
                   _PttArea(
@@ -747,93 +768,6 @@ class _LabeledField extends StatelessWidget {
         helperText: helper,
         helperMaxLines: 2,
       ),
-    );
-  }
-}
-
-class _RxVolumeSection extends StatefulWidget {
-  const _RxVolumeSection({
-    required this.percent,
-    required this.onChanged,
-    required this.onChangeEnd,
-  });
-
-  final int percent;
-  final ValueChanged<int> onChanged;
-  final ValueChanged<int> onChangeEnd;
-
-  @override
-  State<_RxVolumeSection> createState() => _RxVolumeSectionState();
-}
-
-class _RxVolumeSectionState extends State<_RxVolumeSection> {
-  bool _a11yFocused = false;
-
-  void _onDidGainAccessibilityFocus() {
-    setState(() => _a11yFocused = true);
-  }
-
-  void _onDidLoseAccessibilityFocus() {
-    setState(() => _a11yFocused = false);
-  }
-
-  void _onChangeEnd(double value) {
-    final percent = value.round();
-    widget.onChangeEnd(percent);
-    A11yAnnounce.whenFocused(
-      context,
-      focused: _a11yFocused,
-      message: AppStrings.rxVolumePercentAccessibility(percent),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final percent = widget.percent;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ExcludeSemantics(
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  AppStrings.rxVolumeLabel,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ),
-              Text(
-                AppStrings.rxVolumePercent(percent),
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
-            ],
-          ),
-        ),
-        Semantics(
-          slider: true,
-          label:
-              '${AppStrings.rxVolumeLabel} ${AppStrings.rxVolumePercentAccessibility(percent)}',
-          value: AppStrings.rxVolumePercent(percent),
-          increasedValue: percent < 200
-              ? AppStrings.rxVolumePercent(percent + 1)
-              : null,
-          decreasedValue: percent > 0
-              ? AppStrings.rxVolumePercent(percent - 1)
-              : null,
-          onDidGainAccessibilityFocus: _onDidGainAccessibilityFocus,
-          onDidLoseAccessibilityFocus: _onDidLoseAccessibilityFocus,
-          child: Slider(
-            value: percent.toDouble(),
-            min: 0,
-            max: 200,
-            divisions: 200,
-            onChanged: (v) => widget.onChanged(v.round()),
-            onChangeEnd: _onChangeEnd,
-          ),
-        ),
-      ],
     );
   }
 }

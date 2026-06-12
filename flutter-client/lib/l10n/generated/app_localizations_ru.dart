@@ -270,6 +270,18 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsUseBluetoothHeadset => 'Использовать Bluetooth-гарнитуру';
 
   @override
+  String get settingsVibrationImitation => 'Имитация вибрации';
+
+  @override
+  String get settingsVibrationImitationFrequency => 'Частота (Гц)';
+
+  @override
+  String get settingsVibrationImitationVolume => 'Громкость';
+
+  @override
+  String get settingsVibrationImitationPreview => 'Прослушать';
+
+  @override
   String get settingsExternalControl =>
       'Использовать внешнее управление (Tasker)';
 

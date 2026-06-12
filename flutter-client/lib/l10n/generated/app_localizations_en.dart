@@ -268,6 +268,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsUseBluetoothHeadset => 'Use Bluetooth headset';
 
   @override
+  String get settingsVibrationImitation => 'Vibration imitation';
+
+  @override
+  String get settingsVibrationImitationFrequency => 'Frequency (Hz)';
+
+  @override
+  String get settingsVibrationImitationVolume => 'Volume';
+
+  @override
+  String get settingsVibrationImitationPreview => 'Preview';
+
+  @override
   String get settingsExternalControl => 'Allow external control (Tasker)';
 
   @override

@@ -36,6 +36,9 @@ abstract final class NativePlatform {
 
   static bool get isWindows => Platform.isWindows;
 
+  static bool get isDesktop =>
+      isWindows || Platform.isLinux || Platform.isMacOS;
+
   /// Android/iOS only. Desktop uses platform-specific channels (e.g. Windows global PTT).
   static Stream<String> get platformEvents {
     if (!isMobile) {

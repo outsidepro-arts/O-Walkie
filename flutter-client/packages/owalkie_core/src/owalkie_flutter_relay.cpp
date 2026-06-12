@@ -486,6 +486,17 @@ FFI_PLUGIN_EXPORT void owalkie_flutter_play_local_pcm(
     owalkie_flutter_audio::play_local_pcm_blocking(samples, sample_count, sample_rate_hz);
 }
 
+FFI_PLUGIN_EXPORT void owalkie_flutter_start_local_pcm_loop(
+    const int16_t* samples,
+    size_t sample_count,
+    int32_t sample_rate_hz) {
+    owalkie_flutter_audio::start_local_pcm_loop(samples, sample_count, sample_rate_hz);
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_stop_local_pcm_loop(void) {
+    owalkie_flutter_audio::stop_local_pcm_loop();
+}
+
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_poll_event(owalkie_flutter_polled_event* out) {
     if (!out) {
         return 0;

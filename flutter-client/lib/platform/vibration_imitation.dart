@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-/// Desktop "vibration" via short sine bursts (Windows [AudioEngine] parity).
+import 'vibration_patterns.dart';
+
+/// Desktop "vibration" via sine bursts (Windows [AudioEngine] parity).
 abstract final class VibrationImitation {
   static const sampleRateHz = 48000;
   static const defaultFreqHz = 100.0;
@@ -10,19 +12,60 @@ abstract final class VibrationImitation {
   static const minFreqHz = 30.0;
   static const maxFreqHz = 500.0;
 
-  /// Parallel TX collision rhythm (matches mobile [0, 26, 74] ms pattern).
-  static const parallelCollisionPatternMs = [26, 74];
+  /// Converts Android vibrator pattern to alternating tone/silence segment lengths (ms).
+  static List<int> androidPatternToToneSilenceMs(List<int> androidPattern) {
+    if (androidPattern.isEmpty) {
+      return const [];
+    }
+    final segments = <int>[];
+    for (var i = 0; i < androidPattern.length; i++) {
+      final ms = androidPattern[i];
+      if (ms <= 0) {
+        continue;
+      }
+      if (i.isOdd) {
+        segments.add(ms);
+      } else if (segments.isNotEmpty) {
+        segments.add(ms);
+      }
+    }
+    return segments;
+  }
+
+  static Int16List synthesizeAndroidPattern(
+    List<int> androidPattern, {
+    required VibrationImitationSettings settings,
+  }) {
+    return synthesizePattern(
+      patternMs: androidPatternToToneSilenceMs(androidPattern),
+      freqHz: settings.freqHz,
+      volumePercent: settings.volumePercent,
+    );
+  }
 
   static Int16List synthesizePattern({
     required List<int> patternMs,
     double freqHz = defaultFreqHz,
     int volumePercent = defaultVolumePercent,
   }) {
-    final gain = _gain(volumePercent);
+    return synthesizePatternWithSettings(
+      patternMs: patternMs,
+      settings: VibrationImitationSettings(
+        freqHz: freqHz,
+        volumePercent: volumePercent,
+      ),
+    );
+  }
+
+  static Int16List synthesizePatternWithSettings({
+    required List<int> patternMs,
+    required VibrationImitationSettings settings,
+  }) {
+    final gain = _gain(settings.volumePercent);
     if (gain <= 0 || patternMs.isEmpty) {
       return Int16List(0);
     }
-    final hz = freqHz.clamp(minFreqHz, maxFreqHz);
+    final hz = settings.freqHz.clamp(minFreqHz, maxFreqHz);
     final out = <int>[];
     var toneOn = true;
     for (final durationMs in patternMs) {
@@ -39,18 +82,25 @@ abstract final class VibrationImitation {
     return Int16List.fromList(out);
   }
 
-  static Int16List synthesizePulse(
+  static Int16List synthesizeDuration(
     int durationMs, {
-    double freqHz = defaultFreqHz,
-    int volumePercent = defaultVolumePercent,
+    required VibrationImitationSettings settings,
   }) {
     if (durationMs <= 0) {
       return Int16List(0);
     }
-    return synthesizePattern(
+    return synthesizePatternWithSettings(
       patternMs: [durationMs],
-      freqHz: freqHz,
-      volumePercent: volumePercent,
+      settings: settings,
+    );
+  }
+
+  static Int16List synthesizePreview({
+    required VibrationImitationSettings settings,
+  }) {
+    return synthesizePatternWithSettings(
+      patternMs: VibrationPatterns.preview,
+      settings: settings,
     );
   }
 

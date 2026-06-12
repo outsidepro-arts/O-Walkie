@@ -181,6 +181,13 @@ class SessionRelayBindings {
       _lib.lookupFunction<ffi.Void Function(ffi.Pointer<ffi.Int16>, ffi.Uint64, ffi.Int32),
           void Function(ffi.Pointer<ffi.Int16>, int, int)>('owalkie_flutter_play_local_pcm');
 
+  late final void Function(ffi.Pointer<ffi.Int16>, int, int) _startLocalLoop =
+      _lib.lookupFunction<ffi.Void Function(ffi.Pointer<ffi.Int16>, ffi.Uint64, ffi.Int32),
+          void Function(ffi.Pointer<ffi.Int16>, int, int)>('owalkie_flutter_start_local_pcm_loop');
+
+  late final void Function() _stopLocalLoop =
+      _lib.lookupFunction<ffi.Void Function(), void Function()>('owalkie_flutter_stop_local_pcm_loop');
+
   late final int Function(int, ffi.Pointer<ffi.Int16>, int, ffi.Pointer<ffi.Int16>, int, int)
       _pttUpWithRoger = _lib.lookupFunction<
           ffi.Int32 Function(
@@ -387,6 +394,23 @@ class SessionRelayBindings {
       }
       _playLocal(buf, pcm.length, sampleRate);
     });
+  }
+
+  void startLocalPcmLoop(Int16List pcm, {required int sampleRate}) {
+    if (pcm.isEmpty) {
+      return;
+    }
+    using((arena) {
+      final buf = arena<ffi.Int16>(pcm.length);
+      for (var i = 0; i < pcm.length; i++) {
+        buf[i] = pcm[i];
+      }
+      _startLocalLoop(buf, pcm.length, sampleRate);
+    });
+  }
+
+  void stopLocalPcmLoop() {
+    _stopLocalLoop();
   }
 
   int pttUpWithRoger({

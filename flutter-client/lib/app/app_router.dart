@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/home/home_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/settings/vibration_imitation_settings_screen.dart';
 import '../features/signals/pattern_editor_screen.dart';
 
 final appRouter = GoRouter(
@@ -14,6 +15,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/settings',
       builder: (context, state) => const SettingsScreen(),
+    ),
+    GoRoute(
+      path: '/settings/vibration-imitation',
+      builder: (context, state) => const VibrationImitationSettingsScreen(),
     ),
     GoRoute(
       path: '/signals/:kind/edit',
