@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart' hide MenuItem;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
@@ -140,7 +140,9 @@ class DesktopShell with TrayListener, WindowListener {
 
   @override
   void onTrayIconRightMouseDown() {
-    unawaited(trayManager.popUpContextMenu());
+    // Sets foreground window before TrackPopupMenu() so the popup receives keyboard focus.
+    // ignore: deprecated_member_use
+    unawaited(trayManager.popUpContextMenu(bringAppToFront: true));
   }
 
   @override
