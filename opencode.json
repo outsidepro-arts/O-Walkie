@@ -1,0 +1,35 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "AGENTS.md",
+    ".opencode/project_memory.md"
+  ],
+  "model": "opencode-go/qwen3.7-max",
+  "model_fallback": true,
+  "provider": {
+    "opencode-go": {
+      "options": {
+        "routing": {
+          "default": "qwen3.7-max",
+          "explore": "minimax-m3",
+          "librarian": "deepseek-v4-flash",
+          "search": "deepseek-v4-flash"
+        },
+        "fallback_chain": [
+          "qwen3.7-max",
+          "minimax-m3",
+          "qwen3.7-plus",
+          "deepseek-v4-flash"
+        ]
+      }
+    }
+  },
+  "runtime_fallback": {
+    "enabled": true,
+    "retry_on_errors": [400, 429, 503, 529],
+    "max_fallback_attempts": 3,
+    "cooldown_seconds": 60,
+    "notify_on_fallback": true
+  },
+  "formatter": true
+}
