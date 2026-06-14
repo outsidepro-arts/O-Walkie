@@ -31,6 +31,7 @@ class _SessionWorker {
   int _sessionId = 0;
   bool _desiredConnected = false;
   bool _clientReconnectRunning = false;
+  bool _reconnectCancelled = false;
   bool _hadConnected = false;
   bool _localTxActive = false;
   bool _pendingNetworkRecover = false;
@@ -40,12 +41,17 @@ class _SessionWorker {
   bool _publishedConnected = false;
   bool _publishedConnecting = false;
   bool _publishedReconnecting = false;
+  bool _warmMicRecorderEnabled = false;
+  bool _appInForeground = true;
   Timer? _pollTimer;
   List<int> _pttPressPcm = const [];
   List<int> _pttReleasePcm = const [];
 
-  static const _initialBackoffMs = 1500;
-  static const _maxBackoffMs = 8000;
+  static const _attemptsPerSeries = 4;
+  static const _intervalInSeriesMs = 300;
+  static const _initialSeriesPauseMs = 3000;
+  static const _maxSeriesPauseMs = 10000;
+  static const _seriesPauseMultiplier = 1.5;
   static const _networkRecoverMinIntervalMs = 3000;
   static const _localPlaybackRate = 44100;
   static const _rogerTailMs = 40;
@@ -119,6 +125,26 @@ class _SessionWorker {
         _pauseRelayForExternalReason();
       case SessionResumeRelayCommand():
         _resumeRelayAfterExternalPause();
+      case SessionSyncWarmCaptureCommand(:final warmMicEnabled, :final appInForeground):
+        _warmMicRecorderEnabled = warmMicEnabled;
+        _appInForeground = appInForeground;
+        _applyWarmCaptureFromFlags();
+      case SessionSetAndroidBtVoiceRouteCommand(:final enabled):
+        _relay.setAndroidBtVoiceRoute(enabled);
+    }
+  }
+
+  void _applyWarmCaptureFromFlags() {
+    final shouldOffer = _warmMicRecorderEnabled &&
+        _appInForeground &&
+        _publishedConnected &&
+        !_relayPausedExternally &&
+        !_localTxActive &&
+        _sessionId != 0;
+    if (shouldOffer) {
+      _relay.warmCapture();
+    } else {
+      _relay.releaseCaptureIfIdle();
     }
   }
 
@@ -126,6 +152,7 @@ class _SessionWorker {
     if (_relayPausedExternally || !_desiredConnected) {
       return;
     }
+    _reconnectCancelled = true;
     _relayPausedExternally = true;
     final id = _sessionId;
     if (id != 0) {
@@ -282,35 +309,56 @@ class _SessionWorker {
   }
 
   Future<void> _clientReconnectLoop() async {
-    var backoffMs = _initialBackoffMs;
-    while (_desiredConnected && !_relayPausedExternally) {
+    _reconnectCancelled = false;
+    var seriesPauseMs = _initialSeriesPauseMs;
+    
+    while (_desiredConnected && !_relayPausedExternally && !_reconnectCancelled) {
       if (_sessionId == 0 || !_relay.sessionValid(_sessionId)) {
-        await Future<void>.delayed(const Duration(milliseconds: 500));
+        await Future<void>.delayed(const Duration(milliseconds: 200));
         continue;
       }
+      
       if (_relay.sessionReady(_sessionId)) {
-        backoffMs = _initialBackoffMs;
+        seriesPauseMs = _initialSeriesPauseMs;
         if (!_publishedConnected || _publishedConnecting || _publishedReconnecting) {
           _publishState(connected: true, connecting: false, reconnecting: false);
         }
         await Future<void>.delayed(const Duration(milliseconds: 500));
         continue;
       }
+      
       _publishState(
         connected: false,
         connecting: true,
         reconnecting: _hadConnected,
       );
-      _relay.connect(_sessionId, timeoutMs: 3500);
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      if (_relay.sessionReady(_sessionId)) {
-        backoffMs = _initialBackoffMs;
-        _publishState(connected: true, connecting: false, reconnecting: false);
-        continue;
+      
+      var connectedInSeries = false;
+      for (var attempt = 0; attempt < _attemptsPerSeries; attempt++) {
+        if (!_desiredConnected || _relayPausedExternally || _reconnectCancelled) {
+          break;
+        }
+        
+        _relay.connect(_sessionId, timeoutMs: 3500);
+        await Future<void>.delayed(const Duration(milliseconds: _intervalInSeriesMs));
+        
+        if (_relay.sessionReady(_sessionId)) {
+          seriesPauseMs = _initialSeriesPauseMs;
+          _publishState(connected: true, connecting: false, reconnecting: false);
+          connectedInSeries = true;
+          break;
+        }
       }
-      await Future<void>.delayed(Duration(milliseconds: backoffMs));
-      backoffMs = math.min((backoffMs * 1.5).round(), _maxBackoffMs);
+      
+      if (!connectedInSeries && _desiredConnected && !_relayPausedExternally && !_reconnectCancelled) {
+        await Future<void>.delayed(Duration(milliseconds: seriesPauseMs));
+        seriesPauseMs = math.min(
+          (seriesPauseMs * _seriesPauseMultiplier).round(),
+          _maxSeriesPauseMs,
+        );
+      }
     }
+    
     _clientReconnectRunning = false;
     if (!_desiredConnected) {
       _publishState(connected: false, connecting: false);
@@ -318,6 +366,7 @@ class _SessionWorker {
   }
 
   void _disconnect() {
+    _reconnectCancelled = true;
     _desiredConnected = false;
     _hadConnected = false;
     _relayPausedExternally = false;
@@ -329,6 +378,7 @@ class _SessionWorker {
       _relay.disconnect(id);
     }
     _sessionId = 0;
+    _relay.releaseSessionAudio();
     _publishState(connected: false, connecting: false);
   }
 
@@ -428,6 +478,7 @@ class _SessionWorker {
       active: false,
       resultCode: rc,
     ));
+    _applyWarmCaptureFromFlags();
     _drainPendingNetworkRecover();
   }
 
@@ -561,11 +612,14 @@ class _SessionWorker {
       reconnecting: reconnecting,
       error: clearError ? null : error,
     ));
+    _applyWarmCaptureFromFlags();
   }
 
   void _shutdown() {
+    _reconnectCancelled = true;
     _desiredConnected = false;
     _pollTimer?.cancel();
+    _pollTimer = null;
     _relay.disconnectAll();
     _relay.shutdown();
     _commands.close();

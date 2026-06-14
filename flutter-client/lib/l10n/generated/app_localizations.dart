@@ -584,6 +584,12 @@ abstract class AppLocalizations {
   /// **'Use Bluetooth headset'**
   String get settingsUseBluetoothHeadset;
 
+  /// No description provided for @settingsWarmMicRecorder.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep microphone ready (faster PTT start)'**
+  String get settingsWarmMicRecorder;
+
   /// No description provided for @settingsVibrationImitation.
   ///
   /// In en, this message translates to:

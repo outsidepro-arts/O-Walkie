@@ -53,17 +53,25 @@ abstract final class NativePlatform {
     if (!isMobile) {
       return true;
     }
-    final granted = await _channel.invokeMethod<bool>('hasMicrophonePermission');
-    return granted ?? false;
+    try {
+      final granted = await _channel.invokeMethod<bool>('hasMicrophonePermission');
+      return granted ?? false;
+    } catch (e) {
+      return false;
+    }
   }
 
   static Future<bool> requestMicrophonePermission() async {
     if (!isMobile) {
       return true;
     }
-    final granted =
-        await _channel.invokeMethod<bool>('requestMicrophonePermission');
-    return granted ?? false;
+    try {
+      final granted =
+          await _channel.invokeMethod<bool>('requestMicrophonePermission');
+      return granted ?? false;
+    } catch (e) {
+      return false;
+    }
   }
 
   static Future<bool> ensureMicrophonePermission() async {
@@ -77,18 +85,26 @@ abstract final class NativePlatform {
     if (!isAndroid) {
       return true;
     }
-    final granted =
-        await _channel.invokeMethod<bool>('hasNotificationPermission');
-    return granted ?? false;
+    try {
+      final granted =
+          await _channel.invokeMethod<bool>('hasNotificationPermission');
+      return granted ?? false;
+    } catch (e) {
+      return false;
+    }
   }
 
   static Future<bool> requestNotificationPermission() async {
     if (!isAndroid) {
       return true;
     }
-    final granted =
-        await _channel.invokeMethod<bool>('requestNotificationPermission');
-    return granted ?? false;
+    try {
+      final granted =
+          await _channel.invokeMethod<bool>('requestNotificationPermission');
+      return granted ?? false;
+    } catch (e) {
+      return false;
+    }
   }
 
   static Future<bool> ensureNotificationPermission() async {
@@ -105,10 +121,14 @@ abstract final class NativePlatform {
     if (!isMobile) {
       return;
     }
-    await _channel.invokeMethod<void>('prepareAudioSession', {
-      'bluetoothHeadset': bluetoothHeadset,
-      if (microphoneProfileId != null) 'microphoneProfileId': microphoneProfileId,
-    });
+    try {
+      await _channel.invokeMethod<void>('prepareAudioSession', {
+        'bluetoothHeadset': bluetoothHeadset,
+        if (microphoneProfileId != null) 'microphoneProfileId': microphoneProfileId,
+      });
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> applyMicrophoneProfile(
@@ -118,127 +138,209 @@ abstract final class NativePlatform {
     if (!isIOS) {
       return;
     }
-    await _channel.invokeMethod<void>('applyMicrophoneProfile', {
-      'profileId': profileId,
-      'bluetoothHeadset': bluetoothHeadset,
-    });
+    try {
+      await _channel.invokeMethod<void>('applyMicrophoneProfile', {
+        'profileId': profileId,
+        'bluetoothHeadset': bluetoothHeadset,
+      });
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> releaseAudioSession() async {
     if (!isMobile) {
       return;
     }
-    await _channel.invokeMethod<void>('releaseAudioSession');
+    try {
+      await _channel.invokeMethod<void>('releaseAudioSession');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> startSessionForeground({required bool connected}) async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('startSessionForeground', {
-      'connected': connected,
-    });
+    try {
+      await _channel.invokeMethod<void>('startSessionForeground', {
+        'connected': connected,
+      });
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> updateSessionForeground({required bool connected}) async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('updateSessionForeground', {
-      'connected': connected,
-    });
+    try {
+      await _channel.invokeMethod<void>('updateSessionForeground', {
+        'connected': connected,
+      });
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> stopSessionForeground() async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('stopSessionForeground');
+    try {
+      await _channel.invokeMethod<void>('stopSessionForeground');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
+  }
+
+  static Future<void> requestAppExit() async {
+    if (!isAndroid) {
+      return;
+    }
+    try {
+      await _channel.invokeMethod<void>('requestAppExit');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
+  }
+
+  static Future<void> moveTaskToBack() async {
+    if (!isAndroid) {
+      return;
+    }
+    try {
+      await _channel.invokeMethod<void>('moveTaskToBack');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> startSessionNetworkMonitoring() async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('startSessionNetworkMonitoring');
+    try {
+      await _channel.invokeMethod<void>('startSessionNetworkMonitoring');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> stopSessionNetworkMonitoring() async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('stopSessionNetworkMonitoring');
+    try {
+      await _channel.invokeMethod<void>('stopSessionNetworkMonitoring');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> openBatterySettings() async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('openBatterySettings');
+    try {
+      await _channel.invokeMethod<void>('openBatterySettings');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> syncPttMediaSession({required bool active}) async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('syncPttMediaSession', {
-      'active': active,
-    });
+    try {
+      await _channel.invokeMethod<void>('syncPttMediaSession', {
+        'active': active,
+      });
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<HardwarePttBinding> getHardwarePttBinding() async {
     if (!isAndroid) {
       return const HardwarePttBinding.unassigned();
     }
-    final map = await _channel.invokeMapMethod<String, dynamic>(
-      'getHardwarePttBinding',
-    );
-    if (map == null) {
+    try {
+      final map = await _channel.invokeMapMethod<String, dynamic>(
+        'getHardwarePttBinding',
+      );
+      if (map == null) {
+        return const HardwarePttBinding.unassigned();
+      }
+      return HardwarePttBinding(
+        keyCode: map['keyCode'] as int? ?? 0,
+        scanCode: map['scanCode'] as int? ?? 0,
+        assigned: map['assigned'] as bool? ?? false,
+      );
+    } catch (e) {
       return const HardwarePttBinding.unassigned();
     }
-    return HardwarePttBinding(
-      keyCode: map['keyCode'] as int? ?? 0,
-      scanCode: map['scanCode'] as int? ?? 0,
-      assigned: map['assigned'] as bool? ?? false,
-    );
   }
 
   static Future<void> clearHardwarePttBinding() async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('clearHardwarePttBinding');
+    try {
+      await _channel.invokeMethod<void>('clearHardwarePttBinding');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> startCaptureHardwarePttKey() async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('startCaptureHardwarePttKey');
+    try {
+      await _channel.invokeMethod<void>('startCaptureHardwarePttKey');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<void> cancelCaptureHardwarePttKey() async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('cancelCaptureHardwarePttKey');
+    try {
+      await _channel.invokeMethod<void>('cancelCaptureHardwarePttKey');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static Future<bool> getExternalControlEnabled() async {
     if (!isAndroid) {
       return false;
     }
-    final enabled = await _channel.invokeMethod<bool>('getExternalControlEnabled');
-    return enabled ?? false;
+    try {
+      final enabled = await _channel.invokeMethod<bool>('getExternalControlEnabled');
+      return enabled ?? false;
+    } catch (e) {
+      return false;
+    }
   }
 
   static Future<void> setExternalControlEnabled(bool enabled) async {
     if (!isAndroid) {
       return;
     }
-    await _channel.invokeMethod<void>('setExternalControlEnabled', {
-      'enabled': enabled,
-    });
+    try {
+      await _channel.invokeMethod<void>('setExternalControlEnabled', {
+        'enabled': enabled,
+      });
+    } catch (e) {
+      // Silently ignore platform errors
+    }
   }
 
   static bool get isIOS => Platform.isIOS;
@@ -247,20 +349,24 @@ abstract final class NativePlatform {
     if (!isAndroid && !isIOS) {
       return const [];
     }
-    final raw = await _channel.invokeListMethod<Map<Object?, Object?>>(
-      'listMicrophoneSources',
-    );
-    if (raw == null || raw.isEmpty) {
+    try {
+      final raw = await _channel.invokeListMethod<Map<Object?, Object?>>(
+        'listMicrophoneSources',
+      );
+      if (raw == null || raw.isEmpty) {
+        return const [];
+      }
+      return [
+        for (final entry in raw)
+          MicrophoneSourceOption(
+            id: entry['id'] as String? ?? '',
+            title: entry['title'] as String? ?? '',
+            inputPreset: entry['inputPreset'] as int? ?? 1,
+          ),
+      ];
+    } catch (e) {
       return const [];
     }
-    return [
-      for (final entry in raw)
-        MicrophoneSourceOption(
-          id: entry['id'] as String? ?? '',
-          title: entry['title'] as String? ?? '',
-          inputPreset: entry['inputPreset'] as int? ?? 1,
-        ),
-    ];
   }
 }
 

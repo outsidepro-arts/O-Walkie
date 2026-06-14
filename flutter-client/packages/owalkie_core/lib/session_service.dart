@@ -10,6 +10,7 @@ class SessionService {
 
   Isolate? _isolate;
   SendPort? _workerPort;
+  bool _disposed = false;
   final StreamController<SessionWorkerMessage> _events =
       StreamController<SessionWorkerMessage>.broadcast();
 
@@ -18,7 +19,7 @@ class SessionService {
   bool get isRunning => _workerPort != null;
 
   Future<void> start() async {
-    if (_workerPort != null) {
+    if (_disposed || _workerPort != null) {
       return;
     }
     final toMain = ReceivePort();
@@ -57,8 +58,11 @@ class SessionService {
   }
 
   Future<void> stop() async {
-    _workerPort?.send(const SessionShutdownCommand());
+    if (_disposed) return;
+    final port = _workerPort;
     _workerPort = null;
+    port?.send(const SessionShutdownCommand());
+    await Future<void>.delayed(const Duration(milliseconds: 100));
     _isolate?.kill(priority: Isolate.immediate);
     _isolate = null;
   }
@@ -69,6 +73,7 @@ class SessionService {
     required String channel,
     bool repeater = false,
   }) {
+    if (_disposed) return;
     _workerPort?.send(SessionConnectCommand(
       host: host,
       port: port,
@@ -84,6 +89,7 @@ class SessionService {
     required String channel,
     bool repeater = false,
   }) {
+    if (_disposed) return;
     _workerPort?.send(SessionSwitchServerCommand(
       host: host,
       port: port,
@@ -93,14 +99,19 @@ class SessionService {
   }
 
   void disconnect() {
+    if (_disposed) return;
     _workerPort?.send(const SessionDisconnectCommand());
   }
 
-  void pttDown() => _workerPort?.send(const SessionPttDownCommand());
+  void pttDown() {
+    if (_disposed) return;
+    _workerPort?.send(const SessionPttDownCommand());
+  }
 
   void pttUp({
     List<({double freqHz, int durationMs})> rogerPoints = const [],
   }) {
+    if (_disposed) return;
     _workerPort?.send(SessionPttUpCommand(rogerPoints: rogerPoints));
   }
 
@@ -108,6 +119,7 @@ class SessionService {
     required List<({double freqHz, int durationMs})> points,
     int repeatCount = 1,
   }) {
+    if (_disposed) return;
     _workerPort?.send(SessionSendCallCommand(
       points: points,
       repeatCount: repeatCount,
@@ -115,6 +127,7 @@ class SessionService {
   }
 
   void playLocalSamples(List<int> samples, {int sampleRate = 44100}) {
+    if (_disposed) return;
     _workerPort?.send(SessionPlayLocalCommand(
       samples: samples,
       sampleRate: sampleRate,
@@ -125,6 +138,7 @@ class SessionService {
     required List<int> pttPress,
     required List<int> pttRelease,
   }) {
+    if (_disposed) return;
     _workerPort?.send(SessionSoundBankCommand(
       pttPress: pttPress,
       pttRelease: pttRelease,
@@ -132,32 +146,63 @@ class SessionService {
   }
 
   void setRxVolumePercent(int percent) {
+    if (_disposed) return;
     _workerPort?.send(SessionSetRxVolumeCommand(percent));
   }
 
   void setRepeaterMode(bool enabled) {
+    if (_disposed) return;
     _workerPort?.send(SessionSetRepeaterCommand(enabled));
   }
 
-  void punchNat() => _workerPort?.send(const SessionPunchNatCommand());
+  void punchNat() {
+    if (_disposed) return;
+    _workerPort?.send(const SessionPunchNatCommand());
+  }
 
   void bindProcessNetwork(int networkHandle) {
+    if (_disposed) return;
     _workerPort?.send(SessionBindProcessNetworkCommand(networkHandle));
   }
 
   void recoverAfterNetworkHandoff() {
+    if (_disposed) return;
     _workerPort?.send(const SessionNetworkHandoffCommand());
   }
 
-  void pauseRelay() => _workerPort?.send(const SessionPauseRelayCommand());
+  void pauseRelay() {
+    if (_disposed) return;
+    _workerPort?.send(const SessionPauseRelayCommand());
+  }
 
-  void resumeRelay() => _workerPort?.send(const SessionResumeRelayCommand());
+  void resumeRelay() {
+    if (_disposed) return;
+    _workerPort?.send(const SessionResumeRelayCommand());
+  }
+
+  void syncWarmCapture({
+    required bool warmMicEnabled,
+    required bool appInForeground,
+  }) {
+    if (_disposed) return;
+    _workerPort?.send(SessionSyncWarmCaptureCommand(
+      warmMicEnabled: warmMicEnabled,
+      appInForeground: appInForeground,
+    ));
+  }
+
+  void setAndroidBtVoiceRoute(bool enabled) {
+    if (_disposed) return;
+    _workerPort?.send(SessionSetAndroidBtVoiceRouteCommand(enabled));
+  }
 
   void reportSignal({required int mode, required int value}) {
+    if (_disposed) return;
     _workerPort?.send(SessionReportSignalCommand(mode: mode, value: value));
   }
 
   void clearSignal(int mode) {
+    if (_disposed) return;
     _workerPort?.send(SessionClearSignalCommand(mode));
   }
 
@@ -170,7 +215,7 @@ class SessionService {
     required String channel,
     int timeoutMs = 4000,
   }) async {
-    if (_workerPort == null) {
+    if (_disposed || _workerPort == null) {
       return (resultCode: -1, active: false);
     }
     final requestId = ++_channelActivityRequestId;
@@ -200,6 +245,8 @@ class SessionService {
   }
 
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
     unawaited(stop());
     _events.close();
   }

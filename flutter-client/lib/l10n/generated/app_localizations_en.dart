@@ -268,6 +268,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsUseBluetoothHeadset => 'Use Bluetooth headset';
 
   @override
+  String get settingsWarmMicRecorder =>
+      'Keep microphone ready (faster PTT start)';
+
+  @override
   String get settingsVibrationImitation => 'Vibration imitation';
 
   @override

@@ -270,6 +270,10 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsUseBluetoothHeadset => 'Использовать Bluetooth-гарнитуру';
 
   @override
+  String get settingsWarmMicRecorder =>
+      'Держать микрофон готовым (быстрее старт передачи)';
+
+  @override
   String get settingsVibrationImitation => 'Имитация вибрации';
 
   @override

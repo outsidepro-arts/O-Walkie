@@ -91,6 +91,10 @@ void* g_tx_user = nullptr;
 
 std::atomic<bool> g_capture_active{false};
 
+#if defined(__ANDROID__)
+std::atomic<bool> g_android_bt_voice_route{false};
+#endif
+
 void tx_pump_loop();
 
 void stop_tx_pump_thread_locked(std::thread* join_out = nullptr) {
@@ -634,6 +638,11 @@ bool open_playback_locked() {
 
     cfg.dataCallback = playback_cb;
 
+#ifdef __ANDROID__
+    // Kotlin RxPcmJitterBuffer / UiSignalPlayer use STREAM_MUSIC, not voice comm.
+    cfg.aaudio.usage = ma_aaudio_usage_media;
+#endif
+
     if (ma_device_init(&g_context, &cfg, &g_playback) != MA_SUCCESS) {
 
         OWALKIE_AUDIO_LOGE("playback ma_device_init failed (%d Hz)", g_sample_rate);
@@ -700,7 +709,9 @@ bool open_capture_locked() {
 
 #ifdef __ANDROID__
 
-    cfg.aaudio.usage = ma_aaudio_usage_voice_communication;
+    cfg.aaudio.usage = g_android_bt_voice_route.load(std::memory_order_relaxed)
+        ? ma_aaudio_usage_voice_communication
+        : ma_aaudio_usage_media;
 
     cfg.aaudio.inputPreset = static_cast<ma_aaudio_input_preset>(g_aaudio_input_preset);
 
@@ -755,8 +766,6 @@ void configure_locked(int sample_rate_hz, int packet_ms) {
         close_playback_locked();
 
     }
-
-    (void)open_playback_locked();
 
 }
 
@@ -907,6 +916,60 @@ void stop_capture() {
     std::lock_guard<std::mutex> tx_lock(g_tx_mu);
 
     g_tx_fifo.clear();
+
+}
+
+
+
+bool warm_capture() {
+
+    if (g_capture_active.load(std::memory_order_acquire)) {
+
+        return false;
+
+    }
+
+    std::lock_guard<std::mutex> lock(g_mu);
+
+    if (!open_capture_locked()) {
+
+        return false;
+
+    }
+
+    g_capture_active.store(false, std::memory_order_release);
+
+    return true;
+
+}
+
+
+
+void release_capture_if_idle() {
+
+    if (g_capture_active.load(std::memory_order_acquire)) {
+
+        return;
+
+    }
+
+    std::lock_guard<std::mutex> lock(g_mu);
+
+    close_capture_locked();
+
+}
+
+
+
+void release_session_audio() {
+
+    stop_local_pcm_loop();
+
+    std::lock_guard<std::mutex> lock(g_mu);
+
+    close_capture_locked();
+
+    close_playback_locked();
 
 }
 
@@ -1498,6 +1561,38 @@ int32_t playback_device_index() {
     std::lock_guard<std::mutex> lock(g_mu);
 
     return g_preferred_output_index;
+
+}
+
+
+
+void set_android_bt_voice_route(bool enabled) {
+
+#ifndef __ANDROID__
+
+    (void)enabled;
+
+    return;
+
+#else
+
+    const bool prev = g_android_bt_voice_route.exchange(enabled, std::memory_order_relaxed);
+
+    if (prev == enabled) {
+
+        return;
+
+    }
+
+    std::lock_guard<std::mutex> lock(g_mu);
+
+    if (g_capture_open) {
+
+        close_capture_locked();
+
+    }
+
+#endif
 
 }
 

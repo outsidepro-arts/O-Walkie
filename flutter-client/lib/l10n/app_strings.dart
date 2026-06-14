@@ -125,6 +125,7 @@ abstract final class AppStrings {
   static String get settingsPauseDuringPhoneCall =>
       _l.settingsPauseDuringPhoneCall;
   static String get settingsUseBluetoothHeadset => _l.settingsUseBluetoothHeadset;
+  static String get settingsWarmMicRecorder => _l.settingsWarmMicRecorder;
   static String get settingsVibrationImitation => _l.settingsVibrationImitation;
   static String get settingsVibrationImitationFrequency =>
       _l.settingsVibrationImitationFrequency;

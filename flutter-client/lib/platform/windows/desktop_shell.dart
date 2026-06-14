@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../data/windows_settings_store.dart';
 import '../../domain/windows_ptt_binding.dart';
+import '../../features/home/home_screen_controller.dart';
 import '../../l10n/app_strings.dart';
 import 'windows_global_ptt.dart';
 
@@ -25,17 +26,16 @@ class DesktopShell with TrayListener, WindowListener {
   final Ref _ref;
   bool _initialized = false;
   bool _exiting = false;
-  bool _minimizeToTray = false;
   bool get isActive => Platform.isWindows && !kIsWeb;
+
+  bool get _sessionKeepAlive =>
+      _ref.read(homeScreenControllerProvider.notifier).sessionKeepAlive;
 
   Future<void> init() async {
     if (!isActive || _initialized) {
       return;
     }
     _initialized = true;
-
-    final store = _ref.read(windowsSettingsStoreProvider);
-    _minimizeToTray = store.minimizeToTrayOnClose();
 
     trayManager.addListener(this);
     windowManager.addListener(this);
@@ -80,8 +80,16 @@ class DesktopShell with TrayListener, WindowListener {
   }
 
   Future<void> setMinimizeToTrayOnClose(bool enabled) async {
-    _minimizeToTray = enabled;
     await _ref.read(windowsSettingsStoreProvider).setMinimizeToTrayOnClose(enabled);
+  }
+
+  Future<void> hideToTray() async {
+    await windowManager.hide();
+  }
+
+  /// Full quit when the relay session is idle (window close / system back).
+  Future<void> exitApplication() async {
+    await _exitApp();
   }
 
   Future<void> showMainWindow() async {
@@ -94,6 +102,21 @@ class DesktopShell with TrayListener, WindowListener {
       return;
     }
     _exiting = true;
+    await _ref.read(homeScreenControllerProvider.notifier).prepareForAppExit();
+    await WindowsGlobalPtt.uninstallHook();
+    trayManager.removeListener(this);
+    windowManager.removeListener(this);
+    await windowManager.setPreventClose(false);
+    await trayManager.destroy();
+    await windowManager.destroy();
+  }
+
+  Future<void> _exitAppForced() async {
+    if (_exiting) {
+      return;
+    }
+    _exiting = true;
+    await _ref.read(homeScreenControllerProvider.notifier).shutdownForAppExit();
     await WindowsGlobalPtt.uninstallHook();
     trayManager.removeListener(this);
     windowManager.removeListener(this);
@@ -126,7 +149,7 @@ class DesktopShell with TrayListener, WindowListener {
       case 'show':
         unawaited(showMainWindow());
       case 'exit':
-        unawaited(_exitApp());
+        unawaited(_exitAppForced());
     }
   }
 
@@ -135,8 +158,8 @@ class DesktopShell with TrayListener, WindowListener {
     if (_exiting) {
       return;
     }
-    if (_minimizeToTray) {
-      unawaited(windowManager.hide());
+    if (_sessionKeepAlive) {
+      unawaited(hideToTray());
       return;
     }
     unawaited(_exitApp());

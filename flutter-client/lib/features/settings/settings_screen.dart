@@ -11,6 +11,7 @@ import '../../data/audio_device_store.dart';
 import '../../data/microphone_source_store.dart';
 import '../../data/audio_settings_store.dart';
 import '../../data/orientation_store.dart';
+import '../../data/warm_mic_recorder_store.dart';
 import '../../data/windows_settings_store.dart';
 import '../../domain/microphone_source_option.dart';
 import '../../features/home/home_screen_controller.dart';
@@ -20,6 +21,7 @@ import '../../data/vibration_imitation_store.dart';
 import '../../platform/haptics.dart';
 import '../../platform/microphone_source_service.dart';
 import '../../platform/native_platform.dart';
+import '../home/home_screen_controller.dart';
 import '../../platform/windows/desktop_shell.dart';
 import '../../platform/windows/windows_global_ptt.dart';
 import '../../data/signal_pattern_store.dart';
@@ -45,11 +47,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String? _selectedCallingId;
   bool _pauseDuringPhoneCall = true;
   bool _useBluetoothHeadset = false;
+  bool _warmMicRecorder = false;
   bool _mediaButtonPtt = true;
   bool _externalControl = false;
   HardwarePttBinding _hardwarePttBinding = const HardwarePttBinding.unassigned();
   WindowsPttBinding? _globalPttBinding;
-  bool _minimizeToTray = false;
   List<NativeAudioDevice> _inputDevices = [];
   List<NativeAudioDevice> _outputDevices = [];
   int _inputDeviceIndex = -1;
@@ -171,13 +173,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final callingStore = ref.read(callingPatternStoreProvider);
     final phoneCallPause = ref.read(phoneCallPauseStoreProvider);
     final bluetoothHeadset = ref.read(bluetoothHeadsetStoreProvider);
+    final warmMicRecorder = ref.read(warmMicRecorderStoreProvider);
     final mediaButtonPtt = ref.read(mediaButtonPttStoreProvider);
     final externalControl = ref.read(externalControlStoreProvider);
     final hardwareBinding = await NativePlatform.getHardwarePttBinding();
     final externalControlEnabled = await externalControl.isEnabled();
     final windowsStore = ref.read(windowsSettingsStoreProvider);
     final globalBinding = windowsStore.loadBinding();
-    final minimizeToTray = windowsStore.minimizeToTrayOnClose();
     final audioSnapshot = await _loadAudioDeviceSnapshot();
     if (!mounted) {
       return;
@@ -191,11 +193,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _selectedCallingId = callingStore.getSelectedPattern().id;
       _pauseDuringPhoneCall = phoneCallPause.isEnabled();
       _useBluetoothHeadset = bluetoothHeadset.isEnabled();
+      _warmMicRecorder = warmMicRecorder.isEnabled();
       _mediaButtonPtt = mediaButtonPtt.isEnabled();
       _externalControl = externalControlEnabled;
       _hardwarePttBinding = hardwareBinding;
       _globalPttBinding = globalBinding;
-      _minimizeToTray = minimizeToTray;
       if (audioSnapshot != null) {
         _microphoneSources = audioSnapshot.microphoneSources;
         _selectedMicrophoneSourceId = audioSnapshot.selectedMicrophoneSourceId;
@@ -244,6 +246,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       bluetoothHeadset: ref.read(bluetoothHeadsetStoreProvider).isEnabled(),
     );
     setState(() => _selectedMicrophoneSourceId = id);
+    ref.read(homeScreenControllerProvider.notifier).syncWarmMicrophoneCapture();
   }
 
   Future<void> _setInputDevice(int? index) async {
@@ -282,6 +285,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     setState(() => _pauseDuringPhoneCall = enabled);
   }
 
+  Future<void> _setWarmMicRecorder(bool? enabled) async {
+    if (enabled == null) {
+      return;
+    }
+    await ref.read(warmMicRecorderStoreProvider).setEnabled(enabled);
+    if (!mounted) {
+      return;
+    }
+    setState(() => _warmMicRecorder = enabled);
+    ref.read(homeScreenControllerProvider.notifier).syncWarmMicrophoneCapture();
+  }
+
   Future<void> _setUseBluetoothHeadset(bool? enabled) async {
     if (enabled == null) {
       return;
@@ -293,6 +308,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         bluetoothHeadset: enabled,
         microphoneProfileId: ref.read(microphoneSourceStoreProvider).selectedId(),
       );
+      ref
+          .read(homeScreenControllerProvider.notifier)
+          .syncAndroidBtVoiceRoute(enabled);
     }
   }
 
@@ -324,14 +342,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return 'Scan code ${_hardwarePttBinding.scanCode}';
     }
     return 'Key code ${_hardwarePttBinding.keyCode}';
-  }
-
-  Future<void> _setMinimizeToTray(bool? enabled) async {
-    if (enabled == null) {
-      return;
-    }
-    await ref.read(desktopShellProvider).setMinimizeToTrayOnClose(enabled);
-    setState(() => _minimizeToTray = enabled);
   }
 
   Future<void> _showGlobalPttHotkeyDialog() async {
@@ -566,6 +576,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 value: _useBluetoothHeadset,
                 onChanged: _setUseBluetoothHeadset,
               ),
+              if (NativePlatform.isMobile)
+                SwitchListTile(
+                  title: Text(AppStrings.settingsWarmMicRecorder),
+                  value: _warmMicRecorder,
+                  onChanged: _setWarmMicRecorder,
+                ),
               if (Haptics.showsDesktopSettings)
                 ListTile(
                   title: Text(AppStrings.settingsVibrationImitation),
@@ -618,11 +634,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                     ],
                   ),
-                ),
-                SwitchListTile(
-                  title: Text(AppStrings.settingsMinimizeToTray),
-                  value: _minimizeToTray,
-                  onChanged: _setMinimizeToTray,
                 ),
               ],
             ),

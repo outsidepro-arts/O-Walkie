@@ -12,7 +12,7 @@ object AudioRouteHelper {
         audioManager.mode =
             if (bluetoothRouteAllowed) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
         @Suppress("DEPRECATION")
-        audioManager.isSpeakerphoneOn = !bluetoothRouteAllowed
+        audioManager.isSpeakerphoneOn = false
         if (bluetoothRouteAllowed) {
             enableBluetoothInputRoute(audioManager)
         } else {

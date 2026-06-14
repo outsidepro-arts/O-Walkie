@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
 import '../session_service.dart';
+import 'local_pcm_player.dart';
 import 'signal_pattern_pcm.dart';
 import 'signal_point.dart';
 import 'wav_pcm.dart';
@@ -158,10 +160,13 @@ abstract final class UiSoundLibrary {
   }
 
   static void _playSamples(SessionService? session, List<int> samples) {
-    if (samples.isEmpty || session == null || !session.isRunning) {
+    if (samples.isEmpty) {
       return;
     }
-    session.playLocalSamples(samples, sampleRate: playbackSampleRate);
+    LocalPcmPlayer.playBlocking(
+      Int16List.fromList(samples),
+      sampleRate: playbackSampleRate,
+    );
   }
 
   static List<int> _synthesize(List<_Segment> segments, {required double gain}) {

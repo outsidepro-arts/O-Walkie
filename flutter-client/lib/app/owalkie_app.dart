@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/orientation_store.dart';
+import '../features/home/home_screen_controller.dart';
 import '../l10n/a11y_strings.dart';
 import '../l10n/app_strings.dart';
 import '../platform/windows/desktop_bootstrap.dart';
@@ -14,11 +15,23 @@ class OwalkieApp extends ConsumerStatefulWidget {
   ConsumerState<OwalkieApp> createState() => _OwalkieAppState();
 }
 
-class _OwalkieAppState extends ConsumerState<OwalkieApp> {
+class _OwalkieAppState extends ConsumerState<OwalkieApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _applyOrientation();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    ref.read(homeScreenControllerProvider.notifier).onAppLifecycleChanged(state);
   }
 
   Future<void> _applyOrientation() async {

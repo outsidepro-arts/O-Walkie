@@ -2,6 +2,7 @@ import 'package:ffi/ffi.dart';
 
 import 'owalkie_core_bindings_generated.dart';
 import 'src/native_library.dart';
+import 'src/session_relay_bindings.dart';
 
 export 'session_service.dart';
 export 'src/local_pcm_player.dart';
@@ -37,4 +38,20 @@ class OwalkieCore {
   }
 
   int get protocolVersion => _bindings.owalkie_flutter_protocol_version();
+
+  /// Probe native core without starting the session worker isolate.
+  static ({String version, int protocol, bool supported}) probe() {
+    try {
+      final lib = openOwalkieCoreLibrary();
+      final meta = OwalkieCoreBindings(lib);
+      final relay = SessionRelayBindings(lib);
+      return (
+        version: meta.owalkie_flutter_core_version().cast<Utf8>().toDartString(),
+        protocol: meta.owalkie_flutter_protocol_version(),
+        supported: relay.hasSession,
+      );
+    } catch (_) {
+      return (version: '', protocol: 0, supported: false);
+    }
+  }
 }

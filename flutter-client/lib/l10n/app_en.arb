@@ -118,6 +118,8 @@
   "settingsAudioDeviceDefault": "System default",
   "settingsPauseDuringPhoneCall": "Pause relay during phone call",
   "settingsUseBluetoothHeadset": "Use Bluetooth headset",
+  "settingsWarmMicRecorder": "Keep microphone ready (faster PTT start)",
+  "settingsWarmMicRecorder": "Keep microphone ready (faster PTT start)",
   "settingsVibrationImitation": "Vibration imitation",
   "settingsVibrationImitationFrequency": "Frequency (Hz)",
   "settingsVibrationImitationVolume": "Volume",

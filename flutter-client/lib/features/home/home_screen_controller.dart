@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:app_links/app_links.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:owalkie_core/owalkie_core.dart';
@@ -12,6 +13,7 @@ import '../../data/microphone_source_store.dart';
 import '../../data/audio_settings_store.dart';
 import '../../data/server_store.dart';
 import '../../data/signal_pattern_store.dart';
+import '../../data/warm_mic_recorder_store.dart';
 import '../../domain/connection_link.dart';
 import '../../domain/profile_save.dart';
 import '../../domain/ptt_burst_guard.dart';
@@ -26,6 +28,7 @@ import '../../platform/audio_interruption_manager.dart';
 import '../../data/vibration_imitation_store.dart';
 import '../../platform/haptics.dart';
 import '../../platform/native_platform.dart';
+import '../../platform/session_telemetry.dart';
 import '../../platform/signal_preview_player.dart';
 import '../../platform/screen_wake.dart';
 import '../../platform/ui_signal_player.dart';
@@ -56,6 +59,15 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   bool _userRequestedConnection = false;
   bool _suppressTransientConnectionErrorTone = false;
   bool _skipNextManualDisconnectTone = false;
+  bool _appInForeground = true;
+  bool _disposed = false;
+  bool _mobileReleaseScheduled = false;
+  bool _pttDownInProgress = false;
+  bool _phoneCallPauseInProgress = false;
+  Completer<void>? _scanCancellation;
+  Future<void>? _sessionTeardownFuture;
+  Future<void>? _ensureSessionFuture;
+  final SessionTelemetry telemetry = SessionTelemetry();
   static const _scanInterval = Duration(seconds: 10);
   static const _scanQueryTimeoutMs = 4000;
   static const _rxVolumePreviewDelay = Duration(milliseconds: 120);
@@ -67,6 +79,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       ref.read(bluetoothHeadsetStoreProvider);
   MediaButtonPttStore get _mediaButtonPttStore =>
       ref.read(mediaButtonPttStoreProvider);
+  WarmMicRecorderStore get _warmMicRecorderStore =>
+      ref.read(warmMicRecorderStoreProvider);
   RogerPatternStore get _rogerStore => ref.read(rogerPatternStoreProvider);
   CallingPatternStore get _callingStore => ref.read(callingPatternStoreProvider);
 
@@ -99,6 +113,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void _onWindowsGlobalPttEvent(String event) {
+    if (_disposed) return;
     if (event == WindowsGlobalPtt.downEvent) {
       scheduleMicrotask(pttDown);
       return;
@@ -109,6 +124,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void _onPlatformEvent(String event) {
+    if (_disposed) return;
     if (event == NativePlatform.notificationDisconnectEvent) {
       unawaited(toggleConnection());
       return;
@@ -189,6 +205,28 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
   }
 
+  /// Tear down the worker after explicit user disconnect (not on every transport idle).
+  Future<void> _scheduleMobileSessionRelease() async {
+    if (!NativePlatform.isMobile) {
+      return;
+    }
+    if (_mobileReleaseScheduled) {
+      return;
+    }
+    _mobileReleaseScheduled = true;
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      if (sessionKeepAlive) {
+        return;
+      }
+      await NativePlatform.releaseAudioSession();
+      _session?.setAndroidBtVoiceRoute(false);
+      await _teardownIdleSession();
+    } finally {
+      _mobileReleaseScheduled = false;
+    }
+  }
+
   void _onNetworkValidated({required int networkHandle}) {
     if (!state.isConnected && !state.isConnecting && !state.isReconnecting) {
       return;
@@ -199,15 +237,31 @@ class HomeScreenController extends Notifier<HomeScreenState> {
 
   Future<void> _bootstrap() async {
     await _loadProfiles();
-    await _ensureSession();
-    if (Platform.isWindows) {
-      await ref.read(desktopShellProvider).applyStoredBinding();
+    if (NativePlatform.isMobile) {
+      final probe = OwalkieCore.probe();
+      state = state.copyWith(
+        coreVersion: probe.version,
+        protocolVersion: probe.protocol,
+        sessionSupported: probe.supported,
+        connectionChip: probe.supported
+            ? state.connectionChip
+            : AppStrings.connectionStateUnsupported,
+        lastError: probe.supported
+            ? state.lastError
+            : (probe.version.isEmpty ? 'owalkie_core load failed' : null),
+      );
+      await UiSignalPlayer.ensureLoaded();
+    } else {
+      await _ensureSession();
+      if (Platform.isWindows) {
+        await ref.read(desktopShellProvider).applyStoredBinding();
+      }
+      _audioInterruption ??= AudioInterruptionManager(
+        onInterruptBegin: _pauseRelayForPhoneCall,
+        onInterruptEnd: _resumeRelayAfterPhoneCall,
+      );
+      await _audioInterruption!.start();
     }
-    _audioInterruption ??= AudioInterruptionManager(
-      onInterruptBegin: _pauseRelayForPhoneCall,
-      onInterruptEnd: _resumeRelayAfterPhoneCall,
-    );
-    await _audioInterruption!.start();
     if (Haptics.showsDesktopSettings) {
       Haptics.applyFromStore(ref.read(vibrationImitationStoreProvider));
     }
@@ -310,13 +364,105 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (!NativePlatform.isMobile) {
       return;
     }
+    final bt = _bluetoothHeadsetStore.isEnabled();
+    await AudioDeviceService.applyFromStore(
+      ref.read(audioDeviceStoreProvider),
+      microphoneStore: ref.read(microphoneSourceStoreProvider),
+      bluetoothHeadset: bt,
+    );
     await NativePlatform.prepareAudioSession(
-      bluetoothHeadset: _bluetoothHeadsetStore.isEnabled(),
+      bluetoothHeadset: bt,
       microphoneProfileId: ref.read(microphoneSourceStoreProvider).selectedId(),
     );
+    _session?.setAndroidBtVoiceRoute(bt);
+  }
+
+  Future<void> _startMobileAudioStack() async {
+    _audioInterruption ??= AudioInterruptionManager(
+      onInterruptBegin: _pauseRelayForPhoneCall,
+      onInterruptEnd: _resumeRelayAfterPhoneCall,
+    );
+    await _audioInterruption!.start();
+  }
+
+  Future<void> _teardownIdleSession() async {
+    if (sessionKeepAlive || _scanLoopActive || _session == null) {
+      return;
+    }
+    _sessionTeardownFuture ??= _stopSessionWorker().whenComplete(() {
+      _sessionTeardownFuture = null;
+    });
+    await _sessionTeardownFuture;
+  }
+
+  /// True while the user wants an active relay session (connect / reconnect / phone pause).
+  bool get sessionKeepAlive =>
+      state.isConnected ||
+      state.isConnecting ||
+      state.relayPausedForPhoneCall ||
+      _userRequestedConnection;
+
+  /// Release idle session resources before desktop app exit.
+  Future<void> prepareForAppExit() async {
+    stopScanning(announce: false);
+    await _teardownIdleSession();
+  }
+
+  /// Disconnect and stop the worker (tray Exit, forced shutdown).
+  Future<void> shutdownForAppExit() async {
+    stopScanning(announce: false);
+    if (state.txActive) {
+      pttUp();
+    }
+    _userRequestedConnection = false;
+    _session?.disconnect();
+    if (_sessionForegroundActive) {
+      _sessionForegroundActive = false;
+      unawaited(NativePlatform.stopSessionForeground());
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    await _stopSessionWorker();
+  }
+
+  Future<void> _stopSessionWorker() async {
+    if (_session == null) {
+      return;
+    }
+    if (NativePlatform.isMobile) {
+      await NativePlatform.releaseAudioSession();
+      _session?.setAndroidBtVoiceRoute(false);
+      await _audioInterruption?.stop();
+      _audioInterruption = null;
+    }
+    await _sessionSub?.cancel();
+    _sessionSub = null;
+    await _session?.stop();
+    _session = null;
+  }
+
+  /// Android back / desktop close: minimize while session is desired; fully exit when idle.
+  Future<void> handleSystemBack() async {
+    if (sessionKeepAlive) {
+      if (NativePlatform.isAndroid) {
+        await NativePlatform.moveTaskToBack();
+      } else if (Platform.isWindows) {
+        await ref.read(desktopShellProvider).hideToTray();
+      }
+      return;
+    }
+    stopScanning(announce: false);
+    await _teardownIdleSession();
+    if (NativePlatform.isAndroid) {
+      await NativePlatform.requestAppExit();
+    } else if (Platform.isWindows) {
+      await ref.read(desktopShellProvider).exitApplication();
+    }
   }
 
   void _pauseRelayForPhoneCall() {
+    if (_phoneCallPauseInProgress) {
+      return;
+    }
     if (!_phoneCallPauseStore.isEnabled()) {
       return;
     }
@@ -326,6 +472,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (!state.isConnected && !state.isConnecting) {
       return;
     }
+    _phoneCallPauseInProgress = true;
     state = state.copyWith(
       relayPausedForPhoneCall: true,
       isConnected: false,
@@ -336,22 +483,31 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     );
     if (NativePlatform.isMobile) {
       unawaited(NativePlatform.releaseAudioSession());
+      _session?.setAndroidBtVoiceRoute(false);
     }
     unawaited(_syncPttMediaSession());
     _session?.pauseRelay();
+    unawaited(_syncSessionForeground());
+    _phoneCallPauseInProgress = false;
   }
 
   void _resumeRelayAfterPhoneCall() {
+    if (_phoneCallPauseInProgress) {
+      return;
+    }
     if (!state.relayPausedForPhoneCall) {
       return;
     }
+    _phoneCallPauseInProgress = true;
     state = state.copyWith(
       relayPausedForPhoneCall: false,
       connectionChip: AppStrings.connectionStateConnecting,
       isConnecting: true,
     );
     unawaited(_syncPttMediaSession());
+    unawaited(_syncSessionForeground());
     _session?.resumeRelay();
+    _phoneCallPauseInProgress = false;
   }
 
   Future<void> _loadProfiles() async {
@@ -524,6 +680,22 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   Future<void> _ensureSession() async {
+    if (_ensureSessionFuture != null) {
+      await _ensureSessionFuture;
+      return;
+    }
+    _ensureSessionFuture = _ensureSessionImpl();
+    try {
+      await _ensureSessionFuture;
+    } finally {
+      _ensureSessionFuture = null;
+    }
+  }
+
+  Future<void> _ensureSessionImpl() async {
+    if (_sessionTeardownFuture != null) {
+      await _sessionTeardownFuture;
+    }
     if (_session != null) {
       return;
     }
@@ -537,13 +709,18 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     final service = SessionService();
     try {
+      _sessionSub = service.messages.listen(_onSessionMessage);
       await service.start();
       _session = service;
-      _sessionSub = service.messages.listen(_onSessionMessage);
       service.setRxVolumePercent(state.rxVolumePercent);
       await UiSignalPlayer.ensureLoaded();
       UiSignalPlayer.loadSoundBank(service);
+      if (NativePlatform.isMobile) {
+        await _startMobileAudioStack();
+      }
     } catch (e) {
+      await _sessionSub?.cancel();
+      _sessionSub = null;
       state = state.copyWith(
         sessionSupported: false,
         lastError: e.toString(),
@@ -553,6 +730,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void _onSessionMessage(SessionWorkerMessage message) {
+    if (_disposed) return;
     final prev = state;
     switch (message) {
       case SessionCoreInfoMessage(:final version, :final protocolVersion):
@@ -562,13 +740,15 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           sessionSupported: true,
           clearError: true,
         );
-        unawaited(
-          AudioDeviceService.applyFromStore(
-            ref.read(audioDeviceStoreProvider),
-            microphoneStore: ref.read(microphoneSourceStoreProvider),
-            bluetoothHeadset: _bluetoothHeadsetStore.isEnabled(),
-          ),
-        );
+        if (!NativePlatform.isMobile) {
+          unawaited(
+            AudioDeviceService.applyFromStore(
+              ref.read(audioDeviceStoreProvider),
+              microphoneStore: ref.read(microphoneSourceStoreProvider),
+              bluetoothHeadset: _bluetoothHeadsetStore.isEnabled(),
+            ),
+          );
+        }
       case SessionLoadFailedMessage(:final message):
         state = state.copyWith(
           sessionSupported: false,
@@ -581,16 +761,25 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           :final reconnecting,
           :final error,
         ):
+        if (connected && !state.isConnected) {
+          telemetry.connected();
+        } else if (!connected && !connecting && state.isConnected) {
+          telemetry.connectionLost();
+        }
+        if (error != null && error.isNotEmpty) {
+          telemetry.error(error);
+        }
         if (connected && NativePlatform.isMobile) {
           unawaited(_applyVoiceAudioRoute());
-        } else if (!connected &&
-            !connecting &&
-            NativePlatform.isMobile &&
-            !state.relayPausedForPhoneCall) {
-          unawaited(NativePlatform.releaseAudioSession());
+        } else if (connecting &&
+            !connected &&
+            NativePlatform.isMobile) {
+          // Prepare MODE_NORMAL before native opens AAudio playback on connect.
+          unawaited(_applyVoiceAudioRoute());
         }
         if (!connected && !connecting) {
           _pttBurstGuard.reset();
+          _pttDownInProgress = false;
           _cancelTxCountdown();
           if (state.isConnected &&
               !state.relayPausedForPhoneCall &&
@@ -651,18 +840,25 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           clearError: error == null,
           statusInfo: reconnecting ? AppStrings.connectionStateReconnecting : state.statusInfo,
         );
-        unawaited(_syncSessionForeground(
-          connecting: connecting,
-          connected: connected,
-        ));
+        if (!connected &&
+            !connecting &&
+            NativePlatform.isMobile &&
+            !state.relayPausedForPhoneCall) {
+          unawaited(NativePlatform.releaseAudioSession());
+          _session?.setAndroidBtVoiceRoute(false);
+        }
+        unawaited(_syncSessionForeground());
         unawaited(_syncPttMediaSession());
+        syncWarmMicrophoneCapture();
       case SessionPttResultMessage(:final active, :final resultCode):
+        _pttDownInProgress = false;
         state = state.copyWith(
           txActive: active,
           lastError: resultCode != 0 ? _pttError(resultCode) : state.lastError,
         );
         if (!active) {
           _cancelTxCountdown();
+          syncWarmMicrophoneCapture();
         }
       case SessionNativeEventMessage(:final eventType, :final info):
         if (eventType == OwalkieEventType.pttLocked && state.txActive) {
@@ -705,6 +901,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
             lastError: 'Call signal failed (error $resultCode).',
           );
         }
+        syncWarmMicrophoneCapture();
       case SessionUplinkSignalMessage(:final percent):
         state = state.copyWith(
           uplinkSignalPercent: percent,
@@ -835,7 +1032,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       clearUplinkSignal: true,
       clearError: true,
     );
-    unawaited(_syncSessionForeground(connecting: true, connected: false));
+    unawaited(_syncSessionForeground());
     unawaited(_syncPttMediaSession());
   }
 
@@ -849,6 +1046,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     _scanMode = mode;
     _scanLoopActive = true;
+    _scanCancellation = Completer<void>();
+    telemetry.scanStart();
     state = state.copyWith(
       scanActive: true,
       statusMessage: AppStrings.scanStartedAnnouncement,
@@ -866,10 +1065,17 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     _scanLoopActive = false;
     _scanMode = null;
+    final completer = _scanCancellation;
+    _scanCancellation = null;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete();
+    }
+    telemetry.scanStop();
     state = state.copyWith(
       scanActive: false,
       statusMessage: announce ? AppStrings.scanStoppedAnnouncement : state.statusMessage,
     );
+    unawaited(_teardownIdleSession());
   }
 
   bool _hasCurrentConnectionActivity() =>
@@ -879,11 +1085,21 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     await Haptics.scanActivityFound();
   }
 
+  Future<void> _cancellableScanDelay(Duration duration) async {
+    final completer = _scanCancellation;
+    if (completer == null || completer.isCompleted) return;
+    await Future.any<void>([
+      Future<void>.delayed(duration),
+      completer.future,
+    ]);
+  }
+
   Future<void> _runScanLoop() async {
     await _ensureSession();
-    while (_scanLoopActive) {
+    while (_scanLoopActive && _scanCancellation != null && !_scanCancellation!.isCompleted) {
+      if (_disposed) break;
       if (state.profiles.isEmpty) {
-        await Future<void>.delayed(_scanInterval);
+        await _cancellableScanDelay(_scanInterval);
         continue;
       }
       final snapshot = List<ServerProfile>.from(state.profiles);
@@ -892,6 +1108,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       ServerProfile? foundProfile;
       var foundIndex = -1;
       for (var index = 0; index < snapshot.length; index++) {
+        if (!_scanLoopActive || _scanCancellation?.isCompleted == true) break;
         if (index == skipIndex) {
           continue;
         }
@@ -920,17 +1137,18 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           break;
         }
       }
-      if (!_scanLoopActive) {
+      if (!_scanLoopActive || _scanCancellation?.isCompleted == true) {
         break;
       }
       if (foundProfile != null) {
         final profile = foundProfile;
+        telemetry.scanFound(profile.name);
         if (_hasCurrentConnectionActivity()) {
           state = state.copyWith(
             statusMessage: AppStrings.scanFoundActivityToast(profile.name),
           );
           await _playScanActivityFoundVibration();
-          await Future<void>.delayed(_scanInterval);
+          await _cancellableScanDelay(_scanInterval);
           continue;
         }
         final idx = foundIndex.clamp(0, state.profiles.length - 1);
@@ -946,10 +1164,10 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           stopScanning(announce: false);
           break;
         }
-        await Future<void>.delayed(_scanInterval);
+        await _cancellableScanDelay(_scanInterval);
         continue;
       }
-      await Future<void>.delayed(_scanInterval);
+      await _cancellableScanDelay(_scanInterval);
     }
   }
 
@@ -963,13 +1181,16 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       session.disconnect();
       await Future<void>.delayed(const Duration(milliseconds: 150));
     }
+    _userRequestedConnection = true;
+    if (NativePlatform.isMobile) {
+      await _applyVoiceAudioRoute();
+    }
     session.connect(
       host: profile.host.trim(),
       port: profile.port,
       channel: profile.channel,
       repeater: profile.repeater,
     );
-    _userRequestedConnection = true;
   }
 
   void setRepeaterMode(bool enabled) {
@@ -1038,14 +1259,41 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
   }
 
-  Future<void> _syncSessionForeground({
-    required bool connecting,
-    required bool connected,
-  }) async {
+  /// Kotlin [MainActivity.sendActivityFocusState] + warm mic sync (mobile only).
+  void onAppLifecycleChanged(AppLifecycleState lifecycle) {
+    if (!NativePlatform.isMobile) {
+      return;
+    }
+    final focused = lifecycle == AppLifecycleState.resumed;
+    if (_appInForeground == focused) {
+      return;
+    }
+    _appInForeground = focused;
+    if (!focused && state.txActive) {
+      pttUp();
+    }
+    syncWarmMicrophoneCapture();
+  }
+
+  void syncWarmMicrophoneCapture() {
+    if (!NativePlatform.isMobile || _session == null) {
+      return;
+    }
+    _session!.syncWarmCapture(
+      warmMicEnabled: _warmMicRecorderStore.isEnabled(),
+      appInForeground: _appInForeground,
+    );
+  }
+
+  void syncAndroidBtVoiceRoute(bool enabled) {
+    _session?.setAndroidBtVoiceRoute(enabled);
+  }
+
+  Future<void> _syncSessionForeground() async {
     if (!NativePlatform.isAndroid) {
       return;
     }
-    final sessionDesired = connecting || connected;
+    final sessionDesired = sessionKeepAlive;
     if (!sessionDesired) {
       if (_sessionForegroundActive) {
         _sessionForegroundActive = false;
@@ -1056,10 +1304,10 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     await NativePlatform.ensureNotificationPermission();
     if (!_sessionForegroundActive) {
       _sessionForegroundActive = true;
-      await NativePlatform.startSessionForeground(connected: connected);
+      await NativePlatform.startSessionForeground(connected: state.isConnected);
       return;
     }
-    await NativePlatform.updateSessionForeground(connected: connected);
+    await NativePlatform.updateSessionForeground(connected: state.isConnected);
   }
 
   Future<void> toggleConnection() async {
@@ -1068,14 +1316,17 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (session == null || !state.sessionSupported) {
       return;
     }
-    UiSignalPlayer.playSwitch(session);
     if (state.isConnected || state.isConnecting || state.relayPausedForPhoneCall) {
+      UiSignalPlayer.playSwitch(session);
       _userRequestedConnection = false;
       _suppressTransientConnectionErrorTone = false;
       _skipNextManualDisconnectTone = true;
       UiSignalPlayer.playManualDisconnect(session);
       state = state.copyWith(relayPausedForPhoneCall: false);
+      telemetry.disconnect(reason: 'user');
       session.disconnect();
+      unawaited(_syncSessionForeground());
+      unawaited(_scheduleMobileSessionRelease());
       return;
     }
     if (NativePlatform.isAndroid) {
@@ -1090,6 +1341,11 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       return;
     }
     _userRequestedConnection = true;
+    if (NativePlatform.isMobile) {
+      await _applyVoiceAudioRoute();
+    }
+    UiSignalPlayer.playSwitch(session);
+    telemetry.connect(host: p.host.trim(), port: p.port, channel: p.channel);
     session.connect(
       host: p.host.trim(),
       port: p.port,
@@ -1101,6 +1357,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       clearError: true,
       clearStatusMessage: false,
     );
+    unawaited(_syncSessionForeground());
   }
 
   String _pttError(int code) {
@@ -1112,6 +1369,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void pttDown() {
+    if (_pttDownInProgress) {
+      return;
+    }
     if (!pttUiEnabledFor(state)) {
       return;
     }
@@ -1122,7 +1382,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       state = state.copyWith(pttBurstPressBlocked: _pttBurstGuard.pressBlocked);
       return;
     }
+    _pttDownInProgress = true;
     state = state.copyWith(isReceivingBroadcast: false);
+    telemetry.pttDown();
     if (NativePlatform.isMobile) {
       unawaited(_pttDownAsync());
       return;
@@ -1133,6 +1395,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   Future<void> _pttDownAsync() async {
     final micOk = await NativePlatform.ensureMicrophonePermission();
     if (!micOk) {
+      _pttDownInProgress = false;
       state = state.copyWith(
         lastError: 'Microphone permission is required for push-to-talk.',
       );
@@ -1148,6 +1411,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     final roger = _rogerStore.getSelectedPattern();
     _session?.pttUp(rogerPoints: encodeSignalPoints(roger.points));
     _pttBurstGuard.onRelease();
+    telemetry.pttUp(success: true);
   }
 
   void sendCall() {
@@ -1172,6 +1436,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void _dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _pttDownInProgress = false;
     _cancelTxCountdown();
     _cancelRxVolumePreview();
     _pttBurstGuard.onBlockedChanged = null;

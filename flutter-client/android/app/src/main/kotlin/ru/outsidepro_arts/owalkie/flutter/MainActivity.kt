@@ -102,6 +102,15 @@ class MainActivity : FlutterActivity() {
                     WalkieForegroundService.stop(this)
                     result.success(true)
                 }
+                "requestAppExit" -> {
+                    WalkieForegroundService.stop(this)
+                    finishAffinity()
+                    result.success(null)
+                }
+                "moveTaskToBack" -> {
+                    moveTaskToBack(true)
+                    result.success(null)
+                }
                 "startSessionNetworkMonitoring" -> {
                     WalkieForegroundService.startNetworkMonitoring(this)
                     result.success(true)

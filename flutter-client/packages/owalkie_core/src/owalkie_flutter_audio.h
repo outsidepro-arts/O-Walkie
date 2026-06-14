@@ -19,6 +19,18 @@ void on_rx_pcm(const int16_t* samples, size_t count, int sample_rate_hz);
 bool start_capture();
 void stop_capture();
 
+/** Hold capture device open without feeding TX (warm mic). Returns false if PTT active. */
+bool warm_capture();
+
+/** Close capture device when not transmitting. */
+void release_capture_if_idle();
+
+/** Close RX/TX devices after disconnect; keeps miniaudio context for UI tones. */
+void release_session_audio();
+
+/** Android: voice-communication AAudio usage only when BT headset route is active. */
+void set_android_bt_voice_route(bool enabled);
+
 using TxFrameCallback = void (*)(const int16_t* frame, size_t sample_count, void* user);
 void set_tx_frame_callback(TxFrameCallback cb, void* user);
 

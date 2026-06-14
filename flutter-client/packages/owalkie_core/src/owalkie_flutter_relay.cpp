@@ -148,6 +148,7 @@ void on_session_event(void* /*user*/, owalkie_session_id sid, const owalkie_even
         ev->type == OWALKIE_EV_PROTOCOL_ERROR) {
         g_ptt_active.store(false, std::memory_order_release);
         owalkie_flutter_audio::stop_capture();
+        owalkie_flutter_audio::release_session_audio();
         if (g_active_session.load(std::memory_order_acquire) == sid) {
             g_active_session.store(0, std::memory_order_release);
         }
@@ -680,6 +681,32 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_capture_device_index(void) {
 
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_playback_device_index(void) {
     return owalkie_flutter_audio::playback_device_index();
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_warm_capture(void) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    if (g_ptt_active.load(std::memory_order_acquire)) {
+        return 0;
+    }
+#endif
+    return owalkie_flutter_audio::warm_capture() ? 1 : 0;
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_release_capture_if_idle(void) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    if (g_ptt_active.load(std::memory_order_acquire)) {
+        return;
+    }
+#endif
+    owalkie_flutter_audio::release_capture_if_idle();
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_release_session_audio(void) {
+    owalkie_flutter_audio::release_session_audio();
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_android_bt_voice_route(int32_t enabled) {
+    owalkie_flutter_audio::set_android_bt_voice_route(enabled != 0);
 }
 
 } // extern "C"

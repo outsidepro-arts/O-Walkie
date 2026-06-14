@@ -181,7 +181,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     final pttUiEnabled = pttUiEnabledFor(state);
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          return;
+        }
+        unawaited(controller.handleSystemBack());
+      },
+      child: Scaffold(
       body: SafeArea(
         child: FocusTraversalGroup(
           child: Column(
@@ -282,6 +290,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 

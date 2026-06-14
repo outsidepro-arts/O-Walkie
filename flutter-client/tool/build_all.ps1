@@ -79,7 +79,13 @@ try {
     Write-Host "=== O-Walkie Flutter build ===" -ForegroundColor Cyan
     Write-Host "Project: $ProjectRoot"
 
-    & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "version_from_git.ps1") -RepoRoot (Split-Path $ProjectRoot -Parent) | Out-Null
+    . (Join-Path $PSScriptRoot "version_from_git.ps1") -RepoRoot (Split-Path $ProjectRoot -Parent)
+    if (-not $env:OWALKIE_VERSION_NAME) {
+        $env:OWALKIE_VERSION_NAME = "0.0.0-dev"
+    }
+    if (-not $env:OWALKIE_VERSION_CODE) {
+        $env:OWALKIE_VERSION_CODE = "1"
+    }
     Write-Host "Version: $($env:OWALKIE_VERSION_NAME) ($($env:OWALKIE_VERSION_CODE))" -ForegroundColor DarkGray
 
     flutter pub get

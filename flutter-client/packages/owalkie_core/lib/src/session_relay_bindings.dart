@@ -188,6 +188,21 @@ class SessionRelayBindings {
   late final void Function() _stopLocalLoop =
       _lib.lookupFunction<ffi.Void Function(), void Function()>('owalkie_flutter_stop_local_pcm_loop');
 
+  late final int Function() _warmCapture =
+      _lib.lookupFunction<ffi.Int32 Function(), int Function()>('owalkie_flutter_warm_capture');
+
+  late final void Function() _releaseCaptureIfIdle = _lib.lookupFunction<
+      ffi.Void Function(),
+      void Function()>('owalkie_flutter_release_capture_if_idle');
+
+  late final void Function() _releaseSessionAudio = _lib.lookupFunction<
+      ffi.Void Function(),
+      void Function()>('owalkie_flutter_release_session_audio');
+
+  late final void Function(int) _setAndroidBtVoiceRoute = _lib.lookupFunction<
+      ffi.Void Function(ffi.Int32),
+      void Function(int)>('owalkie_flutter_set_android_bt_voice_route');
+
   late final int Function(int, ffi.Pointer<ffi.Int16>, int, ffi.Pointer<ffi.Int16>, int, int)
       _pttUpWithRoger = _lib.lookupFunction<
           ffi.Int32 Function(
@@ -412,6 +427,15 @@ class SessionRelayBindings {
   void stopLocalPcmLoop() {
     _stopLocalLoop();
   }
+
+  bool warmCapture() => _warmCapture() != 0;
+
+  void releaseCaptureIfIdle() => _releaseCaptureIfIdle();
+
+  void releaseSessionAudio() => _releaseSessionAudio();
+
+  void setAndroidBtVoiceRoute(bool enabled) =>
+      _setAndroidBtVoiceRoute(enabled ? 1 : 0);
 
   int pttUpWithRoger({
     required int sessionId,

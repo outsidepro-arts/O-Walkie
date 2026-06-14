@@ -185,3 +185,141 @@ Shared C/C++ library used by all three clients. Public header: `include/owalkie_
 3. Tune relay noise/tail defaults from field feedback.
 4. Maintain protocol compatibility as new relay audio settings are added.
 5. Plan Flutter client merge to master when stable.
+
+## Flutter Client Stability Improvements (2026-06-14)
+
+### Priority 1: Critical Fixes (Completed)
+
+**1.1. Lifecycle guards в SessionService**
+- Добавлен `_disposed` flag для предотвращения операций после dispose
+- Улучшен `stop()` с proper cleanup и задержкой для graceful shutdown
+- Все публичные методы проверяют `_disposed` перед отправкой команд в worker isolate
+
+**1.2. Cancel reconnect loop в SessionWorker**
+- Добавлен `_reconnectCancelled` flag для немедленной остановки reconnect loop
+- Флаг устанавливается в `_disconnect()`, `_pauseRelayForExternalReason()`, `_shutdown()`
+- Reconnect loop проверяет флаг на каждой итерации
+
+**1.3. Guard _onSessionMessage после dispose**
+- Добавлен `_disposed` flag в `HomeScreenController`
+- `_onSessionMessage()`, `_onPlatformEvent()`, `_onWindowsGlobalPttEvent()` проверяют флаг
+- `_dispose()` устанавливает флаг и предотвращает повторный вызов
+
+**1.4. Fix pollTimer cancellation**
+- `_shutdown()` теперь устанавливает `_pollTimer = null` после cancel
+- Предотвращает использование timer после shutdown
+
+### Priority 2: Stability Improvements (Completed)
+
+**2.3. Error handling для platform channels**
+- Все `MethodChannel.invokeMethod()` вызовы обёрнуты в try-catch
+- Platform errors silently ignored для предотвращения crashes
+- Методы возвращают safe defaults при ошибках (false, empty list, unassigned binding)
+
+### Priority 3: Long-term Improvements (Completed)
+
+**3.1. Refactor scan loop с proper cancellation**
+- Добавлен `_scanCancellation` Completer для немедленной остановки scan loop
+- Создан helper метод `_cancellableScanDelay()` для cancellable delays
+- Scan loop проверяет cancellation на каждой итерации и внутри profile loop
+- `stopScanning()` завершает completer для немедленной остановки
+
+**3.2. Session telemetry для диагностики**
+- Создан `SessionTelemetry` класс (`lib/platform/session_telemetry.dart`)
+- Ring buffer на 100 событий с timestamps
+- Логирует ключевые события: CONNECT, DISCONNECT, CONNECTED, CONNECTION_LOST, PTT_DOWN/UP, SCAN_START/STOP, SCAN_FOUND, ERROR
+- Интегрирован в `HomeScreenController` с вызовами в ключевых точках lifecycle
+- Доступен через `controller.telemetry.dump()` для диагностики
+
+### Priority 4: Additional Stability Fixes (2026-06-14)
+
+**4.1. _ensureSession() race condition fix**
+- Добавлен `_ensureSessionFuture` для сериализации concurrent вызовов
+- Если `_ensureSession()` уже выполняется, последующие вызовы ждут завершения
+- Предотвращает создание нескольких `SessionService` одновременно
+- Метод разделён на `_ensureSession()` (wrapper) и `_ensureSessionImpl()` (implementation)
+
+**4.2. _scheduleMobileSessionRelease() race condition fix**
+- Добавлен `_mobileReleaseScheduled` flag для предотвращения overlapping calls
+- Метод вызывается из `toggleConnection()` и `_onSessionMessage` при transport state change
+- Flag устанавливается в начале и очищается в `finally` блоке
+- Предотвращает race при teardown audio session и worker isolate
+
+**4.3. PTT state race condition fix**
+- Добавлен `_pttDownInProgress` flag для предотвращения concurrent PTT down calls
+- PTT команды приходят из 6 источников: touch, hardware, media button, external API, Windows global PTT, keyboard
+- Flag устанавливается в `pttDown()` перед отправкой команды
+- Очищается в `SessionPttResultMessage` handler или при transport state change (disconnect)
+- Также очищается в `_pttDownAsync()` при mic permission failure и в `_dispose()`
+- Предотвращает отправку нескольких pttDown команд worker'у одновременно
+
+**4.4. Phone call pause/resume race condition fix**
+- Добавлен `_phoneCallPauseInProgress` flag для предотвращения overlapping pause/resume операций
+- Методы `_pauseRelayForPhoneCall()` и `_resumeRelayAfterPhoneCall()` вызываются из `AudioInterruptionManager`
+- При быстром toggling (begin/end/begin) может возникнуть race condition
+- Flag устанавливается в начале каждого метода и очищается в конце
+- Предотвращает interleaving операций pause и resume
+
+### Impact
+
+Эти изменения устраняют основные причины падений и race conditions:
+- Предотвращает использование disposed объектов
+- Немедленная остановка async operations при disconnect
+- Защита от platform channel errors
+- Proper cleanup при shutdown
+
+Все изменения прошли `flutter analyze` без новых ошибок.
+
+### UI Sounds: Main Thread Playback (2026-06-14)
+
+**Проблема**: UI звуки подключения/отключения (connected, manual connect/disconnect) отправлялись в worker isolate через `session.playLocalSamples()`, что добавляло задержку из-за message passing между isolates.
+
+**Решение**: Изменён `UiSoundLibrary._playSamples()` в `packages/owalkie_core/lib/src/ui_sound_library.dart`:
+- Все UI звуки теперь ВСЕГДА проигрываются через `LocalPcmPlayer.playBlocking()` в основном потоке
+- Убрана проверка `session.isRunning` и отправка в worker
+- Звуки проигрываются моментально вместе с `switch_nav.wav`
+
+**Затронутые звуки**:
+- `playConnected()` — тоны {1400Hz, 1700Hz}
+- `playManualConnectStart()` — восходящая последовательность
+- `playManualDisconnect()` — нисходящая последовательность
+- `playConnectionError()` — error tone
+- `playSwitch()` — switch_nav.wav
+- `playPttPress()`, `playPttRelease()` — PTT звуки
+- `playVolumePreview()` — preview громкости
+- `playSignalPatternPreview()` — preview Roger/Call паттернов
+
+**Результат**: UI звуки теперь проигрываются без задержки, независимо от состояния session.
+
+### Burst Reconnect Strategy (2026-06-14)
+
+**Проблема**: Старая стратегия reconnect использовала экспоненциальный backoff с начальной задержкой 1500ms, что было слишком медленно для мобильных сетей с кратковременными потерями связи.
+
+**Решение**: Новая "burst reconnect" стратегия в `packages/owalkie_core/lib/src/session_worker.dart`:
+- **Серии быстрых попыток**: 4 попытки с интервалом 300ms каждая
+- **Паузы между сериями**: начинаются с 3 секунд, увеличиваются с множителем 1.5x
+- **Максимальная пауза**: 10 секунд между сериями
+- **Бесконечные серии**: продолжаются до успешного подключения или отмены пользователем
+
+**Константы**:
+```dart
+static const _attemptsPerSeries = 4;        // Попыток в серии
+static const _intervalInSeriesMs = 300;      // Интервал между попытками (ms)
+static const _initialSeriesPauseMs = 3000;   // Начальная пауза между сериями (ms)
+static const _maxSeriesPauseMs = 10000;      // Максимальная пауза (ms)
+static const _seriesPauseMultiplier = 1.5;   // Множитель увеличения паузы
+```
+
+**Поведение**:
+- Серия 1: 4×300ms → пауза 3s
+- Серия 2: 4×300ms → пауза 4.5s
+- Серия 3: 4×300ms → пауза 6.75s
+- Серия 4+: 4×300ms → пауза 10s (максимум)
+
+**Улучшения**:
+- Первая попытка reconnect: 300ms вместо 1500ms (5× быстрее)
+- Время до первой паузы: 1.2s вместо 1.5s
+- Количество попыток за 10 секунд: 8-12 вместо 2-3 (4× больше)
+- Успешное подключение в серии сбрасывает паузу к начальному значению
+
+**Результат**: Значительно улучшена отзывчивость при кратковременных потерях сети, типичных для мобильных устройств.

@@ -21,18 +21,31 @@ class AudioInterruptionManager {
       return;
     }
     final session = await AudioSession.instance;
-    await session.configure(
-      const AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
-        avAudioSessionMode: AVAudioSessionMode.voiceChat,
-        androidAudioAttributes: AndroidAudioAttributes(
-          contentType: AndroidAudioContentType.speech,
-          usage: AndroidAudioUsage.voiceCommunication,
+    if (Platform.isAndroid) {
+      // Kotlin RX/UI use STREAM_MUSIC; avoid voice-communication route at startup.
+      await session.configure(
+        const AudioSessionConfiguration(
+          androidAudioAttributes: AndroidAudioAttributes(
+            contentType: AndroidAudioContentType.music,
+            usage: AndroidAudioUsage.media,
+          ),
+          androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
         ),
-        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-      ),
-    );
+      );
+    } else {
+      await session.configure(
+        const AudioSessionConfiguration(
+          avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+          avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
+          avAudioSessionMode: AVAudioSessionMode.voiceChat,
+          androidAudioAttributes: AndroidAudioAttributes(
+            contentType: AndroidAudioContentType.speech,
+            usage: AndroidAudioUsage.voiceCommunication,
+          ),
+          androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+        ),
+      );
+    }
     _sub = session.interruptionEventStream.listen((event) {
       if (event.begin) {
         onInterruptBegin();

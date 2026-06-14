@@ -166,6 +166,18 @@ FFI_PLUGIN_EXPORT void owalkie_flutter_set_playback_platform_device_id(int32_t p
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_capture_device_index(void);
 FFI_PLUGIN_EXPORT int32_t owalkie_flutter_get_playback_device_index(void);
 
+/** Open capture device without TX pump (Kotlin warm mic pool). No-op while PTT active. */
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_warm_capture(void);
+
+/** Close capture when idle (not during PTT). */
+FFI_PLUGIN_EXPORT void owalkie_flutter_release_capture_if_idle(void);
+
+/** Close persistent RX/TX devices after session disconnect. */
+FFI_PLUGIN_EXPORT void owalkie_flutter_release_session_audio(void);
+
+/** Android: enable voice-communication AAudio usage on capture (BT headset route). */
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_android_bt_voice_route(int32_t enabled);
+
 #ifdef __cplusplus
 }
 #endif

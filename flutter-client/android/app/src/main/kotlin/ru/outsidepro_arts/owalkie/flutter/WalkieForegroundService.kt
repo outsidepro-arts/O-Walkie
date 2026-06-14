@@ -25,6 +25,18 @@ class WalkieForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (!sessionDesired) {
+            return
+        }
+        val restartIntent = Intent(applicationContext, WalkieForegroundService::class.java).apply {
+            action = ACTION_START
+            putExtra(EXTRA_CONNECTED, lastConnectedState)
+        }
+        ContextCompat.startForegroundService(applicationContext, restartIntent)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == Intent.ACTION_MEDIA_BUTTON) {
             if (mediaPttActive) {
@@ -112,11 +124,14 @@ class WalkieForegroundService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
         foregroundActive = true
+        sessionDesired = true
+        lastConnectedState = connected
         startNetworkMonitoring(this)
     }
 
     private fun updateNotification(connected: Boolean) {
         ensureNotificationChannel()
+        lastConnectedState = connected
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(connected))
     }
@@ -183,6 +198,8 @@ class WalkieForegroundService : Service() {
     private fun stopForegroundService() {
         mediaPttActive = false
         foregroundActive = false
+        sessionDesired = false
+        lastConnectedState = false
         stopNetworkMonitoring()
         PttMediaSessionHost.release()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -195,6 +212,12 @@ class WalkieForegroundService : Service() {
     }
 
     companion object {
+        @Volatile
+        private var sessionDesired = false
+
+        @Volatile
+        private var lastConnectedState = false
+
         @Volatile
         private var networkController: SessionNetworkController? = null
 

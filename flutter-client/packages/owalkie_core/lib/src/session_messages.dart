@@ -144,6 +144,24 @@ final class SessionResumeRelayCommand extends SessionCommand {
   const SessionResumeRelayCommand();
 }
 
+/// Mobile warm mic pool sync (Kotlin [WarmMicRecorderStore] + activity focus).
+final class SessionSyncWarmCaptureCommand extends SessionCommand {
+  const SessionSyncWarmCaptureCommand({
+    required this.warmMicEnabled,
+    required this.appInForeground,
+  });
+
+  final bool warmMicEnabled;
+  final bool appInForeground;
+}
+
+/// Android AAudio voice-communication usage (only when BT headset route is on).
+final class SessionSetAndroidBtVoiceRouteCommand extends SessionCommand {
+  const SessionSetAndroidBtVoiceRouteCommand(this.enabled);
+
+  final bool enabled;
+}
+
 /// Messages session worker → main isolate.
 sealed class SessionWorkerMessage {
   const SessionWorkerMessage();

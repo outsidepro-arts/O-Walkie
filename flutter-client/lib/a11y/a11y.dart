@@ -85,12 +85,39 @@ class _A11yLiveStatusChipState extends State<A11yLiveStatusChip> {
   void _onDidGainAccessibilityFocus() {
     if (!_a11yFocused) {
       setState(() => _a11yFocused = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        A11yAnnounce.whenFocused(
+          context,
+          focused: true,
+          message: widget.label,
+        );
+      });
     }
   }
 
   void _onDidLoseAccessibilityFocus() {
     if (_a11yFocused) {
       setState(() => _a11yFocused = false);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant A11yLiveStatusChip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.label != widget.label && _a11yFocused) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        A11yAnnounce.whenFocused(
+          context,
+          focused: true,
+          message: widget.label,
+        );
+      });
     }
   }
 
