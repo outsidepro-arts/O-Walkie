@@ -93,6 +93,9 @@ std::atomic<bool> g_capture_active{false};
 
 #if defined(__ANDROID__)
 std::atomic<bool> g_android_bt_voice_route{false};
+std::atomic<int> g_playback_aaudio_usage{1}; // ma_aaudio_usage_media
+std::atomic<int> g_playback_aaudio_content_type{2}; // ma_aaudio_content_type_speech
+std::atomic<int> g_capture_aaudio_usage{1}; // ma_aaudio_usage_media
 #endif
 
 void tx_pump_loop();
@@ -639,8 +642,8 @@ bool open_playback_locked() {
     cfg.dataCallback = playback_cb;
 
 #ifdef __ANDROID__
-    // Kotlin RxPcmJitterBuffer / UiSignalPlayer use STREAM_MUSIC, not voice comm.
-    cfg.aaudio.usage = ma_aaudio_usage_media;
+    cfg.aaudio.usage = static_cast<ma_aaudio_usage>(g_playback_aaudio_usage.load(std::memory_order_relaxed));
+    cfg.aaudio.contentType = static_cast<ma_aaudio_content_type>(g_playback_aaudio_content_type.load(std::memory_order_relaxed));
 #endif
 
     if (ma_device_init(&g_context, &cfg, &g_playback) != MA_SUCCESS) {
@@ -709,9 +712,7 @@ bool open_capture_locked() {
 
 #ifdef __ANDROID__
 
-    cfg.aaudio.usage = g_android_bt_voice_route.load(std::memory_order_relaxed)
-        ? ma_aaudio_usage_voice_communication
-        : ma_aaudio_usage_media;
+    cfg.aaudio.usage = static_cast<ma_aaudio_usage>(g_capture_aaudio_usage.load(std::memory_order_relaxed));
 
     cfg.aaudio.inputPreset = static_cast<ma_aaudio_input_preset>(g_aaudio_input_preset);
 
@@ -1592,11 +1593,54 @@ void set_android_bt_voice_route(bool enabled) {
 
     }
 
+    if (g_playback_open) {
+
+        close_playback_locked();
+
+    }
+
 #endif
 
 }
 
+void set_playback_aaudio_usage(int32_t usage) {
+#ifndef __ANDROID__
+    (void)usage;
+    return;
+#else
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_playback_aaudio_usage.store(usage, std::memory_order_relaxed);
+    if (g_playback_open) {
+        close_playback_locked();
+    }
+#endif
+}
 
+void set_playback_aaudio_content_type(int32_t content_type) {
+#ifndef __ANDROID__
+    (void)content_type;
+    return;
+#else
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_playback_aaudio_content_type.store(content_type, std::memory_order_relaxed);
+    if (g_playback_open) {
+        close_playback_locked();
+    }
+#endif
+}
+
+void set_capture_aaudio_usage(int32_t usage) {
+#ifndef __ANDROID__
+    (void)usage;
+    return;
+#else
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_capture_aaudio_usage.store(usage, std::memory_order_relaxed);
+    if (g_capture_open) {
+        close_capture_locked();
+    }
+#endif
+}
 
 } // namespace owalkie_flutter_audio
 

@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/services.dart';
 
+import '../../domain/audio_output_profile.dart';
 import '../../domain/microphone_source_option.dart';
 
 /// Mobile platform hooks (microphone permission, voice communication audio mode).
@@ -132,19 +133,66 @@ abstract final class NativePlatform {
   }
 
   static Future<void> applyMicrophoneProfile(
-    String profileId, {
-    bool bluetoothHeadset = false,
-  }) async {
+    String profileId,
+  ) async {
     if (!isIOS) {
       return;
     }
     try {
       await _channel.invokeMethod<void>('applyMicrophoneProfile', {
         'profileId': profileId,
-        'bluetoothHeadset': bluetoothHeadset,
       });
     } catch (e) {
       // Silently ignore platform errors
+    }
+  }
+
+  static Future<void> applyAudioOutputProfile({
+    required String profileId,
+    int? audioManagerMode,
+    bool? enableBtSco,
+    String? iosMode,
+    bool? iosDefaultToSpeaker,
+    bool? iosAllowBluetoothA2dp,
+    bool? iosDuckOthers,
+  }) async {
+    if (!isMobile) {
+      return;
+    }
+    try {
+      await _channel.invokeMethod<void>('applyAudioOutputProfile', {
+        'profileId': profileId,
+        if (audioManagerMode != null) 'audioManagerMode': audioManagerMode,
+        if (enableBtSco != null) 'enableBtSco': enableBtSco,
+        if (iosMode != null) 'iosMode': iosMode,
+        if (iosDefaultToSpeaker != null)
+          'iosDefaultToSpeaker': iosDefaultToSpeaker,
+        if (iosAllowBluetoothA2dp != null)
+          'iosAllowBluetoothA2dp': iosAllowBluetoothA2dp,
+        if (iosDuckOthers != null) 'iosDuckOthers': iosDuckOthers,
+      });
+    } catch (e) {
+      // Silently ignore platform errors
+    }
+  }
+
+  static Future<List<AudioOutputProfile>> listAudioOutputProfiles() async {
+    if (!isMobile) {
+      return const [];
+    }
+    try {
+      final raw = await _channel.invokeListMethod<Map<Object?, Object?>>(
+        'listAudioOutputProfiles',
+      );
+      if (raw == null || raw.isEmpty) {
+        return AudioOutputProfile.all;
+      }
+      return [
+        for (final entry in raw)
+          AudioOutputProfile.byId(entry['id'] as String? ?? 'media'),
+      ];
+    } catch (e) {
+      return AudioOutputProfile.all;
     }
   }
 

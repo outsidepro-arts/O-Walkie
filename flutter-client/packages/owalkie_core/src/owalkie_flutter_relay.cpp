@@ -709,4 +709,16 @@ FFI_PLUGIN_EXPORT void owalkie_flutter_set_android_bt_voice_route(int32_t enable
     owalkie_flutter_audio::set_android_bt_voice_route(enabled != 0);
 }
 
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_playback_aaudio_usage(int32_t usage) {
+    owalkie_flutter_audio::set_playback_aaudio_usage(usage);
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_playback_aaudio_content_type(int32_t content_type) {
+    owalkie_flutter_audio::set_playback_aaudio_content_type(content_type);
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_capture_aaudio_usage(int32_t usage) {
+    owalkie_flutter_audio::set_capture_aaudio_usage(usage);
+}
+
 } // extern "C"

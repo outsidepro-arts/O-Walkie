@@ -144,7 +144,6 @@ abstract final class AudioDeviceService {
   static Future<void> applyFromStore(
     AudioDeviceStore store, {
     MicrophoneSourceStore? microphoneStore,
-    bool bluetoothHeadset = false,
   }) async {
     if (!isSupported) {
       return;
@@ -154,7 +153,6 @@ abstract final class AudioDeviceService {
         if (microphoneStore != null) {
           await MicrophoneSourceService.applyFromStore(
             microphoneStore,
-            bluetoothHeadset: bluetoothHeadset,
           );
         }
         return;

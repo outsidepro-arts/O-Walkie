@@ -9,6 +9,8 @@ import 'package:owalkie_core/owalkie_core.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../data/audio_device_store.dart';
+import '../../data/audio_output_profile_store.dart';
+import '../../domain/audio_output_profile.dart';
 import '../../data/microphone_source_store.dart';
 import '../../data/audio_settings_store.dart';
 import '../../data/server_store.dart';
@@ -25,6 +27,7 @@ import '../../domain/signal_point_codec.dart';
 import '../../l10n/app_strings.dart';
 import '../../platform/audio_device_service.dart';
 import '../../platform/audio_interruption_manager.dart';
+import '../../platform/audio_output_profile_service.dart';
 import '../../data/vibration_imitation_store.dart';
 import '../../platform/haptics.dart';
 import '../../platform/native_platform.dart';
@@ -75,8 +78,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   ServerStore get _store => ref.read(serverStoreProvider);
   PhoneCallPauseStore get _phoneCallPauseStore =>
       ref.read(phoneCallPauseStoreProvider);
-  BluetoothHeadsetStore get _bluetoothHeadsetStore =>
-      ref.read(bluetoothHeadsetStoreProvider);
   MediaButtonPttStore get _mediaButtonPttStore =>
       ref.read(mediaButtonPttStoreProvider);
   WarmMicRecorderStore get _warmMicRecorderStore =>
@@ -364,17 +365,19 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (!NativePlatform.isMobile) {
       return;
     }
-    final bt = _bluetoothHeadsetStore.isEnabled();
+    final outputProfile = AudioOutputProfileService.resolveStored(
+      ref.read(audioOutputProfileStoreProvider),
+    );
+    final bt = outputProfile.enableBtSco;
     await AudioDeviceService.applyFromStore(
       ref.read(audioDeviceStoreProvider),
       microphoneStore: ref.read(microphoneSourceStoreProvider),
-      bluetoothHeadset: bt,
     );
     await NativePlatform.prepareAudioSession(
       bluetoothHeadset: bt,
       microphoneProfileId: ref.read(microphoneSourceStoreProvider).selectedId(),
     );
-    _session?.setAndroidBtVoiceRoute(bt);
+    await AudioOutputProfileService.applyProfile(outputProfile);
   }
 
   Future<void> _startMobileAudioStack() async {
@@ -430,7 +433,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
     if (NativePlatform.isMobile) {
       await NativePlatform.releaseAudioSession();
-      _session?.setAndroidBtVoiceRoute(false);
       await _audioInterruption?.stop();
       _audioInterruption = null;
     }
@@ -745,7 +747,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
             AudioDeviceService.applyFromStore(
               ref.read(audioDeviceStoreProvider),
               microphoneStore: ref.read(microphoneSourceStoreProvider),
-              bluetoothHeadset: _bluetoothHeadsetStore.isEnabled(),
             ),
           );
         }
@@ -1287,6 +1288,16 @@ class HomeScreenController extends Notifier<HomeScreenState> {
 
   void syncAndroidBtVoiceRoute(bool enabled) {
     _session?.setAndroidBtVoiceRoute(enabled);
+  }
+
+  Future<void> applyAudioOutputProfile(AudioOutputProfile profile) async {
+    if (!NativePlatform.isMobile) {
+      return;
+    }
+    await AudioOutputProfileService.persistAndApply(
+      store: ref.read(audioOutputProfileStoreProvider),
+      profile: profile,
+    );
   }
 
   Future<void> _syncSessionForeground() async {

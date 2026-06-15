@@ -268,6 +268,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsUseBluetoothHeadset => 'Use Bluetooth headset';
 
   @override
+  String get settingsAudioOutputProfile => 'Output profile';
+
+  @override
+  String get audioOutputMedia => 'Media';
+
+  @override
+  String get audioOutputVoiceCall => 'Voice call';
+
+  @override
+  String get audioOutputVoiceCallBt => 'Voice call + BT';
+
+  @override
+  String get audioOutputGame => 'Game';
+
+  @override
+  String get audioOutputRaw => 'Unprocessed';
+
+  @override
+  String get audioOutputNotification => 'Notification';
+
+  @override
   String get settingsWarmMicRecorder =>
       'Keep microphone ready (faster PTT start)';
 

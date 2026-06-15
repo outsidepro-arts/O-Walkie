@@ -584,6 +584,48 @@ abstract class AppLocalizations {
   /// **'Use Bluetooth headset'**
   String get settingsUseBluetoothHeadset;
 
+  /// No description provided for @settingsAudioOutputProfile.
+  ///
+  /// In en, this message translates to:
+  /// **'Output profile'**
+  String get settingsAudioOutputProfile;
+
+  /// No description provided for @audioOutputMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Media'**
+  String get audioOutputMedia;
+
+  /// No description provided for @audioOutputVoiceCall.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice call'**
+  String get audioOutputVoiceCall;
+
+  /// No description provided for @audioOutputVoiceCallBt.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice call + BT'**
+  String get audioOutputVoiceCallBt;
+
+  /// No description provided for @audioOutputGame.
+  ///
+  /// In en, this message translates to:
+  /// **'Game'**
+  String get audioOutputGame;
+
+  /// No description provided for @audioOutputRaw.
+  ///
+  /// In en, this message translates to:
+  /// **'Unprocessed'**
+  String get audioOutputRaw;
+
+  /// No description provided for @audioOutputNotification.
+  ///
+  /// In en, this message translates to:
+  /// **'Notification'**
+  String get audioOutputNotification;
+
   /// No description provided for @settingsWarmMicRecorder.
   ///
   /// In en, this message translates to:

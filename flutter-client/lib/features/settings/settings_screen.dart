@@ -8,20 +8,22 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../a11y/settings_section.dart';
 import '../../data/audio_device_store.dart';
+import '../../data/audio_output_profile_store.dart';
 import '../../data/microphone_source_store.dart';
 import '../../data/audio_settings_store.dart';
 import '../../data/orientation_store.dart';
 import '../../data/warm_mic_recorder_store.dart';
 import '../../data/windows_settings_store.dart';
+import '../../domain/audio_output_profile.dart';
 import '../../domain/microphone_source_option.dart';
 import '../../features/home/home_screen_controller.dart';
 import '../../features/home/home_screen_state.dart';
 import '../../platform/audio_device_service.dart';
+import '../../platform/audio_output_profile_service.dart';
 import '../../data/vibration_imitation_store.dart';
 import '../../platform/haptics.dart';
 import '../../platform/microphone_source_service.dart';
 import '../../platform/native_platform.dart';
-import '../home/home_screen_controller.dart';
 import '../../platform/windows/desktop_shell.dart';
 import '../../platform/windows/windows_global_ptt.dart';
 import '../../data/signal_pattern_store.dart';
@@ -46,7 +48,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String? _selectedRogerId;
   String? _selectedCallingId;
   bool _pauseDuringPhoneCall = true;
-  bool _useBluetoothHeadset = false;
+  String _selectedOutputProfileId = AudioOutputProfileStore.defaultId;
   bool _warmMicRecorder = false;
   bool _mediaButtonPtt = true;
   bool _externalControl = false;
@@ -94,10 +96,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _outputDevices = snapshot.outputDevices;
       _inputDeviceIndex = snapshot.inputDeviceIndex;
       _outputDeviceIndex = snapshot.outputDeviceIndex;
+      _selectedOutputProfileId = snapshot.selectedOutputProfileId;
     });
   }
 
   Future<_AudioDeviceSnapshot?> _loadAudioDeviceSnapshot() async {
+    final outputProfileStore = ref.read(audioOutputProfileStoreProvider);
+    final selectedOutputProfileId = outputProfileStore.selectedId();
     if (MicrophoneSourceService.isSupported) {
       final micStore = ref.read(microphoneSourceStoreProvider);
       final options = await MicrophoneSourceService.listOptions();
@@ -109,6 +114,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return _AudioDeviceSnapshot(
         microphoneSources: options,
         selectedMicrophoneSourceId: selectedId,
+        selectedOutputProfileId: selectedOutputProfileId,
       );
     }
     if (!AudioDeviceService.showsPhysicalAudioDevices) {
@@ -163,6 +169,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       outputDevices: outputDevices,
       inputDeviceIndex: inputIndex,
       outputDeviceIndex: outputIndex,
+      selectedOutputProfileId: selectedOutputProfileId,
     );
   }
 
@@ -172,7 +179,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final rogerStore = ref.read(rogerPatternStoreProvider);
     final callingStore = ref.read(callingPatternStoreProvider);
     final phoneCallPause = ref.read(phoneCallPauseStoreProvider);
-    final bluetoothHeadset = ref.read(bluetoothHeadsetStoreProvider);
+    final outputProfileStore = ref.read(audioOutputProfileStoreProvider);
     final warmMicRecorder = ref.read(warmMicRecorderStoreProvider);
     final mediaButtonPtt = ref.read(mediaButtonPttStoreProvider);
     final externalControl = ref.read(externalControlStoreProvider);
@@ -184,6 +191,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (!mounted) {
       return;
     }
+    if (NativePlatform.isMobile) {
+      final btStore = ref.read(bluetoothHeadsetStoreProvider);
+      if (btStore.isEnabled() && outputProfileStore.selectedId() == AudioOutputProfileStore.defaultId) {
+        await outputProfileStore.setSelectedId('voice_call_bt');
+      }
+    }
     setState(() {
       _packageInfo = info;
       _orientation = orientation;
@@ -192,7 +205,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _selectedRogerId = rogerStore.getSelectedPattern().id;
       _selectedCallingId = callingStore.getSelectedPattern().id;
       _pauseDuringPhoneCall = phoneCallPause.isEnabled();
-      _useBluetoothHeadset = bluetoothHeadset.isEnabled();
+      _selectedOutputProfileId = outputProfileStore.selectedId();
       _warmMicRecorder = warmMicRecorder.isEnabled();
       _mediaButtonPtt = mediaButtonPtt.isEnabled();
       _externalControl = externalControlEnabled;
@@ -205,6 +218,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _outputDevices = audioSnapshot.outputDevices;
         _inputDeviceIndex = audioSnapshot.inputDeviceIndex;
         _outputDeviceIndex = audioSnapshot.outputDeviceIndex;
+        _selectedOutputProfileId = audioSnapshot.selectedOutputProfileId;
       }
       _ready = true;
     });
@@ -243,7 +257,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await MicrophoneSourceService.persistAndApply(
       store: ref.read(microphoneSourceStoreProvider),
       option: option,
-      bluetoothHeadset: ref.read(bluetoothHeadsetStoreProvider).isEnabled(),
     );
     setState(() => _selectedMicrophoneSourceId = id);
     ref.read(homeScreenControllerProvider.notifier).syncWarmMicrophoneCapture();
@@ -297,21 +310,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ref.read(homeScreenControllerProvider.notifier).syncWarmMicrophoneCapture();
   }
 
-  Future<void> _setUseBluetoothHeadset(bool? enabled) async {
-    if (enabled == null) {
+Future<void> _setOutputProfile(String? id) async {
+    if (id == null) {
       return;
     }
-    await ref.read(bluetoothHeadsetStoreProvider).setEnabled(enabled);
-    setState(() => _useBluetoothHeadset = enabled);
+    final profile = AudioOutputProfile.byId(id);
+    await AudioOutputProfileService.persistAndApply(
+      store: ref.read(audioOutputProfileStoreProvider),
+      profile: profile,
+    );
+    setState(() => _selectedOutputProfileId = id);
     if (NativePlatform.isMobile) {
-      await NativePlatform.prepareAudioSession(
-        bluetoothHeadset: enabled,
-        microphoneProfileId: ref.read(microphoneSourceStoreProvider).selectedId(),
-      );
-      ref
+      await ref
           .read(homeScreenControllerProvider.notifier)
-          .syncAndroidBtVoiceRoute(enabled);
+          .applyAudioOutputProfile(profile);
     }
+    ref.read(homeScreenControllerProvider.notifier).syncWarmMicrophoneCapture();
   }
 
   Future<void> _setExternalControl(bool? enabled) async {
@@ -540,6 +554,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                   onChanged: _setMicrophoneSource,
                 ),
+              if (AudioOutputProfileService.isSupported)
+                DropdownButtonFormField<String>(
+                  value: _selectedOutputProfileId,
+                  decoration: InputDecoration(
+                    labelText: AppStrings.settingsAudioOutputProfile,
+                  ),
+                  items: [
+                    for (final profile in AudioOutputProfile.all)
+                      DropdownMenuItem(
+                        value: profile.id,
+                        child: Text(profile.displayTitle),
+                      ),
+                  ],
+                  onChanged: _setOutputProfile,
+                ),
               if (AudioDeviceService.showsPhysicalAudioDevices &&
                   _inputDevices.isNotEmpty) ...[
                 if (MicrophoneSourceService.isSupported &&
@@ -570,11 +599,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 title: Text(AppStrings.settingsPauseDuringPhoneCall),
                 value: _pauseDuringPhoneCall,
                 onChanged: _setPauseDuringPhoneCall,
-              ),
-              SwitchListTile(
-                title: Text(AppStrings.settingsUseBluetoothHeadset),
-                value: _useBluetoothHeadset,
-                onChanged: _setUseBluetoothHeadset,
               ),
               if (NativePlatform.isMobile)
                 SwitchListTile(
@@ -800,6 +824,7 @@ class _AudioDeviceSnapshot {
     this.outputDevices = const [],
     this.inputDeviceIndex = -1,
     this.outputDeviceIndex = -1,
+    this.selectedOutputProfileId = AudioOutputProfileStore.defaultId,
   });
 
   final List<MicrophoneSourceOption> microphoneSources;
@@ -808,6 +833,7 @@ class _AudioDeviceSnapshot {
   final List<NativeAudioDevice> outputDevices;
   final int inputDeviceIndex;
   final int outputDeviceIndex;
+  final String selectedOutputProfileId;
 }
 
 class _GlobalPttHotkeyDialog extends StatefulWidget {

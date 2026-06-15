@@ -49,6 +49,21 @@ class MainActivity : FlutterActivity() {
                     AudioRouteHelper.applyVoiceAudioProfile(this, bluetooth)
                     result.success(true)
                 }
+                "applyAudioOutputProfile" -> {
+                    val profileId = call.argument<String>("profileId") ?: "media"
+                    AudioOutputProfileRegistry.applyProfile(this, profileId)
+                    result.success(true)
+                }
+                "listAudioOutputProfiles" -> {
+                    result.success(
+                        AudioOutputProfileRegistry.listOptions(this).map { option ->
+                            mapOf(
+                                "id" to option.id,
+                                "title" to option.title,
+                            )
+                        },
+                    )
+                }
                 "releaseAudioSession" -> {
                     AudioRouteHelper.restoreMediaAudioProfile(this)
                     result.success(null)

@@ -14,4 +14,10 @@
     <string name="microphone_option_voice_communication">Voice communication</string>
     <string name="microphone_option_unprocessed">Unprocessed</string>
     <string name="microphone_option_voice_performance">Voice performance</string>
+    <string name="audio_output_media">Media</string>
+    <string name="audio_output_voice_call">Voice call</string>
+    <string name="audio_output_voice_call_bt">Voice call + BT</string>
+    <string name="audio_output_game">Game</string>
+    <string name="audio_output_raw">Unprocessed</string>
+    <string name="audio_output_notification">Notification</string>
 </resources>

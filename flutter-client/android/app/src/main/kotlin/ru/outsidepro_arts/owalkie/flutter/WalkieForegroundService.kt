@@ -38,6 +38,13 @@ class WalkieForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action != ACTION_STOP && !foregroundActive) {
+            val connected = when (intent?.action) {
+                ACTION_START -> intent.getBooleanExtra(EXTRA_CONNECTED, false)
+                else -> lastConnectedState
+            }
+            startForegroundInternal(connected)
+        }
         if (intent?.action == Intent.ACTION_MEDIA_BUTTON) {
             if (mediaPttActive) {
                 PttMediaSessionHost.sync(this, true)
@@ -46,33 +53,36 @@ class WalkieForegroundService : Service() {
             return START_STICKY
         }
         when (intent?.action) {
-            ExternalControlReceiver.ACTION_PTT_DOWN -> handleExternalControl(
+            ExternalControlReceiver.ACTION_PTT_DOWN -> PlatformEvents.emit(
                 PlatformEvents.EVENT_EXTERNAL_PTT_DOWN,
             )
-            ExternalControlReceiver.ACTION_PTT_UP -> handleExternalControl(
+            ExternalControlReceiver.ACTION_PTT_UP -> PlatformEvents.emit(
                 PlatformEvents.EVENT_EXTERNAL_PTT_UP,
             )
-            ExternalControlReceiver.ACTION_PTT_TOGGLE -> handleExternalControl(
+            ExternalControlReceiver.ACTION_PTT_TOGGLE -> PlatformEvents.emit(
                 PlatformEvents.EVENT_EXTERNAL_PTT_TOGGLE,
             )
-            ExternalControlReceiver.ACTION_CALL_SIGNAL -> handleExternalControl(
+            ExternalControlReceiver.ACTION_CALL_SIGNAL -> PlatformEvents.emit(
                 PlatformEvents.EVENT_EXTERNAL_CALL_SIGNAL,
             )
-            ExternalControlReceiver.ACTION_CONNECT -> handleExternalControl(
+            ExternalControlReceiver.ACTION_CONNECT -> PlatformEvents.emit(
                 PlatformEvents.EVENT_EXTERNAL_CONNECT,
             )
-            ExternalControlReceiver.ACTION_DISCONNECT -> handleExternalControl(
+            ExternalControlReceiver.ACTION_DISCONNECT -> PlatformEvents.emit(
                 PlatformEvents.EVENT_EXTERNAL_DISCONNECT,
             )
-            ExternalControlReceiver.ACTION_NEXT_CONNECTION -> handleExternalControl(
+            ExternalControlReceiver.ACTION_NEXT_CONNECTION -> PlatformEvents.emit(
                 PlatformEvents.EVENT_EXTERNAL_NEXT_CONNECTION,
             )
-            ExternalControlReceiver.ACTION_PREVIOUS_CONNECTION -> handleExternalControl(
+            ExternalControlReceiver.ACTION_PREVIOUS_CONNECTION -> PlatformEvents.emit(
                 PlatformEvents.EVENT_EXTERNAL_PREVIOUS_CONNECTION,
             )
             ACTION_START -> {
                 val connected = intent.getBooleanExtra(EXTRA_CONNECTED, false)
-                startForegroundInternal(connected)
+                if (foregroundActive) {
+                    updateNotification(connected)
+                    lastConnectedState = connected
+                }
             }
             ACTION_UPDATE -> {
                 val connected = intent.getBooleanExtra(EXTRA_CONNECTED, false)
@@ -96,18 +106,6 @@ class WalkieForegroundService : Service() {
             ACTION_STOP -> stopForegroundService()
         }
         return START_STICKY
-    }
-
-    private fun handleExternalControl(event: String) {
-        ensureForegroundRunning(connected = false)
-        PlatformEvents.emit(event)
-    }
-
-    private fun ensureForegroundRunning(connected: Boolean) {
-        if (foregroundActive) {
-            return
-        }
-        startForegroundInternal(connected)
     }
 
     private fun startForegroundInternal(connected: Boolean) {

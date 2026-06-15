@@ -1,6 +1,6 @@
 # O-Walkie — Project Memory
 
-Last updated: 2026-06-14
+Last updated: 2026-06-15
 
 ## Branches
 
@@ -15,7 +15,7 @@ Last updated: 2026-06-14
 ## Current Stage
 
 - **Master**: owalkie-core extracted as shared C/C++ relay client library (v0.1.0); Android and Windows migrated to SessionManager + TX submit pipeline (`OPEN`/`PCM`/`CLOSE`); channel scan via `owalkie_check_channel_activity`; Windows system tray; Android warm mic recorder + scan toggle modes.
-- **Flutter branch**: Experimental cross-platform client through phases 0–9 (protocol UX, profiles, Roger/Call, FGS, deep links, scan, iOS scaffold, Windows tray/hotkey, release polish). Active uncommitted changes in `flutter-client/` (a11y chips, profile reorder, vibration imitation, warm mic recorder store).
+- **Flutter branch**: Experimental cross-platform client through phases 0–9 (protocol UX, profiles, Roger/Call, FGS, deep links, scan, iOS scaffold, Windows tray/hotkey, release polish). Active uncommitted changes in `flutter-client/` (a11y chips, profile reorder, vibration imitation, warm mic recorder store, tray menu keyboard focus fix).
 - Late stabilization before tester rollout on master.
 - Accessibility-based background PTT removed from `master` (Play Protect friction).
 
@@ -106,7 +106,7 @@ Shared C/C++ library used by all three clients. Public header: `include/owalkie_
 - **Phase 7** (done): iOS scaffold (CocoaPods, background audio, deep links). Full session deferred (vcpkg iOS triplets).
 - **Phase 8** (done): Windows tray (`tray_manager`), global PTT hotkey (`WH_KEYBOARD_LL`), desktop settings.
 - **Phase 9** (done): Release polish, git-tag versioning, CI (`flutter analyze` + `flutter test`), a11y tests.
-- **Post-phase work** (uncommitted): Home a11y chips, Kotlin-style action confirmations, profile reorder buttons, vibration imitation settings, desktop vibration imitation, audio device selection improvements, Android TX stutter fix, Roger/Call signal preview, messenger-style PTT latch (swipe up), hot-swap server profile while connected, UI sound effects parity.
+- **Post-phase work** (uncommitted): Home a11y chips, Kotlin-style action confirmations, profile reorder buttons, vibration imitation settings, desktop vibration imitation, audio device selection improvements, Android TX stutter fix, Roger/Call signal preview, messenger-style PTT latch (swipe up), hot-swap server profile while connected, UI sound effects parity, tray context menu keyboard focus fix (`bringAppToFront: true`).
 - **PTT policy**: Hold = push-to-talk; slide up while holding = latch; tap when latched = stop. No user "toggle-only" setting.
 - **Stack**: `flutter_riverpod`, `go_router`, `shared_preferences`, `vibration`, `wakelock_plus`, `audio_session`, `app_links`, `share_plus`, `tray_manager`, `window_manager`.
 - **Plugin**: `packages/owalkie_core` — FFI to owalkie-core C API; Dart background isolate (`session_worker.dart`) owns all FFI calls; UI talks via `SessionService` + `SendPort`.

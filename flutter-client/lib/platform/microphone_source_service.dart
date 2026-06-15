@@ -18,9 +18,8 @@ abstract final class MicrophoneSourceService {
   }
 
   static Future<void> applyFromStore(
-    MicrophoneSourceStore store, {
-    bool bluetoothHeadset = false,
-  }) async {
+    MicrophoneSourceStore store,
+  ) async {
     if (!isSupported) {
       return;
     }
@@ -29,30 +28,22 @@ abstract final class MicrophoneSourceService {
       return;
     }
     final selected = resolveStored(store, options);
-    await applyProfile(
-      selected,
-      bluetoothHeadset: bluetoothHeadset,
-    );
+    await applyProfile(selected);
   }
 
   static Future<void> persistAndApply({
     required MicrophoneSourceStore store,
     required MicrophoneSourceOption option,
-    bool bluetoothHeadset = false,
   }) async {
     await store.setSelectedId(option.id);
-    await applyProfile(option, bluetoothHeadset: bluetoothHeadset);
+    await applyProfile(option);
   }
 
   static Future<void> applyProfile(
-    MicrophoneSourceOption option, {
-    bool bluetoothHeadset = false,
-  }) async {
+    MicrophoneSourceOption option,
+  ) async {
     if (Platform.isIOS) {
-      await NativePlatform.applyMicrophoneProfile(
-        option.id,
-        bluetoothHeadset: bluetoothHeadset,
-      );
+      await NativePlatform.applyMicrophoneProfile(option.id);
       return;
     }
     if (Platform.isAndroid) {

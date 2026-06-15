@@ -29,7 +29,16 @@ void release_capture_if_idle();
 void release_session_audio();
 
 /** Android: voice-communication AAudio usage only when BT headset route is active. */
-void set_android_bt_voice_route(bool enabled);
+  void set_android_bt_voice_route(bool enabled);
+
+  /** Android: set AAudio usage for playback device (ma_aaudio_usage ordinal). */
+  void set_playback_aaudio_usage(int32_t usage);
+
+  /** Android: set AAudio content type for playback device (ma_aaudio_content_type ordinal). */
+  void set_playback_aaudio_content_type(int32_t content_type);
+
+  /** Android: set AAudio usage for capture device (ma_aaudio_usage ordinal). */
+  void set_capture_aaudio_usage(int32_t usage);
 
 using TxFrameCallback = void (*)(const int16_t* frame, size_t sample_count, void* user);
 void set_tx_frame_callback(TxFrameCallback cb, void* user);

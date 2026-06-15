@@ -13,4 +13,10 @@
     <string name="microphone_option_voice_communication">Голосовая связь</string>
     <string name="microphone_option_unprocessed">Без обработки (Unprocessed)</string>
     <string name="microphone_option_voice_performance">Сценический режим (Voice performance)</string>
+    <string name="audio_output_media">Медиа</string>
+    <string name="audio_output_voice_call">Разговорный</string>
+    <string name="audio_output_voice_call_bt">Разговорный + BT</string>
+    <string name="audio_output_game">Игровой</string>
+    <string name="audio_output_raw">Без обработки</string>
+    <string name="audio_output_notification">Уведомление</string>
 </resources>

@@ -125,6 +125,25 @@ abstract final class AppStrings {
   static String get settingsPauseDuringPhoneCall =>
       _l.settingsPauseDuringPhoneCall;
   static String get settingsUseBluetoothHeadset => _l.settingsUseBluetoothHeadset;
+  static String get settingsAudioOutputProfile => _l.settingsAudioOutputProfile;
+  static String audioOutputProfileTitle(String id, {required String fallback}) {
+    switch (id) {
+      case 'media':
+        return _l.audioOutputMedia;
+      case 'voice_call':
+        return _l.audioOutputVoiceCall;
+      case 'voice_call_bt':
+        return _l.audioOutputVoiceCallBt;
+      case 'game':
+        return _l.audioOutputGame;
+      case 'raw':
+        return _l.audioOutputRaw;
+      case 'notification':
+        return _l.audioOutputNotification;
+      default:
+        return fallback;
+    }
+  }
   static String get settingsWarmMicRecorder => _l.settingsWarmMicRecorder;
   static String get settingsVibrationImitation => _l.settingsVibrationImitation;
   static String get settingsVibrationImitationFrequency =>

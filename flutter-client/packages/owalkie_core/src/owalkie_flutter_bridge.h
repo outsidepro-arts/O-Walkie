@@ -178,6 +178,15 @@ FFI_PLUGIN_EXPORT void owalkie_flutter_release_session_audio(void);
 /** Android: enable voice-communication AAudio usage on capture (BT headset route). */
 FFI_PLUGIN_EXPORT void owalkie_flutter_set_android_bt_voice_route(int32_t enabled);
 
+/** Android: set AAudio usage for playback device (ma_aaudio_usage ordinal). */
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_playback_aaudio_usage(int32_t usage);
+
+/** Android: set AAudio content type for playback device (ma_aaudio_content_type ordinal). */
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_playback_aaudio_content_type(int32_t content_type);
+
+/** Android: set AAudio usage for capture device (ma_aaudio_usage ordinal). */
+FFI_PLUGIN_EXPORT void owalkie_flutter_set_capture_aaudio_usage(int32_t usage);
+
 #ifdef __cplusplus
 }
 #endif

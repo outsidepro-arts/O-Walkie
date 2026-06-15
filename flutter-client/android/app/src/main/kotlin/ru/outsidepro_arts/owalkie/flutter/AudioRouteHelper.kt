@@ -42,7 +42,7 @@ object AudioRouteHelper {
         }
     }
 
-    private fun enableBluetoothInputRoute(audioManager: AudioManager) {
+    fun enableBluetoothInputRoute(audioManager: AudioManager) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             runCatching {
                 val btDevice = audioManager.availableCommunicationDevices.firstOrNull {
@@ -64,7 +64,7 @@ object AudioRouteHelper {
         }
     }
 
-    private fun disableBluetoothInputRoute(audioManager: AudioManager) {
+    fun disableBluetoothInputRoute(audioManager: AudioManager) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             runCatching { audioManager.clearCommunicationDevice() }
         }

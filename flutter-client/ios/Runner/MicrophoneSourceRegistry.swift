@@ -36,12 +36,9 @@ enum MicrophoneSourceRegistry {
       ?? options[0]
   }
 
-  static func applySession(profileId: String, bluetoothHeadset: Bool) throws {
+  static func applySession(profileId: String) throws {
     let profile = option(for: profileId)
     var options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth]
-    if bluetoothHeadset {
-      options.insert(.allowBluetoothA2DP)
-    }
     let session = AVAudioSession.sharedInstance()
     try session.setCategory(profile.category, mode: profile.mode, options: options)
     try session.setActive(true)

@@ -22,11 +22,10 @@ class AudioInterruptionManager {
     }
     final session = await AudioSession.instance;
     if (Platform.isAndroid) {
-      // Kotlin RX/UI use STREAM_MUSIC; avoid voice-communication route at startup.
       await session.configure(
         const AudioSessionConfiguration(
           androidAudioAttributes: AndroidAudioAttributes(
-            contentType: AndroidAudioContentType.music,
+            contentType: AndroidAudioContentType.speech,
             usage: AndroidAudioUsage.media,
           ),
           androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
@@ -37,11 +36,6 @@ class AudioInterruptionManager {
         const AudioSessionConfiguration(
           avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
           avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
-          avAudioSessionMode: AVAudioSessionMode.voiceChat,
-          androidAudioAttributes: AndroidAudioAttributes(
-            contentType: AndroidAudioContentType.speech,
-            usage: AndroidAudioUsage.voiceCommunication,
-          ),
           androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
         ),
       );

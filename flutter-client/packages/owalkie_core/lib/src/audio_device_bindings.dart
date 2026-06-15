@@ -86,6 +86,22 @@ class AudioDeviceBindings {
       ffi.Void Function(ffi.Int32),
       void Function(int)>('owalkie_flutter_set_playback_platform_device_id');
 
+  late final void Function(int) _setPlaybackAaudioUsage = _lib.lookupFunction<
+      ffi.Void Function(ffi.Int32),
+      void Function(int)>('owalkie_flutter_set_playback_aaudio_usage');
+
+  late final void Function(int) _setPlaybackAaudioContentType = _lib.lookupFunction<
+      ffi.Void Function(ffi.Int32),
+      void Function(int)>('owalkie_flutter_set_playback_aaudio_content_type');
+
+  late final void Function(int) _setCaptureAaudioUsage = _lib.lookupFunction<
+      ffi.Void Function(ffi.Int32),
+      void Function(int)>('owalkie_flutter_set_capture_aaudio_usage');
+
+  late final void Function(int) _setAndroidBtVoiceRoute = _lib.lookupFunction<
+      ffi.Void Function(ffi.Int32),
+      void Function(int)>('owalkie_flutter_set_android_bt_voice_route');
+
   late final int Function() _getCapture = _lib.lookupFunction<
       ffi.Int32 Function(),
       int Function()>('owalkie_flutter_get_capture_device_index');
@@ -115,6 +131,18 @@ class AudioDeviceBindings {
 
   void setPlaybackPlatformDeviceId(int platformId) =>
       _setPlaybackPlatformId(platformId);
+
+  void setPlaybackAaudioUsage(int usage) =>
+      _setPlaybackAaudioUsage(usage);
+
+  void setPlaybackAaudioContentType(int contentType) =>
+      _setPlaybackAaudioContentType(contentType);
+
+  void setCaptureAaudioUsage(int usage) =>
+      _setCaptureAaudioUsage(usage);
+
+  void setAndroidBtVoiceRoute(bool enabled) =>
+      _setAndroidBtVoiceRoute(enabled ? 1 : 0);
 
   int captureDeviceIndex() => _getCapture();
 

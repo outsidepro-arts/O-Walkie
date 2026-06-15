@@ -43,18 +43,32 @@ import UIKit
       case "applyMicrophoneProfile":
         let args = call.arguments as? [String: Any]
         let profileId = args?["profileId"] as? String ?? self.microphoneProfileId
-        let bluetooth = args?["bluetoothHeadset"] as? Bool ?? false
-        self.applyMicrophoneSession(profileId: profileId, bluetoothHeadset: bluetooth)
+        self.applyMicrophoneSession(profileId: profileId)
         result(true)
       case "prepareAudioSession":
         let args = call.arguments as? [String: Any]
-        let bluetooth = args?["bluetoothHeadset"] as? Bool ?? false
         let profileId = args?["microphoneProfileId"] as? String ?? self.microphoneProfileId
-        self.applyMicrophoneSession(profileId: profileId, bluetoothHeadset: bluetooth)
+        self.applyMicrophoneSession(profileId: profileId)
         result(true)
       case "releaseAudioSession":
         self.releaseAudioSession()
         result(nil)
+      case "applyAudioOutputProfile":
+        let args = call.arguments as? [String: Any]
+        let profileId = args?["profileId"] as? String ?? "media"
+        do {
+          try AudioOutputProfileRegistry.applySession(profileId: profileId)
+          result(true)
+        } catch {
+          NSLog("owalkie_ios: AudioOutputProfile apply failed for %@: %@", profileId, error.localizedDescription)
+          result(FlutterError(code: "audio_output_profile", message: error.localizedDescription, details: nil))
+        }
+      case "listAudioOutputProfiles":
+        result(
+          AudioOutputProfileRegistry.options.map { option in
+            ["id": option.id, "title": option.id]
+          }
+        )
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -83,12 +97,11 @@ import UIKit
     }
   }
 
-  private func applyMicrophoneSession(profileId: String, bluetoothHeadset: Bool) {
+  private func applyMicrophoneSession(profileId: String) {
     microphoneProfileId = profileId
     do {
       try MicrophoneSourceRegistry.applySession(
-        profileId: profileId,
-        bluetoothHeadset: bluetoothHeadset
+        profileId: profileId
       )
     } catch {
       NSLog("owalkie_ios: AVAudioSession apply failed for profile %@: %@", profileId, error.localizedDescription)
