@@ -401,3 +401,19 @@ if (!sessionKeepAlive):
 - `test/signal_sequence_clipboard_test.dart` — 17 тестов (round-trip, Android-совместимость, legacy, garbage extraction, corner cases)
 
 **Результат**: clipboard-формат сигнатур полностью совместим между Android, Windows и Flutter-клиентами.
+
+---
+
+### Flutter Client: Reconnect RX Audio Fix (2026-06-17)
+
+**Проблема**: При серии реконнектов звук не воспроизводился, хотя чип статуса показывал "приём".
+
+**Корень**: `OWALKIE_EV_CONNECTION_LOST` не обрабатывался в `on_session_event()` (`owalkie_flutter_relay.cpp`). В отличие от `DISCONNECTED`/`CONNECTION_FAILED`/`PROTOCOL_ERROR`, не вызывались `stop_capture()` и `release_session_audio()`. При reconnect `configure()` не пересоздавал playback device (те же параметры → `reopen = false`), и звук оставался в стейте от предыдущей сессии.
+
+**Фикс**: Добавлен блок `if (ev->type == OWALKIE_EV_CONNECTION_LOST)` с очисткой аудио-стэйта (без сброса `g_active_session` — нужен для reconnect loop). После reconnect первый `on_rx_pcm` инициализирует playback с нуля.
+
+**Статус**: ✅ Подтверждено пользователем, проблема исправлена.
+
+---
+
+*Last updated: 2026-06-17*

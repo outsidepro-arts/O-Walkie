@@ -143,6 +143,11 @@ void on_session_event(void* /*user*/, owalkie_session_id sid, const owalkie_even
         g_codec_frame_samples.store(owalkie_frame_samples(cfg.sample_rate, cfg.packet_ms));
         owalkie_set_power_profile(sid, OWALKIE_POWER_FOREGROUND);
     }
+    if (ev->type == OWALKIE_EV_CONNECTION_LOST) {
+        g_ptt_active.store(false, std::memory_order_release);
+        owalkie_flutter_audio::stop_capture();
+        owalkie_flutter_audio::release_session_audio();
+    }
     if (ev->type == OWALKIE_EV_DISCONNECTED ||
         ev->type == OWALKIE_EV_CONNECTION_FAILED ||
         ev->type == OWALKIE_EV_PROTOCOL_ERROR) {
