@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -23,13 +24,26 @@ class WalkieForegroundService : Service() {
     private var mediaPttActive = false
     private var foregroundActive = false
 
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG, "onCreate: service created")
+    }
+
+    override fun onDestroy() {
+        Log.d(TAG, "onDestroy: service destroyed, foregroundActive=$foregroundActive")
+        super.onDestroy()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        Log.d(TAG, "onTaskRemoved: sessionDesired=$sessionDesired, foregroundActive=$foregroundActive")
         if (!sessionDesired) {
+            Log.d(TAG, "onTaskRemoved: sessionDesired=false, skipping restart")
             return
         }
+        Log.d(TAG, "onTaskRemoved: calling startForegroundService(ACTION_START)")
         val restartIntent = Intent(applicationContext, WalkieForegroundService::class.java).apply {
             action = ACTION_START
             putExtra(EXTRA_CONNECTED, lastConnectedState)
@@ -38,11 +52,14 @@ class WalkieForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action != ACTION_STOP && !foregroundActive) {
+        val action = intent?.action ?: "null"
+        Log.d(TAG, "onStartCommand: action=$action, foregroundActive=$foregroundActive, startId=$startId")
+        if (intent?.action != ACTION_STOP) {
             val connected = when (intent?.action) {
                 ACTION_START -> intent.getBooleanExtra(EXTRA_CONNECTED, false)
                 else -> lastConnectedState
             }
+            Log.d(TAG, "onStartCommand: calling startForegroundInternal(connected=$connected)")
             startForegroundInternal(connected)
         }
         if (intent?.action == Intent.ACTION_MEDIA_BUTTON) {
@@ -77,13 +94,7 @@ class WalkieForegroundService : Service() {
             ExternalControlReceiver.ACTION_PREVIOUS_CONNECTION -> PlatformEvents.emit(
                 PlatformEvents.EVENT_EXTERNAL_PREVIOUS_CONNECTION,
             )
-            ACTION_START -> {
-                val connected = intent.getBooleanExtra(EXTRA_CONNECTED, false)
-                if (foregroundActive) {
-                    updateNotification(connected)
-                    lastConnectedState = connected
-                }
-            }
+            ACTION_START -> {}
             ACTION_UPDATE -> {
                 val connected = intent.getBooleanExtra(EXTRA_CONNECTED, false)
                 updateNotification(connected)
@@ -109,8 +120,10 @@ class WalkieForegroundService : Service() {
     }
 
     private fun startForegroundInternal(connected: Boolean) {
+        Log.d(TAG, "startForegroundInternal: connected=$connected, foregroundActive=$foregroundActive")
         ensureNotificationChannel()
         val notification = buildNotification(connected)
+        Log.d(TAG, "startForegroundInternal: calling startForeground(NOTIFICATION_ID=$NOTIFICATION_ID)")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -121,6 +134,7 @@ class WalkieForegroundService : Service() {
             @Suppress("DEPRECATION")
             startForeground(NOTIFICATION_ID, notification)
         }
+        Log.d(TAG, "startForegroundInternal: startForeground() completed successfully")
         foregroundActive = true
         sessionDesired = true
         lastConnectedState = connected
@@ -194,6 +208,7 @@ class WalkieForegroundService : Service() {
     }
 
     private fun stopForegroundService() {
+        Log.d(TAG, "stopForegroundService: foregroundActive=$foregroundActive, sessionDesired=$sessionDesired")
         mediaPttActive = false
         foregroundActive = false
         sessionDesired = false
@@ -206,10 +221,13 @@ class WalkieForegroundService : Service() {
             @Suppress("DEPRECATION")
             stopForeground(true)
         }
+        Log.d(TAG, "stopForegroundService: calling stopSelf()")
         stopSelf()
     }
 
     companion object {
+        private const val TAG = "WalkieFGS"
+
         @Volatile
         private var sessionDesired = false
 
@@ -250,6 +268,7 @@ class WalkieForegroundService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "owalkie_session"
 
         fun start(context: Context, connected: Boolean) {
+            Log.d(TAG, "start(): connected=$connected, calling startForegroundService(ACTION_START)")
             val intent = Intent(context, WalkieForegroundService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_CONNECTED, connected)
@@ -258,6 +277,7 @@ class WalkieForegroundService : Service() {
         }
 
         fun update(context: Context, connected: Boolean) {
+            Log.d(TAG, "update(): connected=$connected, calling startService(ACTION_UPDATE)")
             val intent = Intent(context, WalkieForegroundService::class.java).apply {
                 action = ACTION_UPDATE
                 putExtra(EXTRA_CONNECTED, connected)
@@ -266,6 +286,7 @@ class WalkieForegroundService : Service() {
         }
 
         fun stop(context: Context) {
+            Log.d(TAG, "stop(): calling startService(ACTION_STOP)")
             val intent = Intent(context, WalkieForegroundService::class.java).apply {
                 action = ACTION_STOP
             }

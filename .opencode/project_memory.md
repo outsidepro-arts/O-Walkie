@@ -384,3 +384,20 @@ if (!sessionKeepAlive):
 ```
 
 **Результат**: Полная детерминированность, ни одной гонки, никаких магических таймеров. Если пользователь переподключается во время disconnect, `sessionKeepAlive` возвращает true и teardown не происходит.
+
+### Signal Sequence Clipboard Unification (2026-06-17)
+
+**Проблема**: Flutter-клиент использовал собственный упрощённый JSON-формат для copy/paste сигнатур сигналов (`{"name":..., "points":[...], "repeatCount":N}`), несовместимый с Android и Windows.
+
+**Решение**: Формат унифицирован — Flutter теперь использует тот же формат, что Android (`SignalSequenceClipboard.kt`) и Windows:
+
+```json
+{"oWalkieSignalSequence":{"version":1,"signal":{"name":"..."},"points":[{"durationMs":20,"freqHz":890},...],"repetitions":4}}
+```
+
+**Изменённые файлы** (flutter-client):
+- `lib/domain/signal_sequence_clipboard.dart` — новый файл: `signalSequenceToJson()` (сериализация) и `signalSequenceParseFromText()` (десериализация с поддержкой nested envelope + legacy flat fallback + извлечение `{...}` из текста)
+- `lib/features/signals/pattern_editor_screen.dart` — `_copyToClipboard()` и `_pasteFromClipboard()` переведены на новый формат; добавлена валидация длительности и пустых points
+- `test/signal_sequence_clipboard_test.dart` — 17 тестов (round-trip, Android-совместимость, legacy, garbage extraction, corner cases)
+
+**Результат**: clipboard-формат сигнатур полностью совместим между Android, Windows и Flutter-клиентами.

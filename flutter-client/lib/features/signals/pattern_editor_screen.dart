@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/home/home_screen_controller.dart';
 import '../../data/signal_pattern_store.dart';
 import '../../domain/signal_pattern.dart';
+import '../../domain/signal_sequence_clipboard.dart';
 import '../../l10n/app_strings.dart';
 
 enum SignalEditorKind { roger, calling }
@@ -144,12 +144,16 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
   }
 
   Future<void> _copyToClipboard() async {
-    final payload = jsonEncode({
-      'name': _nameCtrl.text.trim(),
-      'points': [for (final p in _points) p.toJson()],
-      if (widget.kind == SignalEditorKind.calling)
-        'repeatCount': int.tryParse(_repeatCtrl.text) ?? 1,
-    });
+    if (_points.isEmpty) {
+      _showSnack(AppStrings.rogerPointsRequired);
+      return;
+    }
+    final payload = signalSequenceToJson(
+      name: _nameCtrl.text.trim(),
+      points: _points,
+      includeRepetitions: widget.kind == SignalEditorKind.calling,
+      repetitions: int.tryParse(_repeatCtrl.text) ?? 1,
+    );
     await Clipboard.setData(ClipboardData(text: payload));
     _showSnack(AppStrings.patternCopied);
   }
@@ -160,25 +164,26 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
     if (raw == null || raw.isEmpty) {
       return;
     }
-    try {
-      final map = jsonDecode(raw) as Map<String, dynamic>;
-      final pts = map['points'] as List<dynamic>? ?? [];
-      setState(() {
-        _nameCtrl.text = map['name'] as String? ?? _nameCtrl.text;
-        _points
-          ..clear()
-          ..addAll(
-            pts.map(
-              (e) => SignalPoint.fromJson(e as Map<String, dynamic>),
-            ),
-          );
-        if (widget.kind == SignalEditorKind.calling) {
-          _repeatCtrl.text = '${map['repeatCount'] ?? 1}';
-        }
-      });
-    } catch (_) {
+    final payload = signalSequenceParseFromText(raw);
+    if (payload == null) {
       _showSnack(AppStrings.patternPasteFailed);
+      return;
     }
+    final totalMs = payload.points.fold<int>(0, (s, p) => s + p.durationMs) *
+        payload.repeatCount.clamp(1, 500);
+    if (totalMs > _maxDurationMs) {
+      _showSnack(AppStrings.rogerPointsTooLong);
+      return;
+    }
+    setState(() {
+      _nameCtrl.text = payload.name;
+      _points
+        ..clear()
+        ..addAll(payload.points);
+      if (widget.kind == SignalEditorKind.calling) {
+        _repeatCtrl.text = '${payload.repeatCount.clamp(1, 500)}';
+      }
+    });
   }
 
   void _showSnack(String text) {
