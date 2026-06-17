@@ -62,6 +62,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   bool _userRequestedConnection = false;
   bool _suppressTransientConnectionErrorTone = false;
   bool _skipNextManualDisconnectTone = false;
+  bool _skipNextManualConnectStartTone = false;
   bool _appInForeground = true;
   bool _disposed = false;
   bool _pttDownInProgress = false;
@@ -766,6 +767,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           _pttBurstGuard.reset();
           _pttDownInProgress = false;
           _cancelTxCountdown();
+          _skipNextManualConnectStartTone = false;
           if (state.isConnected &&
               !state.relayPausedForPhoneCall &&
               !_suppressTransientConnectionErrorTone &&
@@ -778,7 +780,10 @@ class HomeScreenController extends Notifier<HomeScreenState> {
             !reconnecting &&
             !state.isConnecting &&
             !_suppressTransientConnectionErrorTone) {
-          UiSignalPlayer.playManualConnectStart(_session);
+          if (!_skipNextManualConnectStartTone) {
+            UiSignalPlayer.playManualConnectStart(_session);
+          }
+          _skipNextManualConnectStartTone = false;
         } else if (connected && !state.isConnected) {
           UiSignalPlayer.playConnected(_session);
         }
@@ -1314,11 +1319,10 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       return;
     }
     if (state.isConnected || state.isConnecting || state.relayPausedForPhoneCall) {
-      UiSignalPlayer.playSwitch(session);
       _userRequestedConnection = false;
       _suppressTransientConnectionErrorTone = false;
       _skipNextManualDisconnectTone = true;
-      UiSignalPlayer.playManualDisconnect(session);
+      UiSignalPlayer.playDisconnectAction(session);
       state = state.copyWith(relayPausedForPhoneCall: false);
       telemetry.disconnect(reason: 'user');
 
@@ -1347,7 +1351,8 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (NativePlatform.isMobile) {
       await _applyVoiceAudioRoute();
     }
-    UiSignalPlayer.playSwitch(session);
+    _skipNextManualConnectStartTone = true;
+    UiSignalPlayer.playConnectAction(session);
     telemetry.connect(host: p.host.trim(), port: p.port, channel: p.channel);
     session.connect(
       host: p.host.trim(),
@@ -1442,6 +1447,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (_disposed) return;
     _disposed = true;
     _pttDownInProgress = false;
+    _skipNextManualConnectStartTone = false;
     _cancelTxCountdown();
     _cancelRxVolumePreview();
     _pttBurstGuard.onBlockedChanged = null;

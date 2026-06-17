@@ -28,6 +28,12 @@ abstract final class UiSignalPlayer {
   static void playManualDisconnect(SessionService? session) =>
       UiSoundLibrary.playManualDisconnect(session);
 
+  static void playConnectAction(SessionService? session) =>
+      UiSoundLibrary.playConnectAction(session);
+
+  static void playDisconnectAction(SessionService? session) =>
+      UiSoundLibrary.playDisconnectAction(session);
+
   static void loadSoundBank(SessionService? session) {
     if (session == null || !session.isRunning) {
       return;

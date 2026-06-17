@@ -139,6 +139,47 @@ abstract final class UiSoundLibrary {
     );
   }
 
+  /// switch_nav.wav + ascending tones mixed into one playback (connect button tap).
+  static void playConnectAction(SessionService? session) {
+    final wav = _switchNav;
+    final tones = _synthesize(const [
+      _Segment(932.33, 50),
+      _Segment(1174.66, 50),
+      _Segment(1396.91, 50),
+      _Segment(1864.66, 70),
+    ], gain: 0.22);
+    _playMixed(session, wav, tones);
+  }
+
+  /// switch_nav.wav + descending tones mixed into one playback (disconnect button tap).
+  static void playDisconnectAction(SessionService? session) {
+    final wav = _switchNav;
+    final tones = _synthesize(const [
+      _Segment(1864.66, 70),
+      _Segment(1396.91, 50),
+      _Segment(1174.66, 50),
+      _Segment(932.33, 50),
+    ], gain: 0.22);
+    _playMixed(session, wav, tones);
+  }
+
+  /// Mix two PCM buffers and play as one (wav at half gain, tones at their built-in gain).
+  static void _playMixed(SessionService? session, List<int>? wav, List<int> tones) {
+    if (wav == null || wav.isEmpty) {
+      _playSamples(session, tones);
+      return;
+    }
+    final len = math.max(wav.length, tones.length);
+    final mixed = Int16List(len);
+    for (var i = 0; i < len; i++) {
+      var s = 0;
+      if (i < wav.length) s += (wav[i] * 0.5).round();
+      if (i < tones.length) s += tones[i];
+      mixed[i] = s.clamp(-32768, 32767);
+    }
+    _playSamples(session, mixed);
+  }
+
   /// Prepends PTT release tone before roger local playback (Kotlin parity).
   static List<int> prependPttRelease(List<int> rogerLocal) {
     final release = pttReleaseSamples;
