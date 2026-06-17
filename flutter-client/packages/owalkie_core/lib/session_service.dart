@@ -11,6 +11,7 @@ class SessionService {
   Isolate? _isolate;
   SendPort? _workerPort;
   bool _disposed = false;
+  Completer<void>? _disconnectInProgress;
   final StreamController<SessionWorkerMessage> _events =
       StreamController<SessionWorkerMessage>.broadcast();
 
@@ -60,9 +61,28 @@ class SessionService {
   Future<void> stop() async {
     if (_disposed) return;
     final port = _workerPort;
+    if (port == null) return;
     _workerPort = null;
-    port?.send(const SessionShutdownCommand());
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    final completer = Completer<void>();
+    late final StreamSubscription<SessionWorkerMessage> sub;
+    sub = _events.stream.listen((msg) {
+      if (msg is SessionShutdownCompleteMessage) {
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
+        unawaited(sub.cancel());
+      }
+    });
+
+    port.send(const SessionShutdownCommand());
+
+    await completer.future.timeout(
+      const Duration(seconds: 3),
+      onTimeout: () {},
+    );
+    unawaited(sub.cancel());
+
     _isolate?.kill(priority: Isolate.immediate);
     _isolate = null;
   }
@@ -98,9 +118,41 @@ class SessionService {
     ));
   }
 
-  void disconnect() {
-    if (_disposed) return;
-    _workerPort?.send(const SessionDisconnectCommand());
+  /// Disconnect from server and wait for worker to confirm native cleanup.
+  /// Returns a Future that completes when the worker has finished disconnecting.
+  /// If a disconnect is already in progress, returns the existing future.
+  Future<void> disconnect() {
+    if (_disposed || _workerPort == null) {
+      return Future<void>.value();
+    }
+    if (_disconnectInProgress != null) {
+      return _disconnectInProgress!.future;
+    }
+    final completer = Completer<void>();
+    _disconnectInProgress = completer;
+
+    late final StreamSubscription<SessionWorkerMessage> sub;
+    sub = _events.stream.listen((msg) {
+      if (msg is SessionDisconnectCompleteMessage) {
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
+        unawaited(sub.cancel());
+      }
+    });
+
+    _workerPort!.send(const SessionDisconnectCommand());
+
+    unawaited(Future<void>.delayed(const Duration(seconds: 5)).then((_) {
+      if (!completer.isCompleted) {
+        completer.complete();
+        unawaited(sub.cancel());
+      }
+    }));
+
+    return completer.future.whenComplete(() {
+      _disconnectInProgress = null;
+    });
   }
 
   void pttDown() {
@@ -247,7 +299,9 @@ class SessionService {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    unawaited(stop());
-    _events.close();
+    if (_disconnectInProgress != null && !_disconnectInProgress!.isCompleted) {
+      _disconnectInProgress!.complete();
+    }
+    unawaited(stop().then((_) => _events.close()));
   }
 }

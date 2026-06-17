@@ -64,7 +64,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   bool _skipNextManualDisconnectTone = false;
   bool _appInForeground = true;
   bool _disposed = false;
-  bool _mobileReleaseScheduled = false;
   bool _pttDownInProgress = false;
   bool _phoneCallPauseInProgress = false;
   Completer<void>? _scanCancellation;
@@ -206,26 +205,11 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     }
   }
 
-  /// Tear down the worker after explicit user disconnect (not on every transport idle).
-  Future<void> _scheduleMobileSessionRelease() async {
-    if (!NativePlatform.isMobile) {
-      return;
-    }
-    if (_mobileReleaseScheduled) {
-      return;
-    }
-    _mobileReleaseScheduled = true;
-    try {
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      if (sessionKeepAlive) {
-        return;
-      }
-      await NativePlatform.releaseAudioSession();
-      _session?.setAndroidBtVoiceRoute(false);
-      await _teardownIdleSession();
-    } finally {
-      _mobileReleaseScheduled = false;
-    }
+  Future<void> _releaseMobileAudioAndTeardown() async {
+    if (!NativePlatform.isMobile) return;
+    await NativePlatform.releaseAudioSession();
+    _session?.setAndroidBtVoiceRoute(false);
+    await _teardownIdleSession();
   }
 
   void _onNetworkValidated({required int networkHandle}) {
@@ -308,8 +292,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (session == null) {
       return;
     }
-    session.disconnect();
-    await Future<void>.delayed(const Duration(milliseconds: 150));
+    await session.disconnect();
     session.connect(
       host: profile.host.trim(),
       port: profile.port,
@@ -418,12 +401,13 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       pttUp();
     }
     _userRequestedConnection = false;
-    _session?.disconnect();
+    if (_session != null) {
+      await _session!.disconnect();
+    }
     if (_sessionForegroundActive) {
       _sessionForegroundActive = false;
       unawaited(NativePlatform.stopSessionForeground());
     }
-    await Future<void>.delayed(const Duration(milliseconds: 150));
     await _stopSessionWorker();
   }
 
@@ -910,6 +894,9 @@ class HomeScreenController extends Notifier<HomeScreenState> {
               ? state.signalChip
               : AppStrings.signalQualityPercent(percent),
         );
+      case SessionDisconnectCompleteMessage():
+      case SessionShutdownCompleteMessage():
+        break;
     }
     _syncSideEffects(prev);
   }
@@ -1179,8 +1166,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       return;
     }
     if (state.isConnected || state.isConnecting) {
-      session.disconnect();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await session.disconnect();
     }
     _userRequestedConnection = true;
     if (NativePlatform.isMobile) {
@@ -1335,9 +1321,15 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       UiSignalPlayer.playManualDisconnect(session);
       state = state.copyWith(relayPausedForPhoneCall: false);
       telemetry.disconnect(reason: 'user');
-      session.disconnect();
-      unawaited(_syncSessionForeground());
-      unawaited(_scheduleMobileSessionRelease());
+
+      // Await worker confirmation before tearing down
+      await session.disconnect();
+
+      // If user reconnected during disconnect, keep the session alive
+      if (!sessionKeepAlive) {
+        unawaited(_syncSessionForeground());
+        await _releaseMobileAudioAndTeardown();
+      }
       return;
     }
     if (NativePlatform.isAndroid) {

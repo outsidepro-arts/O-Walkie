@@ -1,6 +1,6 @@
 # O-Walkie — Project Memory
 
-Last updated: 2026-06-15
+Last updated: 2026-06-17
 
 ## Branches
 
@@ -323,3 +323,64 @@ static const _seriesPauseMultiplier = 1.5;   // Множитель увелич�
 - Успешное подключение в серии сбрасывает паузу к начальному значению
 
 **Результат**: Значительно улучшена отзывчивость при кратковременных потерях сети, типичных для мобильных устройств.
+
+## Disconnect Acknowledgement Protocol (2026-06-17)
+
+**Проблема**: Двухфазный disconnect с fire-and-forget + таймер 400ms создавал race condition. `session.disconnect()` ничего не возвращал, и UI-изолят не знал, когда воркер закончил native cleanup. `_scheduleMobileSessionRelease()` убивал изолят через 400+100ms независимо от того, завершился ли native `_relay.disconnect()`.
+
+**Решение**: Однофазный disconnect с подтверждением от воркера через ack-сообщения:
+
+### Изменённые файлы
+
+**`packages/owalkie_core/lib/src/session_messages.dart`**:
+- Добавлены `SessionDisconnectCompleteMessage` и `SessionShutdownCompleteMessage`
+
+**`packages/owalkie_core/lib/src/session_worker.dart`**:
+- `_disconnect()`: отправляет `SessionDisconnectCompleteMessage` после `_publishState()`
+- `_shutdown()`: отправляет `SessionShutdownCompleteMessage` перед `Isolate.exit()`
+
+**`packages/owalkie_core/lib/session_service.dart`**:
+- `disconnect()` → `Future<void>`, использует `Completer<void>` с подпиской на `SessionDisconnectCompleteMessage`
+- Таймаут 5s как safety net
+- `_disconnectInProgress` guard для предотвращения concurrent вызовов
+- `stop()`: ждёт `SessionShutdownCompleteMessage` (таймаут 3s)
+- `dispose()`: завершает pending disconnect completer, закрывает events stream после stop
+
+**`lib/features/home/home_screen_controller.dart`**:
+- Удалён `_mobileReleaseScheduled` field
+- Удалён `_scheduleMobileSessionRelease()` — заменён на `_releaseMobileAudioAndTeardown()`
+- `toggleConnection()` disconnect path: `await session.disconnect()`, затем `if (!sessionKeepAlive)` — cleanup
+- Все места вызова `session.disconnect()` теперь await: `_reconnectToProfile()`, `shutdownForAppExit()`, `_connectToProfileFromScan()`
+- Добавлены no-op case для `SessionDisconnectCompleteMessage` и `SessionShutdownCompleteMessage`
+
+### Новая последовательность disconnect
+
+```
+User taps Disconnect
+  ↓
+toggleConnection() — optimistic UI update
+  ↓
+session.disconnect() → SessionDisconnectCommand
+  ↓ (serialized via ReceivePort)
+Worker _disconnect():
+  1. native cleanup (pttUp, disconnect, releaseSessionAudio)
+  2. _publishState(connected:false, connecting:false)
+  3. send SessionDisconnectCompleteMessage
+  ↓
+SessionService получает ack → Future resolved
+  ↓
+await session.disconnect() завершён
+  ↓
+if (!sessionKeepAlive):
+  _releaseMobileAudioAndTeardown()
+    → NativePlatform.releaseAudioSession()
+    → _session.setAndroidBtVoiceRoute(false)
+    → _teardownIdleSession() → _stopSessionWorker()
+      → _sessionSub?.cancel()
+      → session.stop()
+        → SessionShutdownCommand
+        → ждёт SessionShutdownCompleteMessage (3s timeout)
+        → Isolate.kill (safety net)
+```
+
+**Результат**: Полная детерминированность, ни одной гонки, никаких магических таймеров. Если пользователь переподключается во время disconnect, `sessionKeepAlive` возвращает true и teardown не происходит.

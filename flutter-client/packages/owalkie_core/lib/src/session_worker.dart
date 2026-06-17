@@ -380,6 +380,7 @@ class _SessionWorker {
     _sessionId = 0;
     _relay.releaseSessionAudio();
     _publishState(connected: false, connecting: false);
+    _mainPort.send(const SessionWorkerMessage.disconnectComplete());
   }
 
   void _setRepeater(bool enabled) {
@@ -623,6 +624,7 @@ class _SessionWorker {
     _relay.disconnectAll();
     _relay.shutdown();
     _commands.close();
+    _mainPort.send(const SessionWorkerMessage.shutdownComplete());
     Isolate.exit();
   }
 }

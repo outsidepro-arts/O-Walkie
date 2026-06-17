@@ -207,6 +207,12 @@ sealed class SessionWorkerMessage {
   const factory SessionWorkerMessage.uplinkSignal({
     required int percent,
   }) = SessionUplinkSignalMessage;
+
+  const factory SessionWorkerMessage.disconnectComplete() =
+      SessionDisconnectCompleteMessage;
+
+  const factory SessionWorkerMessage.shutdownComplete() =
+      SessionShutdownCompleteMessage;
 }
 
 final class SessionUnsupportedMessage extends SessionWorkerMessage {
@@ -289,4 +295,12 @@ final class SessionUplinkSignalMessage extends SessionWorkerMessage {
   const SessionUplinkSignalMessage({required this.percent});
 
   final int percent;
+}
+
+final class SessionDisconnectCompleteMessage extends SessionWorkerMessage {
+  const SessionDisconnectCompleteMessage();
+}
+
+final class SessionShutdownCompleteMessage extends SessionWorkerMessage {
+  const SessionShutdownCompleteMessage();
 }
