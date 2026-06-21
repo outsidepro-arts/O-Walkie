@@ -16,6 +16,7 @@ import '../../data/audio_settings_store.dart';
 import '../../data/server_store.dart';
 import '../../data/signal_pattern_store.dart';
 import '../../data/warm_mic_recorder_store.dart';
+import '../../data/rx_volume_store.dart';
 import '../../domain/connection_link.dart';
 import '../../domain/profile_save.dart';
 import '../../domain/ptt_burst_guard.dart';
@@ -81,6 +82,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       ref.read(mediaButtonPttStoreProvider);
   WarmMicRecorderStore get _warmMicRecorderStore =>
       ref.read(warmMicRecorderStoreProvider);
+  RxVolumeStore get _rxVolumeStore => ref.read(rxVolumeStoreProvider);
   RogerPatternStore get _rogerStore => ref.read(rogerPatternStoreProvider);
   CallingPatternStore get _callingStore => ref.read(callingPatternStoreProvider);
 
@@ -98,7 +100,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       }
       unawaited(_bootstrap());
     }
-    return HomeScreenState();
+    return HomeScreenState(rxVolumePercent: _rxVolumeStore.getVolume());
   }
 
   void _onPttBurstPressBlockedChanged(bool blocked) {
@@ -964,6 +966,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     final value = percent.clamp(0, 200);
     state = state.copyWith(rxVolumePercent: value);
     _session?.setRxVolumePercent(value);
+    _rxVolumeStore.setVolume(value);
     _scheduleRxVolumePreview(value);
   }
 
