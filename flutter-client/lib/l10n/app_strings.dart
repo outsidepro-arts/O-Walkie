@@ -190,6 +190,7 @@ abstract final class AppStrings {
   static String get orientationPortrait => _l.orientationPortrait;
   static String get orientationLandscape => _l.orientationLandscape;
   static String get menuSettings => _l.menuSettings;
+  static String get menuExit => _l.menuExit;
   static String get cannotSwitchProfileConnected =>
       _l.cannotSwitchProfileConnected;
   static String get cannotDeleteLastProfile => _l.cannotDeleteLastProfile;

@@ -21,6 +21,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get menuSettings => 'Настройки';
 
   @override
+  String get menuExit => 'Выход';
+
+  @override
   String get connectionStateDisconnected => 'Отключен';
 
   @override

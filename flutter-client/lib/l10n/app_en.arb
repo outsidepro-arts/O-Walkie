@@ -4,6 +4,7 @@
   "menuMore": "More",
   "menuRepeaterMode": "Repeater mode",
   "menuSettings": "Settings",
+  "menuExit": "Exit",
   "connectionStateDisconnected": "Disconnected",
   "connectionStateConnecting": "Connecting…",
   "connectionStateReconnecting": "Reconnecting…",

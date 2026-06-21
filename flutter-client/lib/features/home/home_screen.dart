@@ -12,6 +12,7 @@ import '../../domain/server_profile.dart';
 import '../../a11y/a11y_slider_field.dart';
 import '../../a11y/a11y_desktop_numeric_field.dart';
 import '../../platform/native_platform.dart';
+import '../../platform/windows/desktop_shell.dart';
 import '../../l10n/a11y_strings.dart';
 import '../../l10n/app_strings.dart';
 import 'home_screen_controller.dart';
@@ -280,6 +281,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         _HeaderRow(
           repeaterEnabled: state.draftProfile.repeater,
           onRepeaterToggled: controller.setRepeaterMode,
+          onExit: () async {
+            await controller.shutdownForAppExit();
+            if (NativePlatform.isAndroid) {
+              await NativePlatform.requestAppExit();
+            } else if (NativePlatform.isWindows) {
+              await ref.read(desktopShellProvider).exitApplication();
+            }
+          },
         ),
         const SizedBox(height: 8),
         _StatusChips(
@@ -501,10 +510,12 @@ class _HeaderRow extends StatefulWidget {
   const _HeaderRow({
     required this.repeaterEnabled,
     required this.onRepeaterToggled,
+    required this.onExit,
   });
 
   final bool repeaterEnabled;
   final ValueChanged<bool> onRepeaterToggled;
+  final VoidCallback onExit;
 
   @override
   State<_HeaderRow> createState() => _HeaderRowState();
@@ -544,6 +555,11 @@ class _HeaderRowState extends State<_HeaderRow> {
           value: 'settings',
           child: Text(AppStrings.menuSettings),
         ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'exit',
+          child: Text(AppStrings.menuExit),
+        ),
       ],
     );
 
@@ -560,6 +576,8 @@ class _HeaderRowState extends State<_HeaderRow> {
             context.push('/settings');
           }
         });
+      case 'exit':
+        widget.onExit();
     }
   }
 

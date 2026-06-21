@@ -122,6 +122,12 @@ abstract class AppLocalizations {
   /// **'Settings'**
   String get menuSettings;
 
+  /// No description provided for @menuExit.
+  ///
+  /// In en, this message translates to:
+  /// **'Exit'**
+  String get menuExit;
+
   /// No description provided for @connectionStateDisconnected.
   ///
   /// In en, this message translates to:

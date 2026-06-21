@@ -21,6 +21,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get menuSettings => 'Settings';
 
   @override
+  String get menuExit => 'Exit';
+
+  @override
   String get connectionStateDisconnected => 'Disconnected';
 
   @override

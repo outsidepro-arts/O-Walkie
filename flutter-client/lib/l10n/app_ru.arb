@@ -4,6 +4,7 @@
   "menuMore": "Ещё",
   "menuRepeaterMode": "Режим репитера",
   "menuSettings": "Настройки",
+  "menuExit": "Выход",
   "connectionStateDisconnected": "Отключен",
   "connectionStateConnecting": "Подключение...",
   "connectionStateReconnecting": "Переподключение...",
