@@ -46,7 +46,11 @@ windows-client-cpp/*.exe
 windows-client-cpp/*.dll
 debug-*.log
 *.obj
+*.o
 *.pdb
+
+# Flutter devtools
+devtools_options.yaml
 
 # Windows client (.NET/WPF)
 windows-client/**/bin/
