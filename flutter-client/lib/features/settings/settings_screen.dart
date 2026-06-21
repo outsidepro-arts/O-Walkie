@@ -719,7 +719,7 @@ Future<void> _setOutputProfile(String? id) async {
                         );
                         await _reloadPatterns();
                       },
-                      child: Text(AppStrings.rogerEditSegment),
+                      child: Text(AppStrings.rogerEditSignal),
                     ),
                 ],
               ),
@@ -780,7 +780,7 @@ Future<void> _setOutputProfile(String? id) async {
                         );
                         await _reloadPatterns();
                       },
-                      child: Text(AppStrings.rogerEditSegment),
+                      child: Text(AppStrings.rogerEditSignal),
                     ),
                 ],
               ),

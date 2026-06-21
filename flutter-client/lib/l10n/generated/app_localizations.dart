@@ -914,6 +914,12 @@ abstract class AppLocalizations {
   /// **'Edit segment'**
   String get rogerEditSegment;
 
+  /// No description provided for @rogerEditSignal.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit signal'**
+  String get rogerEditSignal;
+
   /// No description provided for @rogerFrequencyHint.
   ///
   /// In en, this message translates to:

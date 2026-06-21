@@ -444,6 +444,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get rogerEditSegment => 'Редактировать сегмент';
 
   @override
+  String get rogerEditSignal => 'Редактировать сигнал';
+
+  @override
   String get rogerFrequencyHint => 'Частота (Гц)';
 
   @override

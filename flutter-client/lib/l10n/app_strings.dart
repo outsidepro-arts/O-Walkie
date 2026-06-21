@@ -206,6 +206,7 @@ abstract final class AppStrings {
   static String get rogerPointsLabel => _l.rogerPointsLabel;
   static String get rogerNewSegment => _l.rogerNewSegment;
   static String get rogerEditSegment => _l.rogerEditSegment;
+  static String get rogerEditSignal => _l.rogerEditSignal;
   static String get rogerFrequencyHint => _l.rogerFrequencyHint;
   static String get rogerDurationHint => _l.rogerDurationHint;
   static String get rogerPointInvalid => _l.rogerPointInvalid;

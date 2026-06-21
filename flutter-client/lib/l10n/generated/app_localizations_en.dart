@@ -438,6 +438,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get rogerEditSegment => 'Edit segment';
 
   @override
+  String get rogerEditSignal => 'Edit signal';
+
+  @override
   String get rogerFrequencyHint => 'Frequency (Hz)';
 
   @override
