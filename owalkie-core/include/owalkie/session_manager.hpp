@@ -44,6 +44,8 @@ public:
 
     bool isValid(SessionId id) const;
     bool isSessionReady(SessionId id) const;
+    /** Cancel in-flight connect without resetting userIntent (for async retry). */
+    void cancelConnect(SessionId id);
     Result getSessionInfo(SessionId id, SessionState* out_state, bool* out_ready) const;
 
     Result submitTx(

@@ -27,6 +27,7 @@ typedef enum owalkie_result {
     OWALKIE_ERR_BUFFER_TOO_SMALL = 8,
     OWALKIE_ERR_NOT_READY = 9,
     OWALKIE_ERR_QUEUE_FULL = 10,
+    OWALKIE_ERR_BUSY = 11,
 } owalkie_result;
 
 typedef enum owalkie_tx_op {
@@ -250,6 +251,8 @@ owalkie_session_id owalkie_prepare_connection(
  * @c OWALKIE_EV_CONNECTION_LOST until @c OWALKIE_EV_CONNECTED. @p timeout_ms TCP budget; 0 = ~3.5s.
  */
 owalkie_result owalkie_connect(owalkie_session_id session_id, int timeout_ms);
+/** Cancel an in-flight @c owalkie_connect (sets stop flag + closes sockets). Non-blocking. */
+void owalkie_connect_cancel(owalkie_session_id session_id);
 
 void owalkie_disconnect(owalkie_session_id session_id);
 void owalkie_disconnect_all(void);

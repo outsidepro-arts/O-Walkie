@@ -506,6 +506,13 @@ owalkie_result owalkie_connect(owalkie_session_id session_id, int timeout_ms) {
     return toC(r);
 }
 
+void owalkie_connect_cancel(owalkie_session_id session_id) {
+    if (session_id == owalkie_invalid_session_id()) {
+        return;
+    }
+    owalkie::SessionManager::instance().cancelConnect(session_id);
+}
+
 void owalkie_disconnect(owalkie_session_id session_id) {
     if (session_id == owalkie_invalid_session_id()) {
         return;

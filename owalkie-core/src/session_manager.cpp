@@ -453,6 +453,14 @@ bool SessionManager::isSessionReady(SessionId id) const {
     return session != nullptr && session->isSessionReady();
 }
 
+void SessionManager::cancelConnect(SessionId id) {
+    std::lock_guard<std::mutex> lock(mu_);
+    Session* session = sessionLocked(id);
+    if (session) {
+        session->cancelOngoingConnect();
+    }
+}
+
 Result SessionManager::getSessionInfo(SessionId id, SessionState* out_state, bool* out_ready) const {
     if (!out_state || !out_ready) {
         return Result::InvalidArg;
