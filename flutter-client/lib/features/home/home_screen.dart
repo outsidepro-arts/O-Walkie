@@ -1,8 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -16,7 +14,6 @@ import '../../platform/windows/desktop_shell.dart';
 import '../../l10n/a11y_strings.dart';
 import '../../l10n/app_strings.dart';
 import 'home_screen_controller.dart';
-import 'home_screen_state.dart';
 import 'ptt_gesture_button.dart';
 import 'session_event_mapper.dart';
 
@@ -173,12 +170,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(homeScreenControllerProvider);
+    final connectionDetailsExpanded = ref.watch(
+      homeScreenControllerProvider.select((s) => s.connectionDetailsExpanded),
+    );
     final controller = ref.read(homeScreenControllerProvider.notifier);
-    final canConnect = state.sessionSupported;
-    final connectLabel = state.isConnected || state.isConnecting
-        ? AppStrings.disconnectServer
-        : AppStrings.connectServer;
 
     return PopScope(
       canPop: false,
@@ -194,18 +189,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (state.connectionDetailsExpanded) ...[
+              if (connectionDetailsExpanded) ...[
                 Expanded(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                     keyboardDismissBehavior:
                         ScrollViewKeyboardDismissBehavior.onDrag,
-                    child: _buildConnectionScrollContent(
-                      state: state,
-                      controller: controller,
-                      connectLabel: connectLabel,
-                      canConnect: canConnect,
-                    ),
+                    child: _buildConnectionScrollContent(),
                   ),
                 ),
                 Padding(
@@ -228,12 +218,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                           keyboardDismissBehavior:
                               ScrollViewKeyboardDismissBehavior.onDrag,
-                          child: _buildConnectionScrollContent(
-                            state: state,
-                            controller: controller,
-                            connectLabel: connectLabel,
-                            canConnect: canConnect,
-                          ),
+                          child: _buildConnectionScrollContent(),
                         ),
                       ),
                       Expanded(
@@ -250,17 +235,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ],
                   ),
                 ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                child: ExcludeSemantics(
-                  child: Text(
-                    '${AppStrings.coreVersionFooter}: ${state.coreVersion} · '
-                    '${AppStrings.protocolLabel} ${state.protocolVersion}',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ),
+              const _FooterVersion(),
             ],
           ),
         ),
@@ -269,17 +244,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildConnectionScrollContent({
-    required HomeScreenState state,
-    required HomeScreenController controller,
-    required String connectLabel,
-    required bool canConnect,
-  }) {
+  Widget _buildConnectionScrollContent() {
+    final controller = ref.read(homeScreenControllerProvider.notifier);
+    final repeaterEnabled = ref.read(
+      homeScreenControllerProvider.select((s) => s.draftProfile.repeater),
+    );
+    final connectionDetailsExpanded = ref.read(
+      homeScreenControllerProvider.select((s) => s.connectionDetailsExpanded),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _HeaderRow(
-          repeaterEnabled: state.draftProfile.repeater,
+          repeaterEnabled: repeaterEnabled,
           onRepeaterToggled: controller.setRepeaterMode,
           onExit: () async {
             await controller.shutdownForAppExit();
@@ -291,189 +269,40 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           },
         ),
         const SizedBox(height: 8),
-        _StatusChips(
-          connection: state.connectionDisplayChip,
-          signal: state.signalChip,
-        ),
-        if (state.statusInfo != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            state.statusInfo!,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
-        if (state.lastError != null) ...[
-          const SizedBox(height: 8),
-          Semantics(
-            liveRegion: true,
-            child: Text(
-              state.lastError!,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-            ),
-          ),
-        ],
+        const _StatusChips(),
+        const _ErrorStatusArea(),
         const SizedBox(height: 12),
-        ExcludeSemantics(
-          child: Text(
-            AppStrings.serverProfiles,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-          ),
+        _ServerProfileArea(
+          onScanPressed: () => _onScanPressed(ref.read(homeScreenControllerProvider).scanActive),
         ),
-        const SizedBox(height: 4),
-        DropdownButtonFormField<int>(
-          value: state.selectedServerIndex.clamp(0, state.profiles.length - 1),
-          decoration: InputDecoration(
-            labelText: AppStrings.serverProfiles,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          ),
-          items: [
-            for (var i = 0; i < state.profiles.length; i++)
-              DropdownMenuItem(
-                value: i,
-                child: Text(
-                  state.profiles[i].name.isEmpty
-                      ? AppStrings.profileNumberFallback(i + 1)
-                      : state.profiles[i].name,
-                ),
-              ),
-          ],
-          onChanged: state.canSelectProfiles
-              ? (index) {
-                  if (index != null) {
-                    controller.selectProfile(index);
-                    _loadControllersFromProfile(
-                      ref.read(homeScreenControllerProvider).profiles[index],
-                    );
-                  }
-                }
-              : null,
-        ),
-        const SizedBox(height: 8),
-        OutlinedButton(
-          onPressed: controller.toggleConnectionDetails,
-          child: Text(
-            state.connectionDetailsExpanded
-                ? AppStrings.collapseConnectionDetails
-                : AppStrings.expandConnectionDetails,
-          ),
-        ),
-        if (!state.connectionDetailsExpanded) ...[
-          const SizedBox(height: 8),
-          _CollapsedActions(
-            scanActive: state.scanActive,
-            onToggleScan: () => _onScanPressed(state.scanActive),
-            connectLabel: connectLabel,
-            canConnect: canConnect,
-            onConnect: canConnect
-                ? () {
-                    unawaited(controller.connectToSelectedProfile());
-                  }
-                : null,
-            onPrevious:
-                state.canNavigateProfiles ? controller.previousProfile : null,
-            hasPrevious: state.hasPreviousProfile,
-            onNext: state.canNavigateProfiles ? controller.nextProfile : null,
-            hasNext: state.hasNextProfile,
-          ),
-        ],
-        if (state.connectionDetailsExpanded) ...[
-          const SizedBox(height: 8),
-          _ConnectionDetailsForm(
+        if (connectionDetailsExpanded)
+          _ExpandedFormActions(
             nameCtrl: _nameCtrl,
             hostCtrl: _hostCtrl,
             portCtrl: _portCtrl,
             channelCtrl: _channelCtrl,
+            onSave: () async {
+              _syncProfile();
+              await controller.saveCurrentProfile();
+              _loadControllersFromProfile(
+                ref.read(homeScreenControllerProvider).profile,
+              );
+            },
+            onDelete: () {
+              _syncProfile();
+              controller.deleteCurrentProfile();
+            },
+            onShare: _shareConnection,
+            onImport: _importConnection,
+            onConnect: () {
+              _syncProfile();
+              controller.toggleConnection();
+            },
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () async {
-                    _syncProfile();
-                    await controller.saveCurrentProfile();
-                    _loadControllersFromProfile(
-                      ref.read(homeScreenControllerProvider).profile,
-                    );
-                  },
-                  child: Text(AppStrings.saveServer),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: state.profiles.length > 1
-                      ? () {
-                          _syncProfile();
-                          controller.deleteCurrentProfile();
-                        }
-                      : null,
-                  child: Text(AppStrings.deleteServer),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: state.canMoveProfileUp
-                      ? controller.moveProfileUp
-                      : null,
-                  child: Text(AppStrings.moveServerUp),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: state.canMoveProfileDown
-                      ? controller.moveProfileDown
-                      : null,
-                  child: Text(AppStrings.moveServerDown),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _shareConnection,
-                  child: Text(AppStrings.shareConnection),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _importConnection,
-                  child: Text(AppStrings.importConnection),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          _ConnectButton(
-            label: connectLabel,
-            enabled: canConnect,
-            onPressed: canConnect
-                ? () {
-                    _syncProfile();
-                    controller.toggleConnection();
-                  }
-                : null,
-          ),
-        ],
         const SizedBox(height: 24),
         if (NativePlatform.isDesktop)
           A11yDesktopNumericField(
-            value: state.rxVolumePercent,
+            value: ref.read(homeScreenControllerProvider).rxVolumePercent,
             min: 0,
             max: 200,
             step: 5,
@@ -485,14 +314,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           )
         else
           A11ySliderField(
-            value: state.rxVolumePercent.toDouble(),
+            value: ref.read(homeScreenControllerProvider).rxVolumePercent.toDouble(),
             min: 0,
             max: 200,
             divisions: 200,
             semanticStep: 5,
             title: AppStrings.rxVolumeLabel,
             semanticsLabel: AppStrings.rxVolumeLabel,
-            semanticsValue: AppStrings.rxVolumePercentAccessibility(state.rxVolumePercent),
+            semanticsValue: AppStrings.rxVolumePercentAccessibility(ref.read(homeScreenControllerProvider).rxVolumePercent),
             formatStepValue: (value) => AppStrings.rxVolumePercent(value.round()),
             onChanged: (value) => controller.setRxVolume(value.round()),
             onChangeEnd: (value) =>
@@ -606,14 +435,17 @@ class _HeaderRowState extends State<_HeaderRow> {
   }
 }
 
-class _StatusChips extends StatelessWidget {
-  const _StatusChips({required this.connection, required this.signal});
-
-  final String connection;
-  final String signal;
+class _StatusChips extends ConsumerWidget {
+  const _StatusChips();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connection = ref.watch(
+      homeScreenControllerProvider.select((s) => s.connectionDisplayChip),
+    );
+    final signal = ref.watch(
+      homeScreenControllerProvider.select((s) => s.signalChip),
+    );
     final chipStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
           fontWeight: FontWeight.bold,
         );
@@ -632,6 +464,292 @@ class _StatusChips extends StatelessWidget {
             alignment: Alignment.centerRight,
             child: Text(signal, style: chipStyle, textAlign: TextAlign.end),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ErrorStatusArea extends ConsumerWidget {
+  const _ErrorStatusArea();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final statusInfo = ref.watch(
+      homeScreenControllerProvider.select((s) => s.statusInfo),
+    );
+    final lastError = ref.watch(
+      homeScreenControllerProvider.select((s) => s.lastError),
+    );
+
+    if (statusInfo == null && lastError == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (statusInfo != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            statusInfo,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+        if (lastError != null) ...[
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              lastError,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ServerProfileArea extends ConsumerWidget {
+  const _ServerProfileArea({required this.onScanPressed});
+
+  final VoidCallback onScanPressed;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profiles = ref.watch(
+      homeScreenControllerProvider.select((s) => s.profiles),
+    );
+    final selectedIndex = ref.watch(
+      homeScreenControllerProvider.select((s) => s.selectedServerIndex),
+    );
+    final expanded = ref.watch(
+      homeScreenControllerProvider.select((s) => s.connectionDetailsExpanded),
+    );
+    final canSelect = ref.watch(
+      homeScreenControllerProvider.select((s) => s.canSelectProfiles),
+    );
+    final controller = ref.read(homeScreenControllerProvider.notifier);
+
+    final canNavigate = ref.watch(
+      homeScreenControllerProvider.select((s) => s.canNavigateProfiles),
+    );
+    final hasPrevious = ref.watch(
+      homeScreenControllerProvider.select((s) => s.hasPreviousProfile),
+    );
+    final hasNext = ref.watch(
+      homeScreenControllerProvider.select((s) => s.hasNextProfile),
+    );
+    final isConnected = ref.watch(
+      homeScreenControllerProvider.select((s) => s.isConnected),
+    );
+    final isConnecting = ref.watch(
+      homeScreenControllerProvider.select((s) => s.isConnecting),
+    );
+    final sessionSupported = ref.watch(
+      homeScreenControllerProvider.select((s) => s.sessionSupported),
+    );
+    final scanActive = ref.watch(
+      homeScreenControllerProvider.select((s) => s.scanActive),
+    );
+
+    final connectLabel = isConnected || isConnecting
+        ? AppStrings.disconnectServer
+        : AppStrings.connectServer;
+    final canConnect = sessionSupported;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ExcludeSemantics(
+          child: Text(
+            AppStrings.serverProfiles,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        DropdownButtonFormField<int>(
+          initialValue: selectedIndex.clamp(0, profiles.length - 1),
+          decoration: InputDecoration(
+            labelText: AppStrings.serverProfiles,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+          items: [
+            for (var i = 0; i < profiles.length; i++)
+              DropdownMenuItem(
+                value: i,
+                child: Text(
+                  profiles[i].name.isEmpty
+                      ? AppStrings.profileNumberFallback(i + 1)
+                      : profiles[i].name,
+                ),
+              ),
+          ],
+          onChanged: canSelect
+              ? (index) {
+                  if (index != null) {
+                    controller.selectProfile(index);
+                  }
+                }
+              : null,
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton(
+          onPressed: controller.toggleConnectionDetails,
+          child: Text(
+            expanded
+                ? AppStrings.collapseConnectionDetails
+                : AppStrings.expandConnectionDetails,
+          ),
+        ),
+        if (!expanded) ...[
+          const SizedBox(height: 8),
+          _CollapsedActions(
+            scanActive: scanActive,
+            onToggleScan: onScanPressed,
+            connectLabel: connectLabel,
+            canConnect: canConnect,
+            onConnect: canConnect
+                ? () {
+                    unawaited(controller.connectToSelectedProfile());
+                  }
+                : null,
+            onPrevious: canNavigate ? controller.previousProfile : null,
+            hasPrevious: hasPrevious,
+            onNext: canNavigate ? controller.nextProfile : null,
+            hasNext: hasNext,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ExpandedFormActions extends ConsumerWidget {
+  const _ExpandedFormActions({
+    required this.nameCtrl,
+    required this.hostCtrl,
+    required this.portCtrl,
+    required this.channelCtrl,
+    required this.onSave,
+    required this.onDelete,
+    required this.onShare,
+    required this.onImport,
+    required this.onConnect,
+  });
+
+  final TextEditingController nameCtrl;
+  final TextEditingController hostCtrl;
+  final TextEditingController portCtrl;
+  final TextEditingController channelCtrl;
+  final VoidCallback onSave;
+  final VoidCallback onDelete;
+  final VoidCallback onShare;
+  final VoidCallback onImport;
+  final VoidCallback onConnect;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profiles = ref.watch(
+      homeScreenControllerProvider.select((s) => s.profiles),
+    );
+    final canMoveUp = ref.watch(
+      homeScreenControllerProvider.select((s) => s.canMoveProfileUp),
+    );
+    final canMoveDown = ref.watch(
+      homeScreenControllerProvider.select((s) => s.canMoveProfileDown),
+    );
+    final isConnected = ref.watch(
+      homeScreenControllerProvider.select((s) => s.isConnected),
+    );
+    final isConnecting = ref.watch(
+      homeScreenControllerProvider.select((s) => s.isConnecting),
+    );
+    final sessionSupported = ref.watch(
+      homeScreenControllerProvider.select((s) => s.sessionSupported),
+    );
+    final controller = ref.read(homeScreenControllerProvider.notifier);
+
+    final connectLabel = isConnected || isConnecting
+        ? AppStrings.disconnectServer
+        : AppStrings.connectServer;
+    final canConnect = sessionSupported;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        _ConnectionDetailsForm(
+          nameCtrl: nameCtrl,
+          hostCtrl: hostCtrl,
+          portCtrl: portCtrl,
+          channelCtrl: channelCtrl,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: onSave,
+                child: Text(AppStrings.saveServer),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton(
+                onPressed: profiles.length > 1 ? onDelete : null,
+                child: Text(AppStrings.deleteServer),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: canMoveUp ? controller.moveProfileUp : null,
+                child: Text(AppStrings.moveServerUp),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton(
+                onPressed: canMoveDown ? controller.moveProfileDown : null,
+                child: Text(AppStrings.moveServerDown),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: onShare,
+                child: Text(AppStrings.shareConnection),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton(
+                onPressed: onImport,
+                child: Text(AppStrings.importConnection),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        _ConnectButton(
+          label: connectLabel,
+          enabled: canConnect,
+          onPressed: canConnect ? onConnect : null,
         ),
       ],
     );
@@ -834,6 +952,31 @@ class _LabeledField extends StatelessWidget {
         labelText: label,
         helperText: helper,
         helperMaxLines: 2,
+      ),
+    );
+  }
+}
+
+class _FooterVersion extends ConsumerWidget {
+  const _FooterVersion();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final coreVersion = ref.watch(
+      homeScreenControllerProvider.select((s) => s.coreVersion),
+    );
+    final protocolVersion = ref.watch(
+      homeScreenControllerProvider.select((s) => s.protocolVersion),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: ExcludeSemantics(
+        child: Text(
+          '${AppStrings.coreVersionFooter}: $coreVersion · '
+          '${AppStrings.protocolLabel} $protocolVersion',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ),
     );
   }
