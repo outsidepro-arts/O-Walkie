@@ -29,6 +29,7 @@ import '../../platform/windows/windows_global_ptt.dart';
 import '../../data/signal_pattern_store.dart';
 import '../../domain/signal_pattern.dart';
 import '../../domain/windows_ptt_binding.dart';
+import '../../l10n/a11y_strings.dart';
 import '../../l10n/app_strings.dart';
 
 const _githubUrl = 'https://github.com/outsidepro-arts/O-Walkie';
@@ -493,6 +494,7 @@ Future<void> _setOutputProfile(String? id) async {
         appBar: AppBar(
           title: Text(AppStrings.settingsTitle),
           leading: IconButton(
+            tooltip: A11yStrings.back,
             icon: const Icon(Icons.arrow_back),
             onPressed: () => context.pop(),
           ),
@@ -508,6 +510,7 @@ Future<void> _setOutputProfile(String? id) async {
       appBar: AppBar(
         title: Text(AppStrings.settingsTitle),
         leading: IconButton(
+          tooltip: A11yStrings.back,
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.pop(),
         ),

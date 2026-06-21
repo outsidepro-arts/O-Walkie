@@ -228,5 +228,6 @@
   "a11yPttStartAction": "Start talking",
   "a11yPttStopAction": "Stop talking",
   "a11yPttLockedAnnouncement": "Locked",
-  "a11yPttUnlockedAnnouncement": "Unlocked"
+  "a11yPttUnlockedAnnouncement": "Unlocked",
+  "a11yBack": "Back"
 }

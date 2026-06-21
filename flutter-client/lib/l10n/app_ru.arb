@@ -178,5 +178,6 @@
   "a11yPttStartAction": "Начать передачу",
   "a11yPttStopAction": "Остановить передачу",
   "a11yPttLockedAnnouncement": "Заблокировано",
-  "a11yPttUnlockedAnnouncement": "Разблокировано"
+  "a11yPttUnlockedAnnouncement": "Разблокировано",
+  "a11yBack": "Назад"
 }

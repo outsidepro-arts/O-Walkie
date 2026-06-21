@@ -1123,6 +1123,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Unlocked'**
   String get a11yPttUnlockedAnnouncement;
+
+  /// No description provided for @a11yBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get a11yBack;
 }
 
 class _AppLocalizationsDelegate

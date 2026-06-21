@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../a11y/a11y_desktop_numeric_field.dart';
 import '../../a11y/settings_section.dart';
 import '../../data/vibration_imitation_store.dart';
+import '../../l10n/a11y_strings.dart';
 import '../../l10n/app_strings.dart';
 import '../../platform/haptics.dart';
 import '../../platform/vibration_imitation.dart';
@@ -59,6 +60,7 @@ class _VibrationImitationSettingsScreenState
       appBar: AppBar(
         title: Text(AppStrings.settingsVibrationImitation),
         leading: IconButton(
+          tooltip: A11yStrings.back,
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.pop(),
         ),

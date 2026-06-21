@@ -560,4 +560,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get a11yPttUnlockedAnnouncement => 'Разблокировано';
+
+  @override
+  String get a11yBack => 'Назад';
 }

@@ -553,4 +553,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get a11yPttUnlockedAnnouncement => 'Unlocked';
+
+  @override
+  String get a11yBack => 'Back';
 }

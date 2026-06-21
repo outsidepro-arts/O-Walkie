@@ -9,6 +9,7 @@ import '../../features/home/home_screen_controller.dart';
 import '../../data/signal_pattern_store.dart';
 import '../../domain/signal_pattern.dart';
 import '../../domain/signal_sequence_clipboard.dart';
+import '../../l10n/a11y_strings.dart';
 import '../../l10n/app_strings.dart';
 
 enum SignalEditorKind { roger, calling }
@@ -219,6 +220,7 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
       appBar: AppBar(
         title: Text(title),
         leading: IconButton(
+          tooltip: A11yStrings.back,
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.pop(),
         ),
@@ -276,6 +278,7 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
                         AppStrings.rogerPointDurationMs(_points[i].durationMs),
                       ),
                       trailing: IconButton(
+                        tooltip: AppStrings.rogerEditSegment,
                         icon: const Icon(Icons.edit),
                         onPressed: () => _addOrEditSegment(i),
                       ),

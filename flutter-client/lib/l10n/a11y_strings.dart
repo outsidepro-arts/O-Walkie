@@ -22,4 +22,5 @@ abstract final class A11yStrings {
   static String get pttStopAction => _l.a11yPttStopAction;
   static String get pttLockedAnnouncement => _l.a11yPttLockedAnnouncement;
   static String get pttUnlockedAnnouncement => _l.a11yPttUnlockedAnnouncement;
+  static String get back => _l.a11yBack;
 }
