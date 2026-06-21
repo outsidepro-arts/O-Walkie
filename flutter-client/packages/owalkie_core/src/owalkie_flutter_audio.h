@@ -46,6 +46,9 @@ void set_tx_frame_callback(TxFrameCallback cb, void* user);
 /** One-shot local speaker playback (UI tones / roger preview). Blocks until done. */
 void play_local_pcm_blocking(const int16_t* samples, size_t count, int sample_rate_hz);
 
+/** Non-blocking version — plays in a background thread, returns immediately. */
+void play_local_pcm_async(const int16_t* samples, size_t count, int sample_rate_hz);
+
 /** Loop @p samples on a background playback device until [stop_local_pcm_loop]. */
 void start_local_pcm_loop(const int16_t* samples, size_t count, int sample_rate_hz);
 

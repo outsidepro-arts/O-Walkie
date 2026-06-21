@@ -105,6 +105,11 @@ FFI_PLUGIN_EXPORT void owalkie_flutter_play_local_pcm(
     size_t sample_count,
     int32_t sample_rate_hz);
 
+FFI_PLUGIN_EXPORT void owalkie_flutter_play_local_pcm_async(
+    const int16_t* samples,
+    size_t sample_count,
+    int32_t sample_rate_hz);
+
 FFI_PLUGIN_EXPORT void owalkie_flutter_start_local_pcm_loop(
     const int16_t* samples,
     size_t sample_count,

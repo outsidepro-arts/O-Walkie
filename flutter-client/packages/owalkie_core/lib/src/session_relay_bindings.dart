@@ -39,6 +39,12 @@ typedef _Prepare = int Function(
 typedef _ConnectNative = ffi.Int32 Function(ffi.Int64 sessionId, ffi.Int32 timeoutMs);
 typedef _Connect = int Function(int sessionId, int timeoutMs);
 
+typedef _ConnectAsyncNative = ffi.Int32 Function(ffi.Int64 sessionId, ffi.Int32 timeoutMs);
+typedef _ConnectAsync = int Function(int sessionId, int timeoutMs);
+
+typedef _ConnectCancelNative = ffi.Int32 Function(ffi.Int64 sessionId);
+typedef _ConnectCancel = int Function(int sessionId);
+
 typedef _DisconnectNative = ffi.Void Function(ffi.Int64 sessionId);
 typedef _Disconnect = void Function(int sessionId);
 
@@ -116,6 +122,14 @@ class SessionRelayBindings {
     'owalkie_flutter_connect',
   );
 
+  late final _ConnectAsync _connectAsync = _lib.lookupFunction<_ConnectAsyncNative, _ConnectAsync>(
+    'owalkie_flutter_connect_async',
+  );
+
+  late final _ConnectCancel _connectCancel = _lib.lookupFunction<_ConnectCancelNative, _ConnectCancel>(
+    'owalkie_flutter_connect_cancel',
+  );
+
   late final _Disconnect _disconnect = _lib.lookupFunction<_DisconnectNative, _Disconnect>(
     'owalkie_flutter_disconnect',
   );
@@ -180,6 +194,10 @@ class SessionRelayBindings {
   late final void Function(ffi.Pointer<ffi.Int16>, int, int) _playLocal =
       _lib.lookupFunction<ffi.Void Function(ffi.Pointer<ffi.Int16>, ffi.Uint64, ffi.Int32),
           void Function(ffi.Pointer<ffi.Int16>, int, int)>('owalkie_flutter_play_local_pcm');
+
+  late final void Function(ffi.Pointer<ffi.Int16>, int, int) _playLocalAsync =
+      _lib.lookupFunction<ffi.Void Function(ffi.Pointer<ffi.Int16>, ffi.Uint64, ffi.Int32),
+          void Function(ffi.Pointer<ffi.Int16>, int, int)>('owalkie_flutter_play_local_pcm_async');
 
   late final void Function(ffi.Pointer<ffi.Int16>, int, int) _startLocalLoop =
       _lib.lookupFunction<ffi.Void Function(ffi.Pointer<ffi.Int16>, ffi.Uint64, ffi.Int32),
@@ -287,6 +305,11 @@ class SessionRelayBindings {
 
   int connect(int sessionId, {int timeoutMs = 3500}) =>
       _connect(sessionId, timeoutMs);
+
+  int connectAsync(int sessionId, {int timeoutMs = 3500}) =>
+      _connectAsync(sessionId, timeoutMs);
+
+  int connectCancel(int sessionId) => _connectCancel(sessionId);
 
   void disconnect(int sessionId) => _disconnect(sessionId);
 
@@ -408,6 +431,19 @@ class SessionRelayBindings {
         buf[i] = pcm[i];
       }
       _playLocal(buf, pcm.length, sampleRate);
+    });
+  }
+
+  void playLocalPcmAsync(Int16List pcm, {required int sampleRate}) {
+    if (pcm.isEmpty) {
+      return;
+    }
+    using((arena) {
+      final buf = arena<ffi.Int16>(pcm.length);
+      for (var i = 0; i < pcm.length; i++) {
+        buf[i] = pcm[i];
+      }
+      _playLocalAsync(buf, pcm.length, sampleRate);
     });
   }
 

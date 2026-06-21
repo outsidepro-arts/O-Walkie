@@ -13,12 +13,18 @@ import 'session_messages.dart';
 import 'session_relay_bindings.dart';
 import 'signal_point.dart';
 
-/// Background isolate: owns all session + audio FFI calls.
 @pragma('vm:entry-point')
 void owalkieSessionWorkerEntry(List<dynamic> args) {
   final mainSendPort = args[0] as SendPort;
   final worker = _SessionWorker(mainSendPort);
   worker.run();
+}
+
+enum SessionState {
+  idle,
+  connecting,
+  connected,
+  paused,
 }
 
 class _SessionWorker {
@@ -29,21 +35,19 @@ class _SessionWorker {
   final ReceivePort _commands = ReceivePort();
 
   int _sessionId = 0;
-  bool _desiredConnected = false;
-  bool _clientReconnectRunning = false;
-  bool _reconnectCancelled = false;
-  bool _hadConnected = false;
-  bool _localTxActive = false;
-  bool _pendingNetworkRecover = false;
-  bool _relayPausedExternally = false;
-  SessionConnectCommand? _lastConnect;
-  int _lastRecoverAtMs = 0;
-  bool _publishedConnected = false;
-  bool _publishedConnecting = false;
-  bool _publishedReconnecting = false;
+  SessionState _state = SessionState.idle;
   bool _warmMicRecorderEnabled = false;
   bool _appInForeground = true;
+  bool _localTxActive = false;
+  SessionConnectCommand? _lastConnect;
   Timer? _pollTimer;
+  Timer? _reconnectTimer;
+  Timer? _settleTimer;
+  int _reconnectAttempt = 0;
+  int _seriesPauseMs = 3000;
+  int _lastRecoverAtMs = 0;
+  int _lastConnectedAtMs = 0;
+  bool _pendingNetworkRecover = false;
   List<int> _pttPressPcm = const [];
   List<int> _pttReleasePcm = const [];
 
@@ -53,6 +57,8 @@ class _SessionWorker {
   static const _maxSeriesPauseMs = 10000;
   static const _seriesPauseMultiplier = 1.5;
   static const _networkRecoverMinIntervalMs = 3000;
+  static const _reconnectSettleMs = 2500;
+  static const _settlePollIntervalMs = 100;
   static const _localPlaybackRate = 44100;
   static const _rogerTailMs = 40;
   static const _callLocalGain = 0.316;
@@ -80,9 +86,7 @@ class _SessionWorker {
   }
 
   void _onCommand(dynamic message) {
-    if (message is! SessionCommand) {
-      return;
-    }
+    if (message is! SessionCommand) return;
     switch (message) {
       case SessionConnectCommand():
         _startConnect(message);
@@ -137,8 +141,7 @@ class _SessionWorker {
   void _applyWarmCaptureFromFlags() {
     final shouldOffer = _warmMicRecorderEnabled &&
         _appInForeground &&
-        _publishedConnected &&
-        !_relayPausedExternally &&
+        _state == SessionState.connected &&
         !_localTxActive &&
         _sessionId != 0;
     if (shouldOffer) {
@@ -148,12 +151,124 @@ class _SessionWorker {
     }
   }
 
-  void _pauseRelayForExternalReason() {
-    if (_relayPausedExternally || !_desiredConnected) {
+  void _scheduleReconnect() {
+    _reconnectTimer?.cancel();
+    _publishState();
+    _reconnectAttempt = 0;
+    _seriesPauseMs = _initialSeriesPauseMs;
+    _scheduleReconnectTick();
+  }
+
+  void _scheduleReconnectTick() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer.periodic(
+      const Duration(milliseconds: _intervalInSeriesMs),
+      (_) => _onReconnectTick(),
+    );
+  }
+
+  void _onReconnectTick() {
+    if (_state != SessionState.connecting) {
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
       return;
     }
-    _reconnectCancelled = true;
-    _relayPausedExternally = true;
+    if (_sessionId == 0 || !_relay.sessionValid(_sessionId)) {
+      return;
+    }
+    if (_relay.sessionReady(_sessionId)) {
+      _setState(SessionState.connected);
+      _publishState();
+      _relay.punchNat(_sessionId);
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+      return;
+    }
+    _reconnectAttempt++;
+    if (_reconnectAttempt > _attemptsPerSeries) {
+      _reconnectAttempt = 0;
+      _reconnectTimer?.cancel();
+      _reconnectTimer = Timer(Duration(milliseconds: _seriesPauseMs), () {
+        _seriesPauseMs = math.min(
+          (_seriesPauseMs * _seriesPauseMultiplier).round(),
+          _maxSeriesPauseMs,
+        );
+        _scheduleReconnectTick();
+      });
+      return;
+    }
+    _relay.connectCancel(_sessionId);
+    _relay.connectAsync(_sessionId, timeoutMs: 3500);
+  }
+
+  void _cancelSettle() {
+    _settleTimer?.cancel();
+    _settleTimer = null;
+  }
+
+  void _enterSettleCheck() {
+    _cancelSettle();
+    _cancelReconnect();
+    final deadline = DateTime.now().millisecondsSinceEpoch + _reconnectSettleMs;
+    _settleTimer = Timer.periodic(
+      const Duration(milliseconds: _settlePollIntervalMs),
+      (_) {
+        if (_state != SessionState.connected) {
+          _cancelSettle();
+          return;
+        }
+        if (_relay.sessionReady(_sessionId)) {
+          _cancelSettle();
+          _relay.punchNat(_sessionId);
+          _publishState();
+          return;
+        }
+        if (DateTime.now().millisecondsSinceEpoch >= deadline) {
+          _cancelSettle();
+          _setState(SessionState.connecting);
+          _publishState();
+          _scheduleReconnect();
+        }
+      },
+    );
+  }
+
+  void _cancelReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnectAttempt = 0;
+    _seriesPauseMs = _initialSeriesPauseMs;
+    if (_sessionId != 0) {
+      _relay.connectCancel(_sessionId);
+    }
+  }
+
+  void _setState(SessionState newState) {
+    if (_state == newState) return;
+    _state = newState;
+    if (newState == SessionState.idle) {
+      _cancelReconnect();
+    }
+  }
+
+  void _publishState({String? error}) {
+    final connected = _state == SessionState.connected;
+    final connecting = _state == SessionState.connecting || _state == SessionState.paused;
+    final reconnecting = _state == SessionState.connecting;
+    _mainPort.send(SessionWorkerMessage.transportState(
+      sessionId: _sessionId,
+      connected: connected,
+      connecting: connecting,
+      reconnecting: reconnecting,
+      error: error,
+    ));
+    _applyWarmCaptureFromFlags();
+  }
+
+  void _pauseRelayForExternalReason() {
+    if (_state == SessionState.paused) return;
+    if (_state != SessionState.connected && _state != SessionState.connecting) return;
+    _cancelReconnect();
     final id = _sessionId;
     if (id != 0) {
       _relay.pttUp(id);
@@ -162,21 +277,15 @@ class _SessionWorker {
     }
     _localTxActive = false;
     _pendingNetworkRecover = false;
-    _publishState(connected: false, connecting: false);
+    _setState(SessionState.paused);
+    _publishState();
   }
 
   void _resumeRelayAfterExternalPause() {
-    if (!_relayPausedExternally) {
-      return;
-    }
-    _relayPausedExternally = false;
-    if (!_desiredConnected) {
-      return;
-    }
+    if (_state != SessionState.paused) return;
+    _setState(SessionState.idle);
     final cmd = _lastConnect;
-    if (cmd == null) {
-      return;
-    }
+    if (cmd == null) return;
     if (_sessionId != 0) {
       _relay.disconnect(_sessionId);
       _sessionId = 0;
@@ -188,18 +297,17 @@ class _SessionWorker {
       repeater: cmd.repeater,
     );
     if (id == 0) {
-      _publishState(connected: false, connecting: false, error: 'prepare failed');
+      _publishState(error: 'prepare failed');
       return;
     }
     _sessionId = id;
-    _publishState(connected: false, connecting: true);
-    _ensureClientReconnectLoop();
+    _setState(SessionState.connecting);
+    _publishState();
+    _scheduleReconnect();
   }
 
   void _punchNat() {
-    if (_sessionId == 0) {
-      return;
-    }
+    if (_sessionId == 0) return;
     _relay.punchNat(_sessionId);
   }
 
@@ -209,9 +317,7 @@ class _SessionWorker {
   }
 
   void _recoverAfterNetworkHandoff() {
-    if (!_desiredConnected || _sessionId == 0) {
-      return;
-    }
+    if (_state == SessionState.idle || _sessionId == 0) return;
     if (_localTxActive) {
       _pendingNetworkRecover = true;
       return;
@@ -219,36 +325,39 @@ class _SessionWorker {
     _pendingNetworkRecover = false;
     if (_relay.sessionReady(_sessionId)) {
       final now = DateTime.now().millisecondsSinceEpoch;
-      if (now - _lastRecoverAtMs < _networkRecoverMinIntervalMs) {
-        return;
-      }
+      if (now - _lastRecoverAtMs < _networkRecoverMinIntervalMs) return;
       _lastRecoverAtMs = now;
       _relay.recoverUdp(_sessionId);
       _relay.punchNat(_sessionId);
       return;
     }
-    _ensureClientReconnectLoop();
+    if (_state == SessionState.connected) {
+      _setState(SessionState.connecting);
+      _publishState();
+    }
+    _scheduleReconnect();
   }
 
   void _drainPendingNetworkRecover() {
-    if (!_pendingNetworkRecover || _localTxActive) {
-      return;
-    }
+    if (!_pendingNetworkRecover || _localTxActive) return;
     _recoverAfterNetworkHandoff();
   }
 
   void _startConnect(SessionConnectCommand cmd) {
     _lastConnect = cmd;
-    _desiredConnected = true;
-    _relayPausedExternally = false;
     if (_sessionId != 0 && _relay.sessionValid(_sessionId)) {
       if (_relay.sessionReady(_sessionId)) {
-        _publishState(connected: true, connecting: false);
+        _setState(SessionState.connected);
+        _publishState();
+        return;
       }
-      _ensureClientReconnectLoop();
+      _setState(SessionState.connecting);
+      _publishState();
+      _scheduleReconnect();
       return;
     }
     if (_sessionId != 0) {
+      _relay.pttUp(_sessionId);
       _relay.disconnect(_sessionId);
       _sessionId = 0;
     }
@@ -259,13 +368,14 @@ class _SessionWorker {
       repeater: cmd.repeater,
     );
     if (id == 0) {
-      _desiredConnected = false;
-      _publishState(connected: false, connecting: false, error: 'prepare failed');
+      _setState(SessionState.idle);
+      _publishState(error: 'prepare failed');
       return;
     }
     _sessionId = id;
-    _publishState(connected: false, connecting: true);
-    _ensureClientReconnectLoop();
+    _setState(SessionState.connecting);
+    _publishState();
+    _scheduleReconnect();
   }
 
   void _switchServer(SessionSwitchServerCommand cmd) {
@@ -275,8 +385,7 @@ class _SessionWorker {
       channel: cmd.channel,
       repeater: cmd.repeater,
     );
-    _desiredConnected = true;
-    _relayPausedExternally = false;
+    _cancelReconnect();
     _localTxActive = false;
     _pendingNetworkRecover = false;
     final id = _sessionId;
@@ -292,84 +401,18 @@ class _SessionWorker {
       repeater: cmd.repeater,
     );
     if (newId == 0) {
-      _publishState(connected: false, connecting: false, error: 'prepare failed');
+      _setState(SessionState.idle);
+      _publishState(error: 'prepare failed');
       return;
     }
     _sessionId = newId;
-    _publishState(connected: false, connecting: true, reconnecting: false);
-    _ensureClientReconnectLoop();
-  }
-
-  void _ensureClientReconnectLoop() {
-    if (_clientReconnectRunning) {
-      return;
-    }
-    _clientReconnectRunning = true;
-    unawaited(_clientReconnectLoop());
-  }
-
-  Future<void> _clientReconnectLoop() async {
-    _reconnectCancelled = false;
-    var seriesPauseMs = _initialSeriesPauseMs;
-    
-    while (_desiredConnected && !_relayPausedExternally && !_reconnectCancelled) {
-      if (_sessionId == 0 || !_relay.sessionValid(_sessionId)) {
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-        continue;
-      }
-      
-      if (_relay.sessionReady(_sessionId)) {
-        seriesPauseMs = _initialSeriesPauseMs;
-        if (!_publishedConnected || _publishedConnecting || _publishedReconnecting) {
-          _publishState(connected: true, connecting: false, reconnecting: false);
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 500));
-        continue;
-      }
-      
-      _publishState(
-        connected: false,
-        connecting: true,
-        reconnecting: _hadConnected,
-      );
-      
-      var connectedInSeries = false;
-      for (var attempt = 0; attempt < _attemptsPerSeries; attempt++) {
-        if (!_desiredConnected || _relayPausedExternally || _reconnectCancelled) {
-          break;
-        }
-        
-        _relay.connect(_sessionId, timeoutMs: 3500);
-        await Future<void>.delayed(const Duration(milliseconds: _intervalInSeriesMs));
-        
-        if (_relay.sessionReady(_sessionId)) {
-          seriesPauseMs = _initialSeriesPauseMs;
-          _publishState(connected: true, connecting: false, reconnecting: false);
-          connectedInSeries = true;
-          break;
-        }
-      }
-      
-      if (!connectedInSeries && _desiredConnected && !_relayPausedExternally && !_reconnectCancelled) {
-        await Future<void>.delayed(Duration(milliseconds: seriesPauseMs));
-        seriesPauseMs = math.min(
-          (seriesPauseMs * _seriesPauseMultiplier).round(),
-          _maxSeriesPauseMs,
-        );
-      }
-    }
-    
-    _clientReconnectRunning = false;
-    if (!_desiredConnected) {
-      _publishState(connected: false, connecting: false);
-    }
+    _setState(SessionState.connecting);
+    _publishState();
+    _scheduleReconnect();
   }
 
   void _disconnect() {
-    _reconnectCancelled = true;
-    _desiredConnected = false;
-    _hadConnected = false;
-    _relayPausedExternally = false;
+    _cancelReconnect();
     _localTxActive = false;
     _pendingNetworkRecover = false;
     final id = _sessionId;
@@ -379,14 +422,13 @@ class _SessionWorker {
     }
     _sessionId = 0;
     _relay.releaseSessionAudio();
-    _publishState(connected: false, connecting: false);
+    _setState(SessionState.idle);
+    _publishState();
     _mainPort.send(const SessionWorkerMessage.disconnectComplete());
   }
 
   void _setRepeater(bool enabled) {
-    if (_sessionId == 0) {
-      return;
-    }
+    if (_sessionId == 0) return;
     _relay.setRepeaterMode(_sessionId, enabled: enabled);
   }
 
@@ -405,18 +447,16 @@ class _SessionWorker {
   }
 
   void _pttDown() {
-    if (_sessionId == 0) {
-      return;
-    }
+    if (_sessionId == 0) return;
     final rc = _relay.pttDown(_sessionId);
     _localTxActive = rc == 0;
-    if (_localTxActive && _pttPressPcm.isNotEmpty) {
-      _playLocalUi(_pttPressPcm, _localPlaybackRate);
-    }
     _mainPort.send(SessionWorkerMessage.pttResult(
       active: _localTxActive,
       resultCode: rc,
     ));
+    if (_localTxActive && _pttPressPcm.isNotEmpty) {
+      _playLocalUi(_pttPressPcm, _localPlaybackRate);
+    }
   }
 
   List<SignalPoint> _toSignalPoints(
@@ -434,16 +474,12 @@ class _SessionWorker {
   ) {
     final base = _toSignalPoints(raw);
     final reps = repeatCount.clamp(1, 500);
-    if (reps <= 1) {
-      return base;
-    }
+    if (reps <= 1) return base;
     return [for (var i = 0; i < reps; i++) ...base];
   }
 
   void _pttUp(List<({double freqHz, int durationMs})> rogerRaw) {
-    if (_sessionId == 0) {
-      return;
-    }
+    if (_sessionId == 0) return;
     final rogerPoints = _toSignalPoints(rogerRaw);
     Int16List? uplink;
     Int16List? local;
@@ -484,14 +520,12 @@ class _SessionWorker {
   }
 
   void _playLocalUi(List<int> samples, int sampleRate) {
-    if (samples.isEmpty) {
-      return;
-    }
+    if (samples.isEmpty) return;
     final pcm = Int16List(samples.length);
     for (var i = 0; i < samples.length; i++) {
       pcm[i] = samples[i];
     }
-    _relay.playLocalPcm(pcm, sampleRate: sampleRate);
+    _relay.playLocalPcmAsync(pcm, sampleRate: sampleRate);
   }
 
   Future<void> _sendCall(
@@ -533,9 +567,7 @@ class _SessionWorker {
   void _drainNativeEvents() {
     while (true) {
       final ev = _relay.pollEvent();
-      if (ev == null) {
-        break;
-      }
+      if (ev == null) break;
       _mainPort.send(SessionWorkerMessage.nativeEvent(
         eventType: ev.eventType,
         sessionId: ev.sessionId,
@@ -543,82 +575,43 @@ class _SessionWorker {
       ));
       switch (ev.eventType) {
         case OwalkieEventType.connected:
-          _hadConnected = true;
-          _publishState(connected: true, connecting: false, clearError: true);
+          _lastConnectedAtMs = DateTime.now().millisecondsSinceEpoch;
           _relay.punchNat(_sessionId);
+          if (_state == SessionState.connected) break;
+          _cancelSettle();
+          _setState(SessionState.connected);
+          _publishState();
         case OwalkieEventType.connectionLost:
-          _publishState(connected: false, connecting: true, reconnecting: true);
-          if (_desiredConnected) {
-            _ensureClientReconnectLoop();
+          if (_state == SessionState.connected) {
+            final elapsed = DateTime.now().millisecondsSinceEpoch - _lastConnectedAtMs;
+            if (_lastConnectedAtMs > 0 && elapsed < _reconnectSettleMs) {
+              _enterSettleCheck();
+            } else {
+              _setState(SessionState.connecting);
+              _publishState();
+              _scheduleReconnect();
+            }
           }
         case OwalkieEventType.protocolError:
-          _desiredConnected = false;
-          _hadConnected = false;
-          _publishState(
-            connected: false,
-            connecting: false,
-            error: ev.info.isNotEmpty ? ev.info : 'Protocol error',
-          );
+          _cancelReconnect();
+          _setState(SessionState.idle);
+          _publishState(error: ev.info.isNotEmpty ? ev.info : 'Protocol error');
         case OwalkieEventType.connectionFailed:
-          if (_desiredConnected && _hadConnected) {
-            _publishState(
-              connected: false,
-              connecting: true,
-              reconnecting: true,
-              error: ev.info.isNotEmpty ? ev.info : null,
-            );
-          } else if (!_desiredConnected) {
-            _publishState(connected: false, connecting: false);
-          } else {
-            _publishState(
-              connected: false,
-              connecting: true,
-              error: ev.info.isNotEmpty ? ev.info : null,
-            );
+          if (_state == SessionState.connecting) {
+            _publishState(error: ev.info.isNotEmpty ? ev.info : null);
           }
         case OwalkieEventType.disconnected:
-          if (!_desiredConnected) {
-            _hadConnected = false;
-            _publishState(
-              connected: false,
-              connecting: false,
-              error: ev.info.isNotEmpty ? ev.info : null,
-            );
-          }
+          if (_state == SessionState.idle) break;
+          _cancelReconnect();
+          _setState(SessionState.idle);
+          _publishState(error: ev.info.isNotEmpty ? ev.info : null);
       }
     }
   }
 
-  void _publishState({
-    required bool connected,
-    required bool connecting,
-    bool reconnecting = false,
-    String? error,
-    bool clearError = false,
-  }) {
-    if (error == null &&
-        !clearError &&
-        connected == _publishedConnected &&
-        connecting == _publishedConnecting &&
-        reconnecting == _publishedReconnecting) {
-      return;
-    }
-    _publishedConnected = connected;
-    _publishedConnecting = connecting;
-    _publishedReconnecting = reconnecting;
-    _mainPort.send(SessionWorkerMessage.transportState(
-      sessionId: _sessionId,
-      connected: connected,
-      connecting: connecting,
-      reconnecting: reconnecting,
-      error: clearError ? null : error,
-    ));
-    _applyWarmCaptureFromFlags();
-  }
-
   void _shutdown() {
-    _reconnectCancelled = true;
-    _desiredConnected = false;
+    _cancelSettle();
+    _cancelReconnect();
     _pollTimer?.cancel();
     _pollTimer = null;
     _relay.disconnectAll();
