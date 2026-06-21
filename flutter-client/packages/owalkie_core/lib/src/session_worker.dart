@@ -503,6 +503,11 @@ class _SessionWorker {
         merged.setRange(_pttReleasePcm.length, merged.length, local);
         local = merged;
       }
+    } else if (_pttReleasePcm.isNotEmpty) {
+      local = Int16List(_pttReleasePcm.length);
+      for (var i = 0; i < _pttReleasePcm.length; i++) {
+        local[i] = _pttReleasePcm[i];
+      }
     }
     final rc = _relay.pttUpWithRoger(
       sessionId: _sessionId,
