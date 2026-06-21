@@ -11,6 +11,13 @@ abstract final class LocalPcmPlayer {
     SessionRelayBindings.open().playLocalPcm(pcm, sampleRate: sampleRate);
   }
 
+  static void playAsync(Int16List pcm, {required int sampleRate}) {
+    if (pcm.isEmpty) {
+      return;
+    }
+    SessionRelayBindings.open().playLocalPcmAsync(pcm, sampleRate: sampleRate);
+  }
+
   static void startLoop(Int16List pcm, {required int sampleRate}) {
     if (pcm.isEmpty) {
       return;

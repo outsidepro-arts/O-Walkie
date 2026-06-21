@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:io' show Platform;
-import 'dart:isolate';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:owalkie_core/owalkie_core.dart';
@@ -9,17 +7,6 @@ import 'package:vibration/vibration.dart';
 
 import 'vibration_imitation.dart';
 import 'vibration_patterns.dart';
-
-void _playPcmBlockingIsolate(_PcmPlayArgs args) {
-  LocalPcmPlayer.playBlocking(args.pcm, sampleRate: args.sampleRate);
-}
-
-final class _PcmPlayArgs {
-  const _PcmPlayArgs(this.pcm, this.sampleRate);
-
-  final Int16List pcm;
-  final int sampleRate;
-}
 
 /// Maps vibrator patterns to device vibrator or desktop sine imitation.
 abstract final class VibrationImitationPlayer {
@@ -98,11 +85,7 @@ abstract final class VibrationImitationPlayer {
     if (pcm.isEmpty) {
       return;
     }
-    await Isolate.run(
-      () => _playPcmBlockingIsolate(
-        _PcmPlayArgs(pcm, VibrationImitation.sampleRateHz),
-      ),
-    );
+    LocalPcmPlayer.playAsync(pcm, sampleRate: VibrationImitation.sampleRateHz);
   }
 
   static Future<void> playPreview() async {
@@ -117,10 +100,6 @@ abstract final class VibrationImitationPlayer {
     if (pcm.isEmpty) {
       return;
     }
-    await Isolate.run(
-      () => _playPcmBlockingIsolate(
-        _PcmPlayArgs(pcm, VibrationImitation.sampleRateHz),
-      ),
-    );
+    LocalPcmPlayer.playAsync(pcm, sampleRate: VibrationImitation.sampleRateHz);
   }
 }

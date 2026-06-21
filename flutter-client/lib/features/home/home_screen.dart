@@ -179,8 +179,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ? AppStrings.disconnectServer
         : AppStrings.connectServer;
 
-    final pttUiEnabled = pttUiEnabledFor(state);
-
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -211,19 +209,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _PttArea(
-                    enabled: pttUiEnabled,
-                    active: state.txActive,
-                    label: pttButtonLabel(
-                      pttUiEnabled: pttUiEnabled,
-                      txActive: state.txActive,
-                      pttServerLocked: state.pttServerLocked,
-                      pttLockSec: state.pttLockSec,
-                      txCountdownSec: state.txCountdownSec,
-                    ),
-                    locked: state.pttServerLocked,
-                    pttLockSec: state.pttLockSec,
-                    sessionConnected: state.isConnected,
+                  child: _PttAreaConsumer(
                     expanded: false,
                     onPttDown: controller.pttDown,
                     onPttUp: controller.pttUp,
@@ -252,19 +238,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       Expanded(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: _PttArea(
-                            enabled: pttUiEnabled,
-                            active: state.txActive,
-                            label: pttButtonLabel(
-                              pttUiEnabled: pttUiEnabled,
-                              txActive: state.txActive,
-                              pttServerLocked: state.pttServerLocked,
-                              pttLockSec: state.pttLockSec,
-                              txCountdownSec: state.txCountdownSec,
-                            ),
-                            locked: state.pttServerLocked,
-                            pttLockSec: state.pttLockSec,
-                            sessionConnected: state.isConnected,
+                          child: _PttAreaConsumer(
                             expanded: true,
                             onPttDown: controller.pttDown,
                             onPttUp: controller.pttUp,
@@ -845,6 +819,51 @@ class _LabeledField extends StatelessWidget {
         helperText: helper,
         helperMaxLines: 2,
       ),
+    );
+  }
+}
+
+class _PttAreaConsumer extends ConsumerWidget {
+  const _PttAreaConsumer({
+    required this.expanded,
+    required this.onPttDown,
+    required this.onPttUp,
+    required this.onCall,
+  });
+
+  final bool expanded;
+  final VoidCallback onPttDown;
+  final VoidCallback onPttUp;
+  final VoidCallback onCall;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(homeScreenControllerProvider.select((s) => (
+          txActive: s.txActive,
+          pttServerLocked: s.pttServerLocked,
+          pttLockSec: s.pttLockSec,
+          txCountdownSec: s.txCountdownSec,
+          isConnected: s.isConnected,
+        )));
+    final pttUiEnabled = pttUiEnabledFor(ref.read(homeScreenControllerProvider));
+    final label = pttButtonLabel(
+      pttUiEnabled: pttUiEnabled,
+      txActive: state.txActive,
+      pttServerLocked: state.pttServerLocked,
+      pttLockSec: state.pttLockSec,
+      txCountdownSec: state.txCountdownSec,
+    );
+    return _PttArea(
+      enabled: pttUiEnabled,
+      active: state.txActive,
+      label: label,
+      locked: state.pttServerLocked,
+      pttLockSec: state.pttLockSec,
+      sessionConnected: state.isConnected,
+      expanded: expanded,
+      onPttDown: onPttDown,
+      onPttUp: onPttUp,
+      onCall: onCall,
     );
   }
 }

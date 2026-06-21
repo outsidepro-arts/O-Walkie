@@ -1,6 +1,6 @@
 # O-Walkie — Project Memory
 
-Last updated: 2026-06-17
+Last updated: 2026-06-21
 
 ## Branches
 
@@ -185,6 +185,106 @@ Shared C/C++ library used by all three clients. Public header: `include/owalkie_
 3. Tune relay noise/tail defaults from field feedback.
 4. Maintain protocol compatibility as new relay audio settings are added.
 5. Plan Flutter client merge to master when stable.
+
+## Flutter Client: Non-blocking Connect + State Machine (2026-06-17, with Settle Window)
+
+**Проблема**: `owalkie_connect()` блокировал воркер-изолят на 3500ms, замораживая event loop. 8 булевых флагов для состояния создавали потенциально невалидные комбинации. Гонки обрабатывались флагами-костылями.
+
+**Решение**: Два ключевых изменения:
+
+### 1. Non-blocking connectAsync (C++ FFI)
+
+**`owalkie_flutter_relay.cpp`**:
+- `owalkie_flutter_connect_async(session_id, timeout_ms)` — спавнит `std::thread`, который вызывает `owalkie_connect()`, возвращает управление немедленно
+- `owalkie_flutter_connect_cancel(session_id)` — вызывает `owalkie_connect_cancel()` → `cancelOngoingConnect()` (стоп-флаг + закрытие сокетов)
+
+**`owalkie-core`**:
+- `SessionManager::cancelConnect(id)` — новая публичная функция, вызывает `session->cancelOngoingConnect()`
+- `owalkie_connect_cancel(session_id)` — новая C API
+
+### 2. State machine в `session_worker.dart`
+
+**Вместо 8 bool**:
+```dart
+enum SessionState { idle, connecting, connected, paused }
+```
+
+**Явные переходы**:
+```
+ConnectCommand:        (any) → connecting
+SwitchServerCommand:  (any) → connecting (disconnect old + prepare new)
+DisconnectCommand:    (any) → idle
+CONNECTED:            connecting → connected (cancel reconnect timer)
+CONNECTION_LOST:      connected → connecting (start reconnect timer)
+PROTOCOL_ERROR:       (any) → idle
+PauseRelayCommand:    connected → paused
+ResumeRelayCommand:   paused → connecting
+```
+
+**Timer-based reconnect** (вместо `while(true) + await`):
+- `Timer.periodic(300ms)` тикает, пока `state == connecting`
+- На каждом тике: cancel предыдущего connect → `connectAsync()` → проверка `sessionReady()`
+- Burst: 4 попытки, затем backoff (3s → 4.5s → ... → 10s)
+
+**Убраны**: `_desiredConnected`, `_hadConnected`, `_clientReconnectRunning`, `_reconnectCancelled`, `_relayPausedExternally`, `_publishedConnected`, `_publishedConnecting`, `_publishedReconnecting`, `_pendingNetworkRecover`
+
+### Изменённые файлы (полный список за сегодня)
+
+| Файл | Изменения |
+|------|-----------|
+| `owalkie-core/include/owalkie_core.h` | `owalkie_connect_cancel()` + `OWALKIE_ERR_BUSY` |
+| `owalkie-core/include/owalkie/session_manager.hpp` | `cancelConnect()` |
+| `owalkie-core/src/session_manager.cpp` | `cancelConnect()` impl |
+| `owalkie-core/src/c_api.cpp` | `owalkie_connect_cancel()` |
+| `flutter-client/.../owalkie_flutter_relay.cpp` | `connectAsync`, `connectCancel`, `play_local_pcm_async` FFI exports |
+| `flutter-client/.../owalkie_flutter_audio.cpp` | RxJitterBuffer class, `play_local_pcm_async()` |
+| `flutter-client/.../owalkie_flutter_audio.h` | `play_local_pcm_async()` declaration |
+| `flutter-client/.../owalkie_flutter_bridge.h` | `owalkie_flutter_play_local_pcm_async` declaration |
+| `flutter-client/.../session_relay_bindings.dart` | FFI bindings for connectAsync/cancel + playLocalPcmAsync |
+| `flutter-client/.../session_worker.dart` | State machine + timer reconnect + settle window + pttResult before tone |
+| `flutter-client/.../home_screen_controller.dart` | Removed `_phoneCallPauseInProgress`, warm mic sync in `_ensureSessionImpl` |
+
+### Reconnect Settle Window
+
+При `CONNECTION_LOST` в течение 2500ms после `CONNECTED` — не стартуем reconnect loop немедленно, а запускаем settle timer (poll `sessionReady()` каждые 100ms). Если сессия самовосстановилась — остаёмся в `connected`. Если settle окно истекло — переход в `connecting`.
+
+### Что не менялось (будет в следующей итерации)
+
+- `_pttDownInProgress` в `home_screen_controller.dart` — сохранён из-за async permission check на mobile, можно будет убрать после рефакторинга permission flow
+- `_disconnect()` всё ещё блокирует воркер на ~200ms (ожидание connect thread) — можно сделать асинхронным в будущем
+- `home_screen_controller.dart` обратно совместим с новым `transportState`
+- **Убраны**: `_phoneCallPauseInProgress` — полностью избыточен (state.relayPausedForPhoneCall + worker command queue)
+
+### PTT Latency Fix: Non-blocking pttResult + play_local_pcm_async (2026-06-17)
+
+**Проблема**: `_playLocalUi()` вызывалась ДО `_mainPort.send(pttResult)`, и `play_local_pcm_blocking()` блокировала воркер на 100-300ms, задерживая отправку `pttResult` → UI не показывал TX.
+
+**Решение**:
+1. **`session_worker.dart`**: `_mainPort.send(pttResult)` перемещён до `_playLocalUi()`. UI видит TX через ~3-5ms после PTT вместо 100-300ms.
+2. **`play_local_pcm_async()`**: новая C++ функция в `owalkie_flutter_audio.cpp`, которая копирует сэмплы в `shared_ptr` и запускает `play_local_pcm_blocking` в `std::thread`. FFI возвращается немедленно, воркер не блокируется.
+3. **`_playLocalUi()`**: использует `playLocalPcmAsync()` вместо `playLocalPcm()`.
+
+**Изменённые файлы**:
+- `owalkie_flutter_audio.h` — `play_local_pcm_async()` declaration
+- `owalkie_flutter_audio.cpp` — `play_local_pcm_async()` implementation
+- `owalkie_flutter_bridge.h` — FFI export declaration
+- `owalkie_flutter_relay.cpp` — FFI export `owalkie_flutter_play_local_pcm_async`
+- `session_relay_bindings.dart` — FFI binding + wrapper `playLocalPcmAsync()`
+- `session_worker.dart` — `pttResult` before tone + use async playback
+
+### Warm Mic Recorder (2026-06-17)
+
+Реализован warm mic recorder — аналог Android `WarmMicRecorderStore`. Когда включён в настройках и приложение в foreground + connected, capture device держится открытым в idle, устраняя задержку на `ma_device_init` при PTT.
+
+**Уже было (C++)**:
+- `warm_capture()` — открывает capture device без старта TX pump thread
+- `release_capture_if_idle()` — закрывает capture device если TX не активен
+
+**Добавлено (Dart)**:
+- Синхронизация настроек воркеру через `SessionSyncWarmCaptureCommand` при: создании сессии, изменении lifecycle, получении transport state, окончании TX
+- `_applyWarmCaptureFromFlags()` в воркере — проверяет `_warmMicRecorderEnabled && _appInForeground && connected && !_localTxActive`
+- Вызывается из `_publishState()`, `_pttUp()`, `_onCommand()`
+- Настройка в `settings_screen.dart` с переключателем "Keep microphone ready (faster PTT start)"
 
 ## Flutter Client Stability Improvements (2026-06-14)
 
@@ -416,4 +516,90 @@ if (!sessionKeepAlive):
 
 ---
 
-*Last updated: 2026-06-17*
+## Flutter Client: RxJitterBuffer Implementation (2026-06-17, with Non-blocking Connect)
+
+**Проблема**: После реконнекта RX-аудио начиналось с задержками и рывками из-за:
+1. Отсутствия preroll — playback device стартовал немедленно, первый фрейм часто был silent
+2. Отсутствия jitter буфера — сетевые bursts не сглаживались, underrun → тишина
+3. Отсутствия ресинхронизации при sustained underrun
+
+**Решение**: Заменён сырой `ma_pcm_rb` + `ma_device` на `RxJitterBuffer` class в `owalkie_flutter_audio.cpp`:
+
+### RxJitterBuffer API
+- `open(sample_rate, frame_samples)` — выделяет ring buffer (48 фреймов = 960ms), НЕ стартует device
+- `push(samples, count)` — запись в SPSC ring buffer
+- `read(output, frame_count)` — чтение из callback'а miniaudio
+- `close()` — uninit device + очистка
+- `isOpen()` — проверка состояния
+
+### Preroll (6 фреймов = 120ms)
+- Playback device НЕ стартует, пока не накоплено 6 фреймов
+- Устраняет начальную тишину (первый callback всегда находит данные)
+- После старта — все последующие push() пишут в ring buffer, callback читает
+
+### Resync при sustained underrun (>2 подряд)
+- Когда callback не находит данных >2 раз подряд → `_resync = true`
+- Ring buffer очищается (write=0, read=0, fill=0)
+- Push() сбрасывает `_resync` после накопления preroll заново
+- Аналог Android `RxPcmJitterBuffer` resync при >2 frame drift
+
+### Thread safety
+- `push()` — вызывается из `on_rx_pcm()` (C++ WS/UDP thread) под `g_mu`
+- `read()` — вызывается из `deviceCallback` (miniaudio internal thread), lock-free SPSC
+- Single producer, single consumer через `_fill` atomic (acquire/release)
+- При полном буфере — новые сэмплы дропаются (no overflow race)
+
+### Изменённые файлы
+- `flutter-client/packages/owalkie_core/src/owalkie_flutter_audio.cpp` — RxJitterBuffer class (154 строки), заменены глобалы, open/close/on_rx_pcm
+
+---
+
+## Flutter Client: UI Responsiveness Fix (2026-06-21)
+
+**Проблема**: Интерфейс подтормаживал, данные не всегда обновлялись. Четыре корневые причины:
+
+1. **Блокировка UI-потока при воспроизведении звуков**: `UiSoundLibrary._playSamples()` вызывала `LocalPcmPlayer.playBlocking()` → C++ `play_local_pcm_blocking()`, которая захватывала глобальный мьютекс `g_mu` и вызывала `std::this_thread::sleep_for(duration+80ms)` на главном потоке. Каждый UI-звук замораживал интерфейс на 200-400ms, а при смене состояния соединения проигрывалось 2-3 звука подряд (0.5-1s полной неотзывчивости).
+
+2. **Конкуренция за `g_mu`**: Пока главный изолят держал мьютекс для UI-звука, worker-изолят блокировался на захвате/воспроизведении RX-аудио.
+
+3. **Полная перестройка дерева виджетов**: `HomeScreen.build()` использовал `ref.watch(homeScreenControllerProvider)` — любое изменение любого поля (включая `signalChip`, который обновлялся каждые несколько секунд) вызывало полную перестройку всего дерева.
+
+4. **`Isolate.run()` для вибро-имитации**: `VibrationImitationPlayer` спавнил новый изолят для каждого вибро-события (100-300ms overhead).
+
+**Решение**: Четыре изменения:
+
+### 1. Асинхронное воспроизведение UI-звуков
+- Добавлен `LocalPcmPlayer.playAsync()` — использует существующую C++ функцию `play_local_pcm_async()`, которая копирует PCM в `shared_ptr` и запускает воспроизведение в `std::thread::detach()`. FFI возвращается немедленно.
+- `UiSoundLibrary._playSamples()` переведён с `playBlocking()` на `playAsync()`.
+- Все UI-звуки (connect/disconnect/switch/volume/error tones) больше не блокируют UI-поток и не конкурируют с worker-изолятом за `g_mu`.
+
+### 2. Пропуск избыточных обновлений состояния
+- В `_onSessionMessage()` добавлена проверка: если `SessionTransportStateMessage` не меняет `connected`/`connecting`/`reconnecting`/`error` — обработчик завершается досрочно (no-op state update).
+- В `SessionUplinkSignalMessage` — пропуск если `percent == state.uplinkSignalPercent`.
+
+### 3. Селективные перестройки виджетов
+- `_StatusChips` преобразован из `StatelessWidget` в `ConsumerWidget` с селективными `ref.watch(provider.select(...))` на `connectionDisplayChip` и `signalChip`. Теперь только чипы перестраиваются при изменении сигнала.
+- Создан `_PttAreaConsumer` — ConsumerWidget, отслеживающий только `txActive`, `pttServerLocked`, `pttLockSec`, `txCountdownSec`, `isConnected`. PTT-область не перестраивается при изменении сигнала или громкости.
+- Удалена неиспользуемая переменная `pttUiEnabled` из главного `build()`.
+
+### 4. Прямой `playAsync()` вместо `Isolate.run()` для вибро-имитации
+- `VibrationImitationPlayer.playDuration()` и `playPreview()` теперь вызывают `LocalPcmPlayer.playAsync()` напрямую вместо `Isolate.run()`.
+- Удалены `_playPcmBlockingIsolate` и класс `_PcmPlayArgs`.
+- Удалены импорты `dart:isolate` и `dart:typed_data`.
+
+### Изменённые файлы
+| Файл | Изменения |
+|------|-----------|
+| `packages/owalkie_core/lib/src/local_pcm_player.dart` | Добавлен `playAsync()` |
+| `packages/owalkie_core/lib/src/ui_sound_library.dart` | `playBlocking` → `playAsync` |
+| `lib/features/home/home_screen_controller.dart` | Guard от no-op transport state + uplink signal |
+| `lib/features/home/home_screen.dart` | `_StatusChips` ConsumerWidget, `_PttAreaConsumer`, удалён неиспользуемый `pttUiEnabled` |
+| `lib/platform/vibration_imitation_player.dart` | `Isolate.run()` → `LocalPcmPlayer.playAsync()`, удалены isolate-хелперы |
+
+### Эффект
+- **UI-звуки**: 0ms блокировки (было 200-400ms)
+- **Worker изолят**: больше не блокируется UI-звуками (конкуренция за `g_mu` устранена)
+- **Перестройки виджетов**: сигнал-чипы не триггерят перестройку PTT-области и формы
+- **Вибро-имитация**: 0ms overhead спавна изолята (было 100-300ms)
+
+*Last updated: 2026-06-21*

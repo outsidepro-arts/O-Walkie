@@ -51,17 +51,17 @@ ma_context g_context{};
 
 bool g_context_inited = false;
 
-ma_device g_playback{};
+std::mutex g_local_play_mu;
+
+ma_context g_local_play_ctx{};
+
+bool g_local_play_ctx_inited = false;
 
 ma_device g_capture{};
 
-bool g_playback_open = false;
+bool g_rx_jitter_open = false;
 
 bool g_capture_open = false;
-
-ma_pcm_rb g_rx_rb{};
-
-bool g_rx_rb_inited = false;
 
 
 
@@ -292,6 +292,16 @@ void ensure_context() {
 
 }
 
+void ensure_local_play_ctx() {
+    if (g_local_play_ctx_inited) return;
+    ma_context_config cfg = ma_context_config_init();
+    if (ma_context_init(nullptr, 0, &cfg, &g_local_play_ctx) != MA_SUCCESS) {
+        OWALKIE_AUDIO_LOGE("local play ma_context_init failed");
+        return;
+    }
+    g_local_play_ctx_inited = true;
+}
+
 
 
 const ma_device_id* resolve_device_id_from_list(
@@ -457,24 +467,172 @@ int32_t fill_device_list_locked(
 
 
 
+class RxJitterBuffer {
+public:
+    static constexpr size_t kRingCapacityFrames = 48;
+    static constexpr size_t kPrerollFrames = 3;
+    static constexpr int kMaxUnderrunBeforeResync = 2;
+
+    RxJitterBuffer() = default;
+    ~RxJitterBuffer() { close(); }
+
+    bool open(int sample_rate_hz, int frame_samples) {
+        close();
+        _sample_rate = sample_rate_hz;
+        _frame_samples = frame_samples;
+        _ring_capacity = kRingCapacityFrames * static_cast<size_t>(_frame_samples);
+        _ring.assign(_ring_capacity, 0);
+        _write.store(0, std::memory_order_relaxed);
+        _read.store(0, std::memory_order_relaxed);
+        _fill.store(0, std::memory_order_release);
+        _started.store(false, std::memory_order_relaxed);
+        _resync.store(false, std::memory_order_relaxed);
+        _underrun_count = 0;
+        return true;
+    }
+
+    bool isOpen() const { return _ring_capacity > 0; }
+
+    void preStartDevice() {
+        if (!_started.load(std::memory_order_acquire)) {
+            startDevice();
+        }
+    }
+
+    void push(const int16_t* samples, size_t count) {
+        if (!samples || count == 0 || !isOpen()) return;
+        const size_t capacity = _ring_capacity;
+        size_t fill = _fill.load(std::memory_order_acquire);
+        if (fill >= capacity) return;
+        const size_t space = capacity - fill;
+        const size_t to_write = (std::min)(count, space);
+        size_t w = _write.load(std::memory_order_relaxed);
+        for (size_t i = 0; i < to_write; ++i) {
+            _ring[w] = samples[i];
+            if (++w >= capacity) w = 0;
+        }
+        _write.store(w, std::memory_order_release);
+        _fill.store(fill + to_write, std::memory_order_release);
+        if (_resync.load(std::memory_order_acquire)) {
+            const size_t need = kPrerollFrames * static_cast<size_t>(_frame_samples);
+            if (fill + to_write >= need) {
+                _resync.store(false, std::memory_order_release);
+                _underrun_count = 0;
+            }
+        }
+        if (!_started.load(std::memory_order_acquire)) {
+            const size_t need = kPrerollFrames * static_cast<size_t>(_frame_samples);
+            if (fill + to_write >= need) {
+                startDevice();
+            }
+        }
+    }
+
+    size_t read(int16_t* output, size_t frame_count) {
+        if (_resync.load(std::memory_order_acquire)) return 0;
+        const size_t capacity = _ring_capacity;
+        size_t fill = _fill.load(std::memory_order_acquire);
+        const size_t available = (std::min)(fill, frame_count);
+        const size_t missing = frame_count - available;
+        size_t r = _read.load(std::memory_order_relaxed);
+        for (size_t i = 0; i < available; ++i) {
+            output[i] = _ring[r];
+            if (++r >= capacity) r = 0;
+        }
+        _read.store(r, std::memory_order_release);
+        fill -= available;
+        _fill.store(fill, std::memory_order_release);
+        if (missing > 0) {
+            ++_underrun_count;
+            if (_underrun_count > kMaxUnderrunBeforeResync) {
+                _resync.store(true, std::memory_order_release);
+                _write.store(0, std::memory_order_relaxed);
+                _read.store(0, std::memory_order_relaxed);
+                _fill.store(0, std::memory_order_release);
+            }
+        } else {
+            _underrun_count = 0;
+        }
+        return available;
+    }
+
+    void close() {
+        if (_started.load(std::memory_order_acquire)) {
+            ma_device_uninit(&_device);
+            _started.store(false, std::memory_order_relaxed);
+        }
+        _ring.clear();
+        _ring_capacity = 0;
+        _write.store(0, std::memory_order_relaxed);
+        _read.store(0, std::memory_order_relaxed);
+        _fill.store(0, std::memory_order_relaxed);
+        _resync.store(false, std::memory_order_relaxed);
+        _underrun_count = 0;
+    }
+
+private:
+    void startDevice() {
+        ensure_context();
+        if (!g_context_inited) return;
+        ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
+        cfg.playback.pDeviceID = resolve_playback_device_id_locked();
+        cfg.playback.format = ma_format_s16;
+        cfg.playback.channels = 1;
+        cfg.sampleRate = static_cast<ma_uint32>(_sample_rate);
+        cfg.dataCallback = deviceCallback;
+        cfg.pUserData = this;
+#ifdef __ANDROID__
+        cfg.aaudio.usage = static_cast<ma_aaudio_usage>(g_playback_aaudio_usage.load(std::memory_order_relaxed));
+        cfg.aaudio.contentType = static_cast<ma_aaudio_content_type>(g_playback_aaudio_content_type.load(std::memory_order_relaxed));
+#endif
+        if (ma_device_init(&g_context, &cfg, &_device) != MA_SUCCESS) {
+            OWALKIE_AUDIO_LOGE("RxJitter: ma_device_init failed (%d Hz)", _sample_rate);
+            return;
+        }
+        if (ma_device_start(&_device) != MA_SUCCESS) {
+            OWALKIE_AUDIO_LOGE("RxJitter: ma_device_start failed");
+            ma_device_uninit(&_device);
+            return;
+        }
+        _started.store(true, std::memory_order_release);
+    }
+
+    static void deviceCallback(ma_device* device, void* output, const void*, ma_uint32 frame_count) {
+        auto* self = static_cast<RxJitterBuffer*>(device->pUserData);
+        auto* out = static_cast<int16_t*>(output);
+        const size_t written = self->read(out, frame_count);
+        if (written < frame_count) {
+            std::memset(out + written, 0, (frame_count - written) * sizeof(int16_t));
+        }
+        const float gain = rx_gain();
+        if (gain != 1.0f) {
+            for (ma_uint32 i = 0; i < frame_count; ++i) {
+                const float v = static_cast<float>(out[i]) * gain;
+                out[i] = static_cast<int16_t>(std::clamp(v, -32768.0f, 32767.0f));
+            }
+        }
+    }
+
+    std::vector<int16_t> _ring;
+    size_t _ring_capacity = 0;
+    std::atomic<size_t> _write{0};
+    std::atomic<size_t> _read{0};
+    std::atomic<size_t> _fill{0};
+    int _sample_rate = 0;
+    int _frame_samples = 0;
+    std::atomic<bool> _started{false};
+    std::atomic<bool> _resync{false};
+    int _underrun_count = 0;
+    ma_device _device{};
+};
+
+RxJitterBuffer g_rx_jitter;
+
 void close_playback_locked() {
-
-    if (g_playback_open) {
-
-        ma_device_uninit(&g_playback);
-
-        g_playback_open = false;
-
+    if (g_rx_jitter_open) {
+        g_rx_jitter.close();
+        g_rx_jitter_open = false;
     }
-
-    if (g_rx_rb_inited) {
-
-        ma_pcm_rb_uninit(&g_rx_rb);
-
-        g_rx_rb_inited = false;
-
-    }
-
 }
 
 
@@ -513,57 +671,7 @@ void close_capture_locked() {
 
 
 
-void playback_cb(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
 
-    (void)device;
-
-    (void)input;
-
-    auto* out = static_cast<int16_t*>(output);
-
-    const ma_uint32 bpf = ma_get_bytes_per_frame(ma_format_s16, 1);
-
-    ma_uint32 done = 0;
-
-    while (done < frame_count) {
-
-        ma_uint32 chunk = frame_count - done;
-
-        void* rb = nullptr;
-
-        ma_pcm_rb_acquire_read(&g_rx_rb, &chunk, &rb);
-
-        if (chunk == 0) {
-
-            break;
-
-        }
-
-        const float gain = rx_gain();
-
-        const auto* src = static_cast<const int16_t*>(rb);
-
-        for (ma_uint32 i = 0; i < chunk; ++i) {
-
-            const float v = static_cast<float>(src[i]) * gain;
-
-            out[done + i] = static_cast<int16_t>(std::clamp(v, -32768.0f, 32767.0f));
-
-        }
-
-        ma_pcm_rb_commit_read(&g_rx_rb, chunk);
-
-        done += chunk;
-
-    }
-
-    if (done < frame_count) {
-
-        std::memset(reinterpret_cast<uint8_t*>(out) + done * bpf, 0, (frame_count - done) * bpf);
-
-    }
-
-}
 
 
 
@@ -602,80 +710,15 @@ void capture_cb(ma_device* device, void* output, const void* input, ma_uint32 fr
 
 
 bool open_playback_locked() {
-
-    if (g_playback_open) {
-
+    if (g_rx_jitter_open) {
         return true;
-
     }
-
-    ensure_context();
-
-    if (!g_context_inited) {
-
+    if (!g_rx_jitter.open(g_sample_rate, g_frame_samples)) {
         return false;
-
     }
-
-    const ma_uint32 capacity_frames = static_cast<ma_uint32>(g_sample_rate);
-
-    if (ma_pcm_rb_init(ma_format_s16, 1, capacity_frames, nullptr, nullptr, &g_rx_rb) != MA_SUCCESS) {
-
-        OWALKIE_AUDIO_LOGE("ma_pcm_rb_init failed");
-
-        return false;
-
-    }
-
-    g_rx_rb_inited = true;
-
-    ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
-
-    cfg.playback.pDeviceID = resolve_playback_device_id_locked();
-
-    cfg.playback.format = ma_format_s16;
-
-    cfg.playback.channels = 1;
-
-    cfg.sampleRate = static_cast<ma_uint32>(g_sample_rate);
-
-    cfg.dataCallback = playback_cb;
-
-#ifdef __ANDROID__
-    cfg.aaudio.usage = static_cast<ma_aaudio_usage>(g_playback_aaudio_usage.load(std::memory_order_relaxed));
-    cfg.aaudio.contentType = static_cast<ma_aaudio_content_type>(g_playback_aaudio_content_type.load(std::memory_order_relaxed));
-#endif
-
-    if (ma_device_init(&g_context, &cfg, &g_playback) != MA_SUCCESS) {
-
-        OWALKIE_AUDIO_LOGE("playback ma_device_init failed (%d Hz)", g_sample_rate);
-
-        ma_pcm_rb_uninit(&g_rx_rb);
-
-        g_rx_rb_inited = false;
-
-        return false;
-
-    }
-
-    if (ma_device_start(&g_playback) != MA_SUCCESS) {
-
-        OWALKIE_AUDIO_LOGE("playback ma_device_start failed");
-
-        ma_device_uninit(&g_playback);
-
-        ma_pcm_rb_uninit(&g_rx_rb);
-
-        g_rx_rb_inited = false;
-
-        return false;
-
-    }
-
-    g_playback_open = true;
-
+    g_rx_jitter_open = true;
+    g_rx_jitter.preStartDevice();
     return true;
-
 }
 
 
@@ -808,6 +851,14 @@ void shutdown() {
 
     }
 
+    if (g_local_play_ctx_inited) {
+
+        ma_context_uninit(&g_local_play_ctx);
+
+        g_local_play_ctx_inited = false;
+
+    }
+
 }
 
 
@@ -831,53 +882,17 @@ void set_rx_volume_percent(int percent) {
 
 
 void on_rx_pcm(const int16_t* samples, size_t count, int sample_rate_hz) {
-
     if (!samples || count == 0) {
-
         return;
-
     }
-
     std::lock_guard<std::mutex> lock(g_mu);
-
     if (sample_rate_hz > 0 && sample_rate_hz != g_sample_rate) {
-
         configure_locked(sample_rate_hz, g_packet_ms);
-
     }
-
     if (!open_playback_locked()) {
-
         return;
-
     }
-
-    ma_uint32 frames = static_cast<ma_uint32>(count);
-
-    const int16_t* src = samples;
-
-    while (frames > 0) {
-
-        ma_uint32 chunk = frames;
-
-        void* rb = nullptr;
-
-        if (ma_pcm_rb_acquire_write(&g_rx_rb, &chunk, &rb) != MA_SUCCESS || chunk == 0) {
-
-            break;
-
-        }
-
-        std::memcpy(rb, src, chunk * sizeof(int16_t));
-
-        ma_pcm_rb_commit_write(&g_rx_rb, chunk);
-
-        src += chunk;
-
-        frames -= chunk;
-
-    }
-
+    g_rx_jitter.push(samples, count);
 }
 
 
@@ -1036,11 +1051,11 @@ void play_local_pcm_blocking(const int16_t* samples, size_t count, int sample_ra
 
     }
 
-    std::unique_lock<std::mutex> lock(g_mu);
+    std::unique_lock<std::mutex> lock(g_local_play_mu);
 
-    ensure_context();
+    ensure_local_play_ctx();
 
-    if (!g_context_inited) {
+    if (!g_local_play_ctx_inited) {
 
         return;
 
@@ -1050,7 +1065,7 @@ void play_local_pcm_blocking(const int16_t* samples, size_t count, int sample_ra
 
     ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
 
-    cfg.playback.pDeviceID = resolve_playback_device_id_locked();
+    cfg.playback.pDeviceID = nullptr;
 
     cfg.playback.format = ma_format_s16;
 
@@ -1064,7 +1079,7 @@ void play_local_pcm_blocking(const int16_t* samples, size_t count, int sample_ra
 
     ma_device dev{};
 
-    if (ma_device_init(&g_context, &cfg, &dev) != MA_SUCCESS) {
+    if (ma_device_init(&g_local_play_ctx, &cfg, &dev) != MA_SUCCESS) {
 
         OWALKIE_AUDIO_LOGE("local play ma_device_init failed");
 
@@ -1094,6 +1109,15 @@ void play_local_pcm_blocking(const int16_t* samples, size_t count, int sample_ra
 
     ma_device_uninit(&dev);
 
+}
+
+void play_local_pcm_async(const int16_t* samples, size_t count, int sample_rate_hz) {
+    if (!samples || count == 0 || sample_rate_hz <= 0) return;
+    auto pcm = std::make_shared<std::vector<int16_t>>(samples, samples + count);
+    auto rate = sample_rate_hz;
+    std::thread([pcm, rate]() {
+        play_local_pcm_blocking(pcm->data(), pcm->size(), rate);
+    }).detach();
 }
 
 
@@ -1201,11 +1225,11 @@ void start_local_pcm_loop(const int16_t* samples, size_t count, int sample_rate_
 
         {
 
-            std::lock_guard<std::mutex> audio_lock(g_mu);
+            std::lock_guard<std::mutex> audio_lock(g_local_play_mu);
 
-            ensure_context();
+            ensure_local_play_ctx();
 
-            if (!g_context_inited) {
+            if (!g_local_play_ctx_inited) {
 
                 return;
 
@@ -1213,7 +1237,7 @@ void start_local_pcm_loop(const int16_t* samples, size_t count, int sample_rate_
 
             ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
 
-            cfg.playback.pDeviceID = resolve_playback_device_id_locked();
+            cfg.playback.pDeviceID = nullptr;
 
             cfg.playback.format = ma_format_s16;
 
@@ -1225,7 +1249,7 @@ void start_local_pcm_loop(const int16_t* samples, size_t count, int sample_rate_
 
             cfg.pUserData = &state;
 
-            if (ma_device_init(&g_context, &cfg, &dev) != MA_SUCCESS) {
+            if (ma_device_init(&g_local_play_ctx, &cfg, &dev) != MA_SUCCESS) {
 
                 OWALKIE_AUDIO_LOGE("local pcm loop ma_device_init failed");
 
@@ -1253,7 +1277,7 @@ void start_local_pcm_loop(const int16_t* samples, size_t count, int sample_rate_
 
         if (dev_open) {
 
-            std::lock_guard<std::mutex> audio_lock(g_mu);
+            std::lock_guard<std::mutex> audio_lock(g_local_play_mu);
 
             ma_device_stop(&dev);
 
@@ -1593,7 +1617,7 @@ void set_android_bt_voice_route(bool enabled) {
 
     }
 
-    if (g_playback_open) {
+    if (g_rx_jitter_open) {
 
         close_playback_locked();
 
@@ -1610,7 +1634,7 @@ void set_playback_aaudio_usage(int32_t usage) {
 #else
     std::lock_guard<std::mutex> lock(g_mu);
     g_playback_aaudio_usage.store(usage, std::memory_order_relaxed);
-    if (g_playback_open) {
+    if (g_rx_jitter_open) {
         close_playback_locked();
     }
 #endif
@@ -1623,7 +1647,7 @@ void set_playback_aaudio_content_type(int32_t content_type) {
 #else
     std::lock_guard<std::mutex> lock(g_mu);
     g_playback_aaudio_content_type.store(content_type, std::memory_order_relaxed);
-    if (g_playback_open) {
+    if (g_rx_jitter_open) {
         close_playback_locked();
     }
 #endif

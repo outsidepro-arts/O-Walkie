@@ -256,6 +256,45 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_connect(int64_t session_id, int32_t ti
 #endif
 }
 
+namespace {
+std::atomic<owalkie_session_id> g_async_connect_session{0};
+} // namespace
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_connect_async(int64_t session_id, int32_t timeout_ms) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    if (session_id <= 0) return OWALKIE_ERR_INVALID_ARG;
+    const auto sid = static_cast<owalkie_session_id>(session_id);
+    owalkie_session_id expected = 0;
+    if (!g_async_connect_session.compare_exchange_strong(expected, sid)) {
+        if (expected == sid) return OWALKIE_OK; // already in-flight for this session
+        return OWALKIE_ERR_BUSY; // another session is connecting
+    }
+    std::thread([sid, timeout_ms]() {
+        (void)owalkie_connect(sid, timeout_ms);
+        g_async_connect_session.store(0, std::memory_order_release);
+    }).detach();
+    return OWALKIE_OK;
+#else
+    (void)session_id;
+    (void)timeout_ms;
+    return OWALKIE_ERR_UNSUPPORTED;
+#endif
+}
+
+FFI_PLUGIN_EXPORT int32_t owalkie_flutter_connect_cancel(int64_t session_id) {
+#ifdef OWALKIE_CORE_HAS_SESSION
+    if (session_id <= 0) return OWALKIE_ERR_INVALID_ARG;
+    const auto sid = static_cast<owalkie_session_id>(session_id);
+    if (g_async_connect_session.load(std::memory_order_acquire) == sid) {
+        owalkie_connect_cancel(sid);
+    }
+    return OWALKIE_OK;
+#else
+    (void)session_id;
+    return OWALKIE_ERR_UNSUPPORTED;
+#endif
+}
+
 FFI_PLUGIN_EXPORT void owalkie_flutter_disconnect(int64_t session_id) {
 #ifdef OWALKIE_CORE_HAS_SESSION
     if (session_id <= 0) {
@@ -349,30 +388,31 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_ptt_up_with_roger(
     }
     owalkie_flutter_audio::stop_capture();
     if (session_id <= 0) {
+        g_ptt_active.store(true);
         return OWALKIE_ERR_INVALID_ARG;
     }
     const auto sid = static_cast<owalkie_session_id>(session_id);
     const bool has_roger = roger_uplink != nullptr && roger_uplink_count > 0;
-    std::thread local_thread;
     if (roger_local != nullptr && roger_local_count > 0 && local_sample_rate_hz > 0) {
-        local_thread = std::thread([roger_local, roger_local_count, local_sample_rate_hz]() {
-            owalkie_flutter_audio::play_local_pcm_blocking(
-                roger_local, roger_local_count, local_sample_rate_hz);
-        });
+        owalkie_flutter_audio::play_local_pcm_async(
+            roger_local, roger_local_count, local_sample_rate_hz);
     }
+    std::vector<int16_t> uplink_copy;
     if (has_roger) {
-        (void)owalkie_tx_submit(sid, OWALKIE_TX_VOICE_END, nullptr, 0, nullptr, 0);
-        (void)owalkie_tx_wait_idle(sid, 500);
-        stream_pcm_frames(
-            sid, roger_uplink, roger_uplink_count, g_codec_frame_samples.load());
-        (void)owalkie_tx_wait_idle(sid, 500);
+        uplink_copy.assign(roger_uplink, roger_uplink + roger_uplink_count);
     }
-    (void)owalkie_tx_submit(sid, OWALKIE_TX_CLOSE, nullptr, 0, nullptr, 0);
-    (void)owalkie_tx_wait_idle(sid, 500);
-    owalkie_set_power_profile(sid, OWALKIE_POWER_FOREGROUND);
-    if (local_thread.joinable()) {
-        local_thread.join();
-    }
+    std::thread([sid, uplink_copy = std::move(uplink_copy)]() {
+        if (!uplink_copy.empty()) {
+            (void)owalkie_tx_submit(sid, OWALKIE_TX_VOICE_END, nullptr, 0, nullptr, 0);
+            (void)owalkie_tx_wait_idle(sid, 500);
+            stream_pcm_frames(
+                sid, uplink_copy.data(), uplink_copy.size(), g_codec_frame_samples.load());
+            (void)owalkie_tx_wait_idle(sid, 500);
+        }
+        (void)owalkie_tx_submit(sid, OWALKIE_TX_CLOSE, nullptr, 0, nullptr, 0);
+        (void)owalkie_tx_wait_idle(sid, 500);
+        owalkie_set_power_profile(sid, OWALKIE_POWER_FOREGROUND);
+    }).detach();
     return OWALKIE_OK;
 #else
     (void)session_id;
@@ -400,30 +440,23 @@ FFI_PLUGIN_EXPORT int32_t owalkie_flutter_send_call(
         return OWALKIE_ERR_NOT_READY;
     }
     const auto sid = static_cast<owalkie_session_id>(session_id);
-    std::thread local_thread;
     if (local_pcm != nullptr && local_count > 0 && local_sample_rate_hz > 0) {
-        local_thread = std::thread([local_pcm, local_count, local_sample_rate_hz]() {
-            owalkie_flutter_audio::play_local_pcm_blocking(
-                local_pcm, local_count, local_sample_rate_hz);
-        });
+        owalkie_flutter_audio::play_local_pcm_async(
+            local_pcm, local_count, local_sample_rate_hz);
     }
-    owalkie_set_power_profile(sid, OWALKIE_POWER_ACTIVE_TX);
-    const owalkie_result open_res =
-        owalkie_tx_submit(sid, OWALKIE_TX_OPEN, nullptr, 0, nullptr, 0);
-    if (open_res != OWALKIE_OK) {
-        owalkie_set_power_profile(sid, OWALKIE_POWER_FOREGROUND);
-        if (local_thread.joinable()) {
-            local_thread.join();
+    std::vector<int16_t> uplink_copy(uplink_pcm, uplink_pcm + uplink_count);
+    std::thread([sid, uplink_copy = std::move(uplink_copy)]() {
+        owalkie_set_power_profile(sid, OWALKIE_POWER_ACTIVE_TX);
+        const owalkie_result open_res =
+            owalkie_tx_submit(sid, OWALKIE_TX_OPEN, nullptr, 0, nullptr, 0);
+        if (open_res == OWALKIE_OK) {
+            stream_pcm_frames(
+                sid, uplink_copy.data(), uplink_copy.size(), g_codec_frame_samples.load());
+            (void)owalkie_tx_submit(sid, OWALKIE_TX_CLOSE, nullptr, 0, nullptr, 0);
+            (void)owalkie_tx_wait_idle(sid, 500);
         }
-        return static_cast<int32_t>(open_res);
-    }
-    stream_pcm_frames(sid, uplink_pcm, uplink_count, g_codec_frame_samples.load());
-    (void)owalkie_tx_submit(sid, OWALKIE_TX_CLOSE, nullptr, 0, nullptr, 0);
-    (void)owalkie_tx_wait_idle(sid, 500);
-    owalkie_set_power_profile(sid, OWALKIE_POWER_FOREGROUND);
-    if (local_thread.joinable()) {
-        local_thread.join();
-    }
+        owalkie_set_power_profile(sid, OWALKIE_POWER_FOREGROUND);
+    }).detach();
     return OWALKIE_OK;
 #else
     (void)session_id;
@@ -490,6 +523,13 @@ FFI_PLUGIN_EXPORT void owalkie_flutter_play_local_pcm(
     size_t sample_count,
     int32_t sample_rate_hz) {
     owalkie_flutter_audio::play_local_pcm_blocking(samples, sample_count, sample_rate_hz);
+}
+
+FFI_PLUGIN_EXPORT void owalkie_flutter_play_local_pcm_async(
+    const int16_t* samples,
+    size_t sample_count,
+    int32_t sample_rate_hz) {
+    owalkie_flutter_audio::play_local_pcm_async(samples, sample_count, sample_rate_hz);
 }
 
 FFI_PLUGIN_EXPORT void owalkie_flutter_start_local_pcm_loop(
@@ -606,7 +646,7 @@ FFI_PLUGIN_EXPORT void owalkie_flutter_bind_process_network(int64_t network_hand
         ANDROID_LOG_INFO,
         "OwalkieFlutter",
         "bindProcessNetwork handle=%lld rc=%d",
-        network_handle,
+        static_cast<long long>(network_handle),
         rc);
 #else
     (void)network_handle;

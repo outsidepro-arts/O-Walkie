@@ -66,7 +66,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   bool _appInForeground = true;
   bool _disposed = false;
   bool _pttDownInProgress = false;
-  bool _phoneCallPauseInProgress = false;
   Completer<void>? _scanCancellation;
   Future<void>? _sessionTeardownFuture;
   Future<void>? _ensureSessionFuture;
@@ -447,9 +446,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void _pauseRelayForPhoneCall() {
-    if (_phoneCallPauseInProgress) {
-      return;
-    }
     if (!_phoneCallPauseStore.isEnabled()) {
       return;
     }
@@ -459,7 +455,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     if (!state.isConnected && !state.isConnecting) {
       return;
     }
-    _phoneCallPauseInProgress = true;
     state = state.copyWith(
       relayPausedForPhoneCall: true,
       isConnected: false,
@@ -475,17 +470,12 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     unawaited(_syncPttMediaSession());
     _session?.pauseRelay();
     unawaited(_syncSessionForeground());
-    _phoneCallPauseInProgress = false;
   }
 
   void _resumeRelayAfterPhoneCall() {
-    if (_phoneCallPauseInProgress) {
-      return;
-    }
     if (!state.relayPausedForPhoneCall) {
       return;
     }
-    _phoneCallPauseInProgress = true;
     state = state.copyWith(
       relayPausedForPhoneCall: false,
       connectionChip: AppStrings.connectionStateConnecting,
@@ -494,7 +484,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     unawaited(_syncPttMediaSession());
     unawaited(_syncSessionForeground());
     _session?.resumeRelay();
-    _phoneCallPauseInProgress = false;
   }
 
   Future<void> _loadProfiles() async {
@@ -700,6 +689,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       await service.start();
       _session = service;
       service.setRxVolumePercent(state.rxVolumePercent);
+      syncWarmMicrophoneCapture();
       await UiSignalPlayer.ensureLoaded();
       UiSignalPlayer.loadSoundBank(service);
       if (NativePlatform.isMobile) {
@@ -747,6 +737,12 @@ class HomeScreenController extends Notifier<HomeScreenState> {
           :final reconnecting,
           :final error,
         ):
+        if (connected == state.isConnected &&
+            connecting == state.isConnecting &&
+            reconnecting == state.isReconnecting &&
+            error == state.lastError) {
+          break;
+        }
         if (connected && !state.isConnected) {
           telemetry.connected();
         } else if (!connected && !connecting && state.isConnected) {
@@ -893,6 +889,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
         }
         syncWarmMicrophoneCapture();
       case SessionUplinkSignalMessage(:final percent):
+        if (percent == state.uplinkSignalPercent) break;
         state = state.copyWith(
           uplinkSignalPercent: percent,
           signalChip: state.isReceivingBroadcast

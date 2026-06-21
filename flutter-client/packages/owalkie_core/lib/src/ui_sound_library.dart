@@ -204,7 +204,7 @@ abstract final class UiSoundLibrary {
     if (samples.isEmpty) {
       return;
     }
-    LocalPcmPlayer.playBlocking(
+    LocalPcmPlayer.playAsync(
       Int16List.fromList(samples),
       sampleRate: playbackSampleRate,
     );
