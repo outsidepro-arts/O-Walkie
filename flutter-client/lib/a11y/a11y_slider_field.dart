@@ -21,7 +21,6 @@ class A11ySliderField extends StatefulWidget {
     required this.max,
     required this.divisions,
     required this.title,
-    required this.displayValue,
     required this.semanticsLabel,
     required this.semanticsValue,
     this.semanticStep = 5,
@@ -36,7 +35,6 @@ class A11ySliderField extends StatefulWidget {
   final double max;
   final int divisions;
   final String title;
-  final String displayValue;
   final String semanticsLabel;
   final String semanticsValue;
   final double semanticStep;
@@ -181,21 +179,9 @@ class _A11ySliderFieldState extends State<A11ySliderField> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ExcludeSemantics(
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  widget.title,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ),
-              Text(
-                widget.displayValue,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
-            ],
+          child: Text(
+            widget.title,
+            style: Theme.of(context).textTheme.bodyMedium,
           ),
         ),
         Semantics(

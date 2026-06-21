@@ -482,10 +482,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             divisions: 200,
             semanticStep: 5,
             title: AppStrings.rxVolumeLabel,
-            displayValue: AppStrings.rxVolumePercent(state.rxVolumePercent),
-            semanticsLabel:
-                '${AppStrings.rxVolumeLabel} ${AppStrings.rxVolumePercentAccessibility(state.rxVolumePercent)}',
-            semanticsValue: AppStrings.rxVolumePercent(state.rxVolumePercent),
+            semanticsLabel: AppStrings.rxVolumeLabel,
+            semanticsValue: AppStrings.rxVolumePercentAccessibility(state.rxVolumePercent),
             formatStepValue: (value) => AppStrings.rxVolumePercent(value.round()),
             onChanged: (value) => controller.setRxVolume(value.round()),
             onChangeEnd: (value) =>
