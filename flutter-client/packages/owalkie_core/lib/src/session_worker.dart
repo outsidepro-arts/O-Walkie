@@ -48,7 +48,6 @@ class _SessionWorker {
   int _lastRecoverAtMs = 0;
   int _lastConnectedAtMs = 0;
   bool _pendingNetworkRecover = false;
-  List<int> _pttPressPcm = const [];
   List<int> _pttReleasePcm = const [];
 
   static const _attemptsPerSeries = 4;
@@ -102,8 +101,7 @@ class _SessionWorker {
         unawaited(_sendCall(points, repeatCount));
       case SessionPlayLocalCommand(:final samples, :final sampleRate):
         _playLocalUi(samples, sampleRate);
-      case SessionSoundBankCommand(:final pttPress, :final pttRelease):
-        _pttPressPcm = pttPress;
+      case SessionSoundBankCommand(:final pttRelease):
         _pttReleasePcm = pttRelease;
       case SessionSetRxVolumeCommand(:final percent):
         _relay.setRxVolumePercent(percent);
@@ -141,7 +139,8 @@ class _SessionWorker {
   void _applyWarmCaptureFromFlags() {
     final shouldOffer = _warmMicRecorderEnabled &&
         _appInForeground &&
-        _state == SessionState.connected &&
+        (_state == SessionState.connected ||
+            _state == SessionState.connecting) &&
         !_localTxActive &&
         _sessionId != 0;
     if (shouldOffer) {
@@ -454,9 +453,6 @@ class _SessionWorker {
       active: _localTxActive,
       resultCode: rc,
     ));
-    if (_localTxActive && _pttPressPcm.isNotEmpty) {
-      _playLocalUi(_pttPressPcm, _localPlaybackRate);
-    }
   }
 
   List<SignalPoint> _toSignalPoints(

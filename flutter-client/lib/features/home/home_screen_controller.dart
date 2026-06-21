@@ -1393,6 +1393,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     _pttDownInProgress = true;
     state = state.copyWith(isReceivingBroadcast: false);
     telemetry.pttDown();
+    UiSignalPlayer.playPttPress(_session);
     if (NativePlatform.isMobile) {
       unawaited(_pttDownAsync());
       return;
