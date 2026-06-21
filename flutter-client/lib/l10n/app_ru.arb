@@ -144,6 +144,7 @@
   "rogerPointsLabel": "Сегменты",
   "rogerNewSegment": "Новый сегмент",
   "rogerEditSegment": "Редактировать сегмент",
+  "rogerDeleteSegment": "Удалить сегмент",
   "rogerEditSignal": "Редактировать сигнал",
   "rogerFrequencyHint": "Частота (Гц)",
   "rogerDurationHint": "Длительность (мс)",

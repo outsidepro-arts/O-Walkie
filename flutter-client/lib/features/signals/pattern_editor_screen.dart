@@ -278,9 +278,13 @@ class _PatternEditorScreenState extends ConsumerState<PatternEditorScreen> {
                         AppStrings.rogerPointDurationMs(_points[i].durationMs),
                       ),
                       trailing: IconButton(
-                        tooltip: AppStrings.rogerEditSegment,
-                        icon: const Icon(Icons.edit),
-                        onPressed: () => _addOrEditSegment(i),
+                        tooltip: AppStrings.rogerDeleteSegment,
+                        icon: const Icon(Icons.delete),
+                        onPressed: () {
+                          setState(() {
+                            _points.removeAt(i);
+                          });
+                        },
                       ),
                       onTap: () => _addOrEditSegment(i),
                     ),

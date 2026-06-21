@@ -438,6 +438,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get rogerEditSegment => 'Edit segment';
 
   @override
+  String get rogerDeleteSegment => 'Delete segment';
+
+  @override
   String get rogerEditSignal => 'Edit signal';
 
   @override

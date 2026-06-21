@@ -914,6 +914,12 @@ abstract class AppLocalizations {
   /// **'Edit segment'**
   String get rogerEditSegment;
 
+  /// No description provided for @rogerDeleteSegment.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete segment'**
+  String get rogerDeleteSegment;
+
   /// No description provided for @rogerEditSignal.
   ///
   /// In en, this message translates to:

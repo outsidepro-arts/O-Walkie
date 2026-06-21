@@ -444,6 +444,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get rogerEditSegment => 'Редактировать сегмент';
 
   @override
+  String get rogerDeleteSegment => 'Удалить сегмент';
+
+  @override
   String get rogerEditSignal => 'Редактировать сигнал';
 
   @override
