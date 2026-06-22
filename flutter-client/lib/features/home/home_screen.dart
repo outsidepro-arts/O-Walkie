@@ -300,35 +300,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             },
           ),
         const SizedBox(height: 24),
-        if (NativePlatform.isDesktop)
-          A11yDesktopNumericField(
-            value: ref.read(homeScreenControllerProvider).rxVolumePercent,
-            min: 0,
-            max: 200,
-            step: 5,
-            title: AppStrings.rxVolumeLabel,
-            suffix: '%',
-            maxDigits: 3,
-            onChanged: controller.setRxVolume,
-            onCommit: controller.finishRxVolumePreview,
-          )
-        else
-          A11ySliderField(
-            value: ref.read(homeScreenControllerProvider).rxVolumePercent.toDouble(),
-            min: 0,
-            max: 200,
-            divisions: 200,
-            semanticStep: 5,
-            title: AppStrings.rxVolumeLabel,
-            semanticsLabel: AppStrings.rxVolumeLabel,
-            semanticsValue: AppStrings.rxVolumePercentAccessibility(ref.read(homeScreenControllerProvider).rxVolumePercent),
-            formatStepValue: (value) => AppStrings.rxVolumePercent(value.round()),
-            onChanged: (value) => controller.setRxVolume(value.round()),
-            onChangeEnd: (value) =>
-                controller.finishRxVolumePreview(value.round()),
-            announceOnChangeEnd: (value) =>
-                AppStrings.rxVolumePercentAccessibility(value.round()),
-          ),
+        const _VolumeControlArea(),
         const SizedBox(height: 16),
       ],
     );
@@ -752,6 +724,48 @@ class _ExpandedFormActions extends ConsumerWidget {
           onPressed: canConnect ? onConnect : null,
         ),
       ],
+    );
+  }
+}
+
+class _VolumeControlArea extends ConsumerWidget {
+  const _VolumeControlArea();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final rxVolumePercent = ref.watch(
+      homeScreenControllerProvider.select((s) => s.rxVolumePercent),
+    );
+    final controller = ref.read(homeScreenControllerProvider.notifier);
+
+    if (NativePlatform.isDesktop) {
+      return A11yDesktopNumericField(
+        value: rxVolumePercent,
+        min: 0,
+        max: 200,
+        step: 5,
+        title: AppStrings.rxVolumeLabel,
+        suffix: '%',
+        maxDigits: 3,
+        onChanged: controller.setRxVolume,
+        onCommit: controller.finishRxVolumePreview,
+      );
+    }
+    return A11ySliderField(
+      value: rxVolumePercent.toDouble(),
+      min: 0,
+      max: 200,
+      divisions: 200,
+      semanticStep: 5,
+      title: AppStrings.rxVolumeLabel,
+      semanticsLabel: AppStrings.rxVolumeLabel,
+      semanticsValue: AppStrings.rxVolumePercentAccessibility(rxVolumePercent),
+      formatStepValue: (value) => AppStrings.rxVolumePercent(value.round()),
+      onChanged: (value) => controller.setRxVolume(value.round()),
+      onChangeEnd: (value) =>
+          controller.finishRxVolumePreview(value.round()),
+      announceOnChangeEnd: (value) =>
+          AppStrings.rxVolumePercentAccessibility(value.round()),
     );
   }
 }
