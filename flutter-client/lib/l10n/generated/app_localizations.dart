@@ -818,6 +818,168 @@ abstract class AppLocalizations {
   /// **'Screen orientation'**
   String get settingsOrientation;
 
+  /// No description provided for @settingsPermissions.
+  ///
+  /// In en, this message translates to:
+  /// **'Permissions'**
+  String get settingsPermissions;
+
+  /// No description provided for @settingsPermissionsAllGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'All permissions granted'**
+  String get settingsPermissionsAllGranted;
+
+  /// No description provided for @settingsPermissionsGrantedOf.
+  ///
+  /// In en, this message translates to:
+  /// **'{granted} of {total} granted'**
+  String settingsPermissionsGrantedOf(int granted, int total);
+
+  /// No description provided for @settingsPermissionsNoneGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'No permissions granted'**
+  String get settingsPermissionsNoneGranted;
+
+  /// No description provided for @permissionsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Permissions'**
+  String get permissionsTitle;
+
+  /// No description provided for @permissionsGrant.
+  ///
+  /// In en, this message translates to:
+  /// **'Grant'**
+  String get permissionsGrant;
+
+  /// No description provided for @permissionsGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'Granted'**
+  String get permissionsGranted;
+
+  /// No description provided for @permissionsNotGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'Not granted'**
+  String get permissionsNotGranted;
+
+  /// No description provided for @permissionsInstallTime.
+  ///
+  /// In en, this message translates to:
+  /// **'Granted at install'**
+  String get permissionsInstallTime;
+
+  /// No description provided for @permissionsSectionRuntime.
+  ///
+  /// In en, this message translates to:
+  /// **'Requires user action'**
+  String get permissionsSectionRuntime;
+
+  /// No description provided for @permissionsSectionInstallTime.
+  ///
+  /// In en, this message translates to:
+  /// **'No user action required'**
+  String get permissionsSectionInstallTime;
+
+  /// No description provided for @permissionsMicDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Required for push-to-talk microphone access'**
+  String get permissionsMicDescription;
+
+  /// No description provided for @permissionsPhoneStateDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Required to pause reception during phone calls'**
+  String get permissionsPhoneStateDescription;
+
+  /// No description provided for @permissionsNotifications.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get permissionsNotifications;
+
+  /// No description provided for @permissionsNotificationDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Required for foreground service notifications (Android 13+)'**
+  String get permissionsNotificationDescription;
+
+  /// No description provided for @permissionsBluetooth.
+  ///
+  /// In en, this message translates to:
+  /// **'Bluetooth'**
+  String get permissionsBluetooth;
+
+  /// No description provided for @permissionsBluetoothDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Required for Bluetooth headset connection (Android 12+)'**
+  String get permissionsBluetoothDescription;
+
+  /// No description provided for @permissionsInternet.
+  ///
+  /// In en, this message translates to:
+  /// **'Internet'**
+  String get permissionsInternet;
+
+  /// No description provided for @permissionsInternetDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Required for relay server communication'**
+  String get permissionsInternetDescription;
+
+  /// No description provided for @permissionsNetworkState.
+  ///
+  /// In en, this message translates to:
+  /// **'Network state'**
+  String get permissionsNetworkState;
+
+  /// No description provided for @permissionsNetworkStateDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Required for network connectivity monitoring'**
+  String get permissionsNetworkStateDescription;
+
+  /// No description provided for @permissionsWifiState.
+  ///
+  /// In en, this message translates to:
+  /// **'WiFi state'**
+  String get permissionsWifiState;
+
+  /// No description provided for @permissionsWifiStateDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Required for network type detection'**
+  String get permissionsWifiStateDescription;
+
+  /// No description provided for @permissionsAudioSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio settings'**
+  String get permissionsAudioSettings;
+
+  /// No description provided for @permissionsAudioSettingsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Required for audio routing changes'**
+  String get permissionsAudioSettingsDescription;
+
+  /// No description provided for @permissionsForegroundService.
+  ///
+  /// In en, this message translates to:
+  /// **'Foreground service'**
+  String get permissionsForegroundService;
+
+  /// No description provided for @permissionsForegroundServiceDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Required for background operation'**
+  String get permissionsForegroundServiceDescription;
+
   /// No description provided for @settingsAbout.
   ///
   /// In en, this message translates to:

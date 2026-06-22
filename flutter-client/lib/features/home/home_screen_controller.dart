@@ -245,6 +245,16 @@ class HomeScreenController extends Notifier<HomeScreenState> {
             ? state.lastError
             : (probe.version.isEmpty ? 'owalkie_core load failed' : null),
       );
+      if (NativePlatform.isAndroid) {
+        final permResults = await Future.wait([
+          NativePlatform.hasMicrophonePermission(),
+          NativePlatform.hasPhoneStatePermission(),
+          NativePlatform.hasNotificationPermission(),
+        ]);
+        if (permResults.any((r) => !r)) {
+          state = state.copyWith(permissionsNeedAttention: true);
+        }
+      }
       await UiSignalPlayer.ensureLoaded();
     } else {
       await _ensureSession();

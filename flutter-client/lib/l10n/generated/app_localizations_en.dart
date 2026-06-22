@@ -391,6 +391,98 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsOrientation => 'Screen orientation';
 
   @override
+  String get settingsPermissions => 'Permissions';
+
+  @override
+  String get settingsPermissionsAllGranted => 'All permissions granted';
+
+  @override
+  String settingsPermissionsGrantedOf(int granted, int total) {
+    return '$granted of $total granted';
+  }
+
+  @override
+  String get settingsPermissionsNoneGranted => 'No permissions granted';
+
+  @override
+  String get permissionsTitle => 'Permissions';
+
+  @override
+  String get permissionsGrant => 'Grant';
+
+  @override
+  String get permissionsGranted => 'Granted';
+
+  @override
+  String get permissionsNotGranted => 'Not granted';
+
+  @override
+  String get permissionsInstallTime => 'Granted at install';
+
+  @override
+  String get permissionsSectionRuntime => 'Requires user action';
+
+  @override
+  String get permissionsSectionInstallTime => 'No user action required';
+
+  @override
+  String get permissionsMicDescription =>
+      'Required for push-to-talk microphone access';
+
+  @override
+  String get permissionsPhoneStateDescription =>
+      'Required to pause reception during phone calls';
+
+  @override
+  String get permissionsNotifications => 'Notifications';
+
+  @override
+  String get permissionsNotificationDescription =>
+      'Required for foreground service notifications (Android 13+)';
+
+  @override
+  String get permissionsBluetooth => 'Bluetooth';
+
+  @override
+  String get permissionsBluetoothDescription =>
+      'Required for Bluetooth headset connection (Android 12+)';
+
+  @override
+  String get permissionsInternet => 'Internet';
+
+  @override
+  String get permissionsInternetDescription =>
+      'Required for relay server communication';
+
+  @override
+  String get permissionsNetworkState => 'Network state';
+
+  @override
+  String get permissionsNetworkStateDescription =>
+      'Required for network connectivity monitoring';
+
+  @override
+  String get permissionsWifiState => 'WiFi state';
+
+  @override
+  String get permissionsWifiStateDescription =>
+      'Required for network type detection';
+
+  @override
+  String get permissionsAudioSettings => 'Audio settings';
+
+  @override
+  String get permissionsAudioSettingsDescription =>
+      'Required for audio routing changes';
+
+  @override
+  String get permissionsForegroundService => 'Foreground service';
+
+  @override
+  String get permissionsForegroundServiceDescription =>
+      'Required for background operation';
+
+  @override
   String get settingsAbout => 'About';
 
   @override

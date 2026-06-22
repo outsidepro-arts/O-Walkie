@@ -31,6 +31,7 @@ class HomeScreenState {
     this.lastError,
     this.statusInfo,
     this.statusMessage,
+    this.permissionsNeedAttention = false,
   })  : connectionChip =
             connectionChip ?? AppStrings.connectionStateDisconnected,
         signalChip = signalChip ?? AppStrings.signalQualityDefault;
@@ -64,6 +65,7 @@ class HomeScreenState {
   final String? lastError;
   final String? statusInfo;
   final String? statusMessage;
+  final bool permissionsNeedAttention;
 
   /// Active form profile (draft, not necessarily persisted yet).
   ServerProfile get profile => draftProfile;
@@ -126,6 +128,7 @@ class HomeScreenState {
     String? lastError,
     String? statusInfo,
     String? statusMessage,
+    bool? permissionsNeedAttention,
     bool clearError = false,
     bool clearStatusInfo = false,
     bool clearStatusMessage = false,
@@ -167,6 +170,8 @@ class HomeScreenState {
       statusInfo: clearStatusInfo ? null : (statusInfo ?? this.statusInfo),
       statusMessage:
           clearStatusMessage ? null : (statusMessage ?? this.statusMessage),
+      permissionsNeedAttention:
+          permissionsNeedAttention ?? this.permissionsNeedAttention,
     );
   }
 }

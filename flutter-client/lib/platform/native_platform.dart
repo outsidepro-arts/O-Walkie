@@ -117,6 +117,39 @@ abstract final class NativePlatform {
     return requestNotificationPermission();
   }
 
+  static Future<bool> hasBluetoothConnectPermission() async {
+    if (!isAndroid) {
+      return true;
+    }
+    try {
+      final granted =
+          await _channel.invokeMethod<bool>('hasBluetoothConnectPermission');
+      return granted ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<bool> requestBluetoothConnectPermission() async {
+    if (!isAndroid) {
+      return true;
+    }
+    try {
+      final granted =
+          await _channel.invokeMethod<bool>('requestBluetoothConnectPermission');
+      return granted ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<bool> ensureBluetoothConnectPermission() async {
+    if (await hasBluetoothConnectPermission()) {
+      return true;
+    }
+    return requestBluetoothConnectPermission();
+  }
+
   static Future<void> prepareAudioSession({
     bool bluetoothHeadset = false,
     String? microphoneProfileId,

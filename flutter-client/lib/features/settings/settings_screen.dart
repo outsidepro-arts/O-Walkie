@@ -62,6 +62,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   int _outputDeviceIndex = -1;
   List<MicrophoneSourceOption> _microphoneSources = [];
   String _selectedMicrophoneSourceId = MicrophoneSourceStore.defaultId;
+  int _permissionsGranted = 0;
+  int _permissionsTotal = 0;
   bool _ready = false;
 
   ProviderSubscription<HomeScreenState>? _sessionListener;
@@ -193,6 +195,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (!mounted) {
       return;
     }
+
+    int permGranted = 0;
+    int permTotal = 0;
+    if (NativePlatform.isAndroid) {
+      final checks = [
+        NativePlatform.hasMicrophonePermission(),
+        NativePlatform.hasPhoneStatePermission(),
+        NativePlatform.hasNotificationPermission(),
+        NativePlatform.hasBluetoothConnectPermission(),
+      ];
+      final results = await Future.wait(checks);
+      permTotal = checks.length;
+      permGranted = results.where((r) => r).length;
+    }
+
     if (NativePlatform.isMobile) {
       final btStore = ref.read(bluetoothHeadsetStoreProvider);
       if (btStore.isEnabled() && outputProfileStore.selectedId() == AudioOutputProfileStore.defaultId) {
@@ -223,6 +240,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _outputDeviceIndex = audioSnapshot.outputDeviceIndex;
         _selectedOutputProfileId = audioSnapshot.selectedOutputProfileId;
       }
+      _permissionsGranted = permGranted;
+      _permissionsTotal = permTotal;
       _ready = true;
     });
     if (Haptics.showsDesktopSettings) {
@@ -536,6 +555,32 @@ Future<void> _setOutputProfile(String? id) async {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (NativePlatform.isAndroid)
+            SettingsSection(
+              title: AppStrings.settingsPermissions,
+              children: [
+                ListTile(
+                  leading: Icon(
+                    _permissionsGranted == _permissionsTotal
+                        ? Icons.check_circle
+                        : Icons.warning_amber,
+                    color: _permissionsGranted == _permissionsTotal
+                        ? Colors.green
+                        : Colors.orange,
+                  ),
+                  title: Text(
+                    _permissionsGranted == _permissionsTotal
+                        ? AppStrings.settingsPermissionsAllGranted
+                        : _permissionsTotal > 0
+                            ? AppStrings.settingsPermissionsGrantedOf(
+                                _permissionsGranted, _permissionsTotal)
+                            : AppStrings.settingsPermissionsNoneGranted,
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/settings/permissions'),
+                ),
+              ],
+            ),
           SettingsSection(
             title: AppStrings.settingsDisplay,
             children: [

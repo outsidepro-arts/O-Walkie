@@ -71,6 +71,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         }
       },
     );
+    ref.listenManual(
+      homeScreenControllerProvider.select((s) => s.permissionsNeedAttention),
+      (previous, next) {
+        if (next && mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              context.push('/settings/permissions');
+            }
+          });
+        }
+      },
+    );
   }
 
   void _loadControllersFromProfile(ServerProfile profile) {

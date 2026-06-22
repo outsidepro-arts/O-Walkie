@@ -396,6 +396,98 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsOrientation => 'Ориентация экрана';
 
   @override
+  String get settingsPermissions => 'Разрешения';
+
+  @override
+  String get settingsPermissionsAllGranted => 'Все разрешения предоставлены';
+
+  @override
+  String settingsPermissionsGrantedOf(int granted, int total) {
+    return 'Предоставлено $granted из $total';
+  }
+
+  @override
+  String get settingsPermissionsNoneGranted => 'Разрешения не предоставлены';
+
+  @override
+  String get permissionsTitle => 'Разрешения';
+
+  @override
+  String get permissionsGrant => 'Предоставить';
+
+  @override
+  String get permissionsGranted => 'Предоставлено';
+
+  @override
+  String get permissionsNotGranted => 'Не предоставлено';
+
+  @override
+  String get permissionsInstallTime => 'Предоставляется при установке';
+
+  @override
+  String get permissionsSectionRuntime => 'Требуют предоставления';
+
+  @override
+  String get permissionsSectionInstallTime => 'Не требуют действий';
+
+  @override
+  String get permissionsMicDescription =>
+      'Необходим доступ к микрофону для передачи голоса';
+
+  @override
+  String get permissionsPhoneStateDescription =>
+      'Необходимо для паузы приёма во время телефонного звонка';
+
+  @override
+  String get permissionsNotifications => 'Уведомления';
+
+  @override
+  String get permissionsNotificationDescription =>
+      'Необходимо для уведомлений фонового режима (Android 13+)';
+
+  @override
+  String get permissionsBluetooth => 'Bluetooth';
+
+  @override
+  String get permissionsBluetoothDescription =>
+      'Необходимо для подключения Bluetooth-гарнитуры (Android 12+)';
+
+  @override
+  String get permissionsInternet => 'Интернет';
+
+  @override
+  String get permissionsInternetDescription =>
+      'Необходимо для связи с сервером-ретранслятором';
+
+  @override
+  String get permissionsNetworkState => 'Состояние сети';
+
+  @override
+  String get permissionsNetworkStateDescription =>
+      'Необходимо для мониторинга сетевого подключения';
+
+  @override
+  String get permissionsWifiState => 'Состояние WiFi';
+
+  @override
+  String get permissionsWifiStateDescription =>
+      'Необходимо для определения типа сети';
+
+  @override
+  String get permissionsAudioSettings => 'Аудио-настройки';
+
+  @override
+  String get permissionsAudioSettingsDescription =>
+      'Необходимо для изменения маршрутизации звука';
+
+  @override
+  String get permissionsForegroundService => 'Фоновый сервис';
+
+  @override
+  String get permissionsForegroundServiceDescription =>
+      'Необходимо для работы в фоновом режиме';
+
+  @override
   String get settingsAbout => 'О приложении';
 
   @override

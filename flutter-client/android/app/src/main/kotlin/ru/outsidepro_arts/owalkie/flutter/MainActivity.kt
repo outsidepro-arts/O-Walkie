@@ -20,6 +20,7 @@ class MainActivity : FlutterActivity() {
     private var pendingMicResult: MethodChannel.Result? = null
     private var pendingNotificationResult: MethodChannel.Result? = null
     private var pendingPhoneStateResult: MethodChannel.Result? = null
+    private var pendingBluetoothConnectResult: MethodChannel.Result? = null
     private var capturingHardwarePttKey = false
     private val hardwareKeyStore by lazy { PttHardwareKeyStore(this) }
     private var phoneCallObserver: PhoneCallObserver? = null
@@ -48,6 +49,8 @@ class MainActivity : FlutterActivity() {
                 "requestNotificationPermission" -> requestNotificationPermission(result)
                 "hasPhoneStatePermission" -> result.success(hasPhoneStatePermission())
                 "requestPhoneStatePermission" -> requestPhoneStatePermission(result)
+                "hasBluetoothConnectPermission" -> result.success(hasBluetoothConnectPermission())
+                "requestBluetoothConnectPermission" -> requestBluetoothConnectPermission(result)
                 "startPhoneCallObserver" -> {
                     startPhoneCallObserver()
                     result.success(true)
@@ -211,6 +214,12 @@ class MainActivity : FlutterActivity() {
                 pendingPhoneStateResult?.success(granted)
                 pendingPhoneStateResult = null
             }
+            BLUETOOTH_CONNECT_REQUEST -> {
+                val granted =
+                    grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+                pendingBluetoothConnectResult?.success(granted)
+                pendingBluetoothConnectResult = null
+            }
         }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
@@ -339,6 +348,37 @@ class MainActivity : FlutterActivity() {
         )
     }
 
+    private fun hasBluetoothConnectPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true
+        }
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.BLUETOOTH_CONNECT,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestBluetoothConnectPermission(result: MethodChannel.Result) {
+        if (hasBluetoothConnectPermission()) {
+            result.success(true)
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            result.success(true)
+            return
+        }
+        if (pendingBluetoothConnectResult != null) {
+            result.error("busy", "Bluetooth Connect permission request already in progress", null)
+            return
+        }
+        pendingBluetoothConnectResult = result
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
+            BLUETOOTH_CONNECT_REQUEST,
+        )
+    }
+
     private fun startPhoneCallObserver() {
         if (phoneCallObserver == null) {
             phoneCallObserver = PhoneCallObserver(this)
@@ -375,5 +415,6 @@ class MainActivity : FlutterActivity() {
         private const val MIC_REQUEST = 1001
         private const val NOTIFICATION_REQUEST = 1002
         private const val PHONE_STATE_REQUEST = 1003
+        private const val BLUETOOTH_CONNECT_REQUEST = 1004
     }
 }
