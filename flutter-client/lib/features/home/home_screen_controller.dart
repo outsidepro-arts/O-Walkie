@@ -175,6 +175,14 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       unawaited(externalSwitchProfile(-1));
       return;
     }
+    if (event == NativePlatform.phoneCallBeginEvent) {
+      _pauseRelayForPhoneCall();
+      return;
+    }
+    if (event == NativePlatform.phoneCallEndEvent) {
+      _resumeRelayAfterPhoneCall();
+      return;
+    }
     if (event.startsWith('${NativePlatform.networkValidatedEvent}:')) {
       final handleText = event.substring(NativePlatform.networkValidatedEvent.length + 1);
       final handle = int.tryParse(handleText) ?? 0;
@@ -243,11 +251,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       if (Platform.isWindows) {
         await ref.read(desktopShellProvider).applyStoredBinding();
       }
-      _audioInterruption ??= AudioInterruptionManager(
-        onInterruptBegin: _pauseRelayForPhoneCall,
-        onInterruptEnd: _resumeRelayAfterPhoneCall,
-      );
-      await _audioInterruption!.start();
+      await _startPhoneCallDetector();
     }
     if (Haptics.showsDesktopSettings) {
       Haptics.applyFromStore(ref.read(vibrationImitationStoreProvider));
@@ -366,11 +370,40 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   Future<void> _startMobileAudioStack() async {
-    _audioInterruption ??= AudioInterruptionManager(
-      onInterruptBegin: _pauseRelayForPhoneCall,
-      onInterruptEnd: _resumeRelayAfterPhoneCall,
-    );
-    await _audioInterruption!.start();
+    await _startPhoneCallDetector();
+  }
+
+  Future<void> _startPhoneCallDetector() async {
+    if (!NativePlatform.isMobile) return;
+    // Stop both detectors first.
+    await _audioInterruption?.stop();
+    _audioInterruption = null;
+    await NativePlatform.stopPhoneCallObserver();
+    if (!_phoneCallPauseStore.isEnabled()) return;
+    final mode = _phoneCallPauseStore.getMode();
+    switch (mode) {
+      case PhoneCallPauseMode.telephony:
+        await NativePlatform.ensurePhoneStatePermission();
+        await NativePlatform.startPhoneCallObserver();
+      case PhoneCallPauseMode.audioFocus:
+        _audioInterruption = AudioInterruptionManager(
+          onInterruptBegin: _pauseRelayForPhoneCall,
+          onInterruptEnd: _resumeRelayAfterPhoneCall,
+        );
+        await _audioInterruption!.start();
+    }
+  }
+
+  /// Called from settings when the user toggles the phone call pause switch.
+  Future<void> switchPhoneCallEnabled(bool enabled) async {
+    await _phoneCallPauseStore.setEnabled(enabled);
+    await _startPhoneCallDetector();
+  }
+
+  /// Called from settings when the user changes the phone call detection mode.
+  Future<void> switchPhoneCallMode(PhoneCallPauseMode mode) async {
+    await _phoneCallPauseStore.setMode(mode);
+    await _startPhoneCallDetector();
   }
 
   Future<void> _teardownIdleSession() async {
@@ -421,6 +454,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
       await NativePlatform.releaseAudioSession();
       await _audioInterruption?.stop();
       _audioInterruption = null;
+      await NativePlatform.stopPhoneCallObserver();
     }
     await _sessionSub?.cancel();
     _sessionSub = null;
@@ -448,9 +482,6 @@ class HomeScreenController extends Notifier<HomeScreenState> {
   }
 
   void _pauseRelayForPhoneCall() {
-    if (!_phoneCallPauseStore.isEnabled()) {
-      return;
-    }
     if (state.relayPausedForPhoneCall) {
       return;
     }
@@ -1464,6 +1495,7 @@ class HomeScreenController extends Notifier<HomeScreenState> {
     stopScanning(announce: false);
     unawaited(_audioInterruption?.stop());
     _audioInterruption = null;
+    unawaited(NativePlatform.stopPhoneCallObserver());
     if (_sessionForegroundActive) {
       _sessionForegroundActive = false;
       unawaited(NativePlatform.stopSessionForeground());

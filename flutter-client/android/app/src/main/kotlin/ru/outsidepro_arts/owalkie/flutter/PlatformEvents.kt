@@ -20,6 +20,8 @@ object PlatformEvents {
     const val EVENT_EXTERNAL_DISCONNECT = "external_disconnect"
     const val EVENT_EXTERNAL_NEXT_CONNECTION = "external_next_connection"
     const val EVENT_EXTERNAL_PREVIOUS_CONNECTION = "external_previous_connection"
+    const val EVENT_PHONE_CALL_BEGIN = "phone_call_begin"
+    const val EVENT_PHONE_CALL_END = "phone_call_end"
 
     private val mainHandler = Handler(Looper.getMainLooper())
 

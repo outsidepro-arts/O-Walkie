@@ -584,6 +584,36 @@ abstract class AppLocalizations {
   /// **'Pause relay during phone call'**
   String get settingsPauseDuringPhoneCall;
 
+  /// No description provided for @settingsPhoneCallDetectionMethod.
+  ///
+  /// In en, this message translates to:
+  /// **'Detection method'**
+  String get settingsPhoneCallDetectionMethod;
+
+  /// No description provided for @phoneCallModeTelephony.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone status'**
+  String get phoneCallModeTelephony;
+
+  /// No description provided for @phoneCallModeTelephonyDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Stops receiving signal only during a phone call. Phone permission required'**
+  String get phoneCallModeTelephonyDescription;
+
+  /// No description provided for @phoneCallModeAudioFocus.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio focus'**
+  String get phoneCallModeAudioFocus;
+
+  /// No description provided for @phoneCallModeAudioFocusDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Stops receiving signal when another app requests audio focus'**
+  String get phoneCallModeAudioFocusDescription;
+
   /// No description provided for @settingsUseBluetoothHeadset.
   ///
   /// In en, this message translates to:

@@ -48,7 +48,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   List<SignalPattern> _callingPatterns = [];
   String? _selectedRogerId;
   String? _selectedCallingId;
-  bool _pauseDuringPhoneCall = true;
+  bool _pauseDuringPhoneCall = false;
+  PhoneCallPauseMode _phoneCallMode = PhoneCallPauseMode.telephony;
   String _selectedOutputProfileId = AudioOutputProfileStore.defaultId;
   bool _warmMicRecorder = false;
   bool _mediaButtonPtt = true;
@@ -205,6 +206,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _callingPatterns = callingStore.getAllPatterns();
       _selectedRogerId = rogerStore.getSelectedPattern().id;
       _selectedCallingId = callingStore.getSelectedPattern().id;
+      _phoneCallMode = phoneCallPause.getMode();
       _pauseDuringPhoneCall = phoneCallPause.isEnabled();
       _selectedOutputProfileId = outputProfileStore.selectedId();
       _warmMicRecorder = warmMicRecorder.isEnabled();
@@ -292,11 +294,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _setPauseDuringPhoneCall(bool? enabled) async {
-    if (enabled == null) {
-      return;
-    }
-    await ref.read(phoneCallPauseStoreProvider).setEnabled(enabled);
+    if (enabled == null) return;
     setState(() => _pauseDuringPhoneCall = enabled);
+    await ref.read(phoneCallPauseStoreProvider).setEnabled(enabled);
+    await ref.read(homeScreenControllerProvider.notifier).switchPhoneCallEnabled(enabled);
+  }
+
+  Future<void> _setPhoneCallMode(Set<PhoneCallPauseMode> modes) async {
+    final mode = modes.firstOrNull;
+    if (mode == null) return;
+    setState(() => _phoneCallMode = mode);
+    await ref.read(phoneCallPauseStoreProvider).setMode(mode);
+    await ref.read(homeScreenControllerProvider.notifier).switchPhoneCallMode(mode);
+  }
+
+  String get _phoneCallModeDescription {
+    switch (_phoneCallMode) {
+      case PhoneCallPauseMode.telephony:
+        return AppStrings.phoneCallModeTelephonyDescription;
+      case PhoneCallPauseMode.audioFocus:
+        return AppStrings.phoneCallModeAudioFocusDescription;
+    }
   }
 
   Future<void> _setWarmMicRecorder(bool? enabled) async {
@@ -602,6 +620,32 @@ Future<void> _setOutputProfile(String? id) async {
                 title: Text(AppStrings.settingsPauseDuringPhoneCall),
                 value: _pauseDuringPhoneCall,
                 onChanged: _setPauseDuringPhoneCall,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                AppStrings.settingsPhoneCallDetectionMethod,
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
+              SegmentedButton<PhoneCallPauseMode>(
+                segments: [
+                  if (NativePlatform.isAndroid)
+                    ButtonSegment(
+                      value: PhoneCallPauseMode.telephony,
+                      label: Text(AppStrings.phoneCallModeTelephony),
+                    ),
+                  ButtonSegment(
+                    value: PhoneCallPauseMode.audioFocus,
+                    label: Text(AppStrings.phoneCallModeAudioFocus),
+                  ),
+                ],
+                selected: {_phoneCallMode},
+                onSelectionChanged: _pauseDuringPhoneCall ? _setPhoneCallMode : null,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _pauseDuringPhoneCall ? _phoneCallModeDescription : '',
+                style: Theme.of(context).textTheme.bodySmall,
               ),
               if (NativePlatform.isMobile)
                 SwitchListTile(

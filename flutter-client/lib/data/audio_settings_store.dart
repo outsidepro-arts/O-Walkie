@@ -20,18 +20,52 @@ final externalControlStoreProvider = Provider<ExternalControlStore>((ref) {
   return ExternalControlStore();
 });
 
-/// Pause relay transport during phone calls (Kotlin [PhoneCallRelayPauseStore]).
+/// Detection mechanism for pausing relay during phone calls.
+enum PhoneCallPauseMode {
+  /// Native telephony listener ([TelephonyCallback]/[PhoneStateListener]).
+  /// More reliable; requires [android.permission.READ_PHONE_STATE].
+  telephony,
+
+  /// Audio focus interruption via `audio_session` plugin.
+  /// Simpler, no extra permissions; may miss calls when app holds no audio focus.
+  audioFocus,
+}
+
+/// Pause relay transport during phone calls.
+///
+/// Two-level control:
+/// - [isEnabled] — whether the feature is on (SwitchListTile toggle).
+/// - [getMode] — which detection method to use (telephony / audioFocus).
 class PhoneCallPauseStore {
   PhoneCallPauseStore(this._prefs);
 
-  static const _key = 'pause_during_cellular_call';
+  static const _enabledKey = 'phone_call_pause_enabled';
+  static const _modeKey = 'phone_call_pause_mode';
 
   final SharedPreferences _prefs;
 
-  bool isEnabled() => _prefs.getBool(_key) ?? true;
+  bool isEnabled() => _prefs.getBool(_enabledKey) ?? false;
 
   Future<void> setEnabled(bool enabled) async {
-    await _prefs.setBool(_key, enabled);
+    await _prefs.setBool(_enabledKey, enabled);
+  }
+
+  PhoneCallPauseMode getMode() {
+    final raw = _prefs.getString(_modeKey);
+    if (raw != null) {
+      return PhoneCallPauseMode.values.firstWhere(
+        (e) => e.name == raw,
+        orElse: _defaultMode,
+      );
+    }
+    return _defaultMode();
+  }
+
+  PhoneCallPauseMode _defaultMode() =>
+      NativePlatform.isAndroid ? PhoneCallPauseMode.telephony : PhoneCallPauseMode.audioFocus;
+
+  Future<void> setMode(PhoneCallPauseMode mode) async {
+    await _prefs.setString(_modeKey, mode.name);
   }
 }
 

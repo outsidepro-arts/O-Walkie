@@ -268,6 +268,23 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsPauseDuringPhoneCall => 'Pause relay during phone call';
 
   @override
+  String get settingsPhoneCallDetectionMethod => 'Detection method';
+
+  @override
+  String get phoneCallModeTelephony => 'Phone status';
+
+  @override
+  String get phoneCallModeTelephonyDescription =>
+      'Stops receiving signal only during a phone call. Phone permission required';
+
+  @override
+  String get phoneCallModeAudioFocus => 'Audio focus';
+
+  @override
+  String get phoneCallModeAudioFocusDescription =>
+      'Stops receiving signal when another app requests audio focus';
+
+  @override
   String get settingsUseBluetoothHeadset => 'Use Bluetooth headset';
 
   @override

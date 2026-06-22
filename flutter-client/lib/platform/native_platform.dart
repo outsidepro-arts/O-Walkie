@@ -27,6 +27,8 @@ abstract final class NativePlatform {
   static const externalDisconnectEvent = 'external_disconnect';
   static const externalNextConnectionEvent = 'external_next_connection';
   static const externalPreviousConnectionEvent = 'external_previous_connection';
+  static const phoneCallBeginEvent = 'phone_call_begin';
+  static const phoneCallEndEvent = 'phone_call_end';
 
   static const signalWifi = 0;
   static const signalCell = 1;
@@ -386,6 +388,60 @@ abstract final class NativePlatform {
       await _channel.invokeMethod<void>('setExternalControlEnabled', {
         'enabled': enabled,
       });
+    } catch (e) {
+      // Silently ignore platform errors
+    }
+  }
+
+  static Future<bool> hasPhoneStatePermission() async {
+    if (!isAndroid) {
+      return false;
+    }
+    try {
+      final granted = await _channel.invokeMethod<bool>('hasPhoneStatePermission');
+      return granted ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<bool> requestPhoneStatePermission() async {
+    if (!isAndroid) {
+      return false;
+    }
+    try {
+      final granted =
+          await _channel.invokeMethod<bool>('requestPhoneStatePermission');
+      return granted ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<bool> ensurePhoneStatePermission() async {
+    if (await hasPhoneStatePermission()) {
+      return true;
+    }
+    return requestPhoneStatePermission();
+  }
+
+  static Future<void> startPhoneCallObserver() async {
+    if (!isAndroid) {
+      return;
+    }
+    try {
+      await _channel.invokeMethod<void>('startPhoneCallObserver');
+    } catch (e) {
+      // Silently ignore platform errors
+    }
+  }
+
+  static Future<void> stopPhoneCallObserver() async {
+    if (!isAndroid) {
+      return;
+    }
+    try {
+      await _channel.invokeMethod<void>('stopPhoneCallObserver');
     } catch (e) {
       // Silently ignore platform errors
     }

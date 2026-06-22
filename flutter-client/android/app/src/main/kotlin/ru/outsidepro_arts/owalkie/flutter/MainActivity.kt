@@ -19,8 +19,10 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var pendingMicResult: MethodChannel.Result? = null
     private var pendingNotificationResult: MethodChannel.Result? = null
+    private var pendingPhoneStateResult: MethodChannel.Result? = null
     private var capturingHardwarePttKey = false
     private val hardwareKeyStore by lazy { PttHardwareKeyStore(this) }
+    private var phoneCallObserver: PhoneCallObserver? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -44,6 +46,16 @@ class MainActivity : FlutterActivity() {
                 "requestMicrophonePermission" -> requestMicPermission(result)
                 "hasNotificationPermission" -> result.success(hasNotificationPermission())
                 "requestNotificationPermission" -> requestNotificationPermission(result)
+                "hasPhoneStatePermission" -> result.success(hasPhoneStatePermission())
+                "requestPhoneStatePermission" -> requestPhoneStatePermission(result)
+                "startPhoneCallObserver" -> {
+                    startPhoneCallObserver()
+                    result.success(true)
+                }
+                "stopPhoneCallObserver" -> {
+                    stopPhoneCallObserver()
+                    result.success(true)
+                }
                 "prepareAudioSession" -> {
                     val bluetooth = call.argument<Boolean>("bluetoothHeadset") ?: false
                     AudioRouteHelper.applyVoiceAudioProfile(this, bluetooth)
@@ -193,6 +205,12 @@ class MainActivity : FlutterActivity() {
                 pendingNotificationResult?.success(granted)
                 pendingNotificationResult = null
             }
+            PHONE_STATE_REQUEST -> {
+                val granted =
+                    grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+                pendingPhoneStateResult?.success(granted)
+                pendingPhoneStateResult = null
+            }
         }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
@@ -297,6 +315,41 @@ class MainActivity : FlutterActivity() {
         )
     }
 
+    private fun hasPhoneStatePermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_PHONE_STATE,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestPhoneStatePermission(result: MethodChannel.Result) {
+        if (hasPhoneStatePermission()) {
+            result.success(true)
+            return
+        }
+        if (pendingPhoneStateResult != null) {
+            result.error("busy", "Phone state permission request already in progress", null)
+            return
+        }
+        pendingPhoneStateResult = result
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.READ_PHONE_STATE),
+            PHONE_STATE_REQUEST,
+        )
+    }
+
+    private fun startPhoneCallObserver() {
+        if (phoneCallObserver == null) {
+            phoneCallObserver = PhoneCallObserver(this)
+        }
+        phoneCallObserver?.register()
+    }
+
+    private fun stopPhoneCallObserver() {
+        phoneCallObserver?.unregister()
+    }
+
     private fun openBatteryOptimizationSettings() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
         val pm = getSystemService(POWER_SERVICE) as? PowerManager
@@ -321,5 +374,6 @@ class MainActivity : FlutterActivity() {
         private const val EVENTS_CHANNEL = "ru.outsidepro_arts.owalkie.flutter/platform_events"
         private const val MIC_REQUEST = 1001
         private const val NOTIFICATION_REQUEST = 1002
+        private const val PHONE_STATE_REQUEST = 1003
     }
 }

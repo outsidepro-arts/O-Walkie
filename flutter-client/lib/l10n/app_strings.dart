@@ -124,6 +124,11 @@ abstract final class AppStrings {
   static String get settingsAudioDeviceDefault => _l.settingsAudioDeviceDefault;
   static String get settingsPauseDuringPhoneCall =>
       _l.settingsPauseDuringPhoneCall;
+  static String get settingsPhoneCallDetectionMethod => _l.settingsPhoneCallDetectionMethod;
+  static String get phoneCallModeTelephony => _l.phoneCallModeTelephony;
+  static String get phoneCallModeTelephonyDescription => _l.phoneCallModeTelephonyDescription;
+  static String get phoneCallModeAudioFocus => _l.phoneCallModeAudioFocus;
+  static String get phoneCallModeAudioFocusDescription => _l.phoneCallModeAudioFocusDescription;
   static String get settingsUseBluetoothHeadset => _l.settingsUseBluetoothHeadset;
   static String get settingsAudioOutputProfile => _l.settingsAudioOutputProfile;
   static String audioOutputProfileTitle(String id, {required String fallback}) {

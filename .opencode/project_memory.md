@@ -1,6 +1,6 @@
 # O-Walkie — Project Memory
 
-Last updated: 2026-06-21
+Last updated: 2026-06-22
 
 ## Branches
 
@@ -106,7 +106,7 @@ Shared C/C++ library used by all three clients. Public header: `include/owalkie_
 - **Phase 7** (done): iOS scaffold (CocoaPods, background audio, deep links). Full session deferred (vcpkg iOS triplets).
 - **Phase 8** (done): Windows tray (`tray_manager`), global PTT hotkey (`WH_KEYBOARD_LL`), desktop settings.
 - **Phase 9** (done): Release polish, git-tag versioning, CI (`flutter analyze` + `flutter test`), a11y tests.
-- **Post-phase work** (uncommitted): Home a11y chips, Kotlin-style action confirmations, profile reorder buttons, vibration imitation settings, desktop vibration imitation, audio device selection improvements, Android TX stutter fix, Roger/Call signal preview, messenger-style PTT latch (swipe up), hot-swap server profile while connected, UI sound effects parity, tray context menu keyboard focus fix (`bringAppToFront: true`).
+- **Post-phase work** (uncommitted): Home a11y chips, Kotlin-style action confirmations, profile reorder buttons, vibration imitation settings, desktop vibration imitation, audio device selection improvements, Android TX stutter fix, Roger/Call signal preview, messenger-style PTT latch (swipe up), hot-swap server profile while connected, UI sound effects parity, tray context menu keyboard focus fix (`bringAppToFront: true`), main-thread selective widget rebuilds (Choreographer fix), **phone call detection tri-mode** (off/telephony/audioFocus via `PhoneCallObserver.kt` + `SegmentedButton` settings UI).
 - **PTT policy**: Hold = push-to-talk; slide up while holding = latch; tap when latched = stop. No user "toggle-only" setting.
 - **Stack**: `flutter_riverpod`, `go_router`, `shared_preferences`, `vibration`, `wakelock_plus`, `audio_session`, `app_links`, `share_plus`, `tray_manager`, `window_manager`.
 - **Plugin**: `packages/owalkie_core` — FFI to owalkie-core C API; Dart background isolate (`session_worker.dart`) owns all FFI calls; UI talks via `SessionService` + `SendPort`.
@@ -185,6 +185,7 @@ Shared C/C++ library used by all three clients. Public header: `include/owalkie_
 3. Tune relay noise/tail defaults from field feedback.
 4. Maintain protocol compatibility as new relay audio settings are added.
 5. Plan Flutter client merge to master when stable.
+6. **Flutter client main-thread optimization**: remaining optimizations 2–6 from the plan below (UI sound synthesis, mic permission cache, async audio profile, WAV decode).
 
 ## Flutter Client: Non-blocking Connect + State Machine (2026-06-17, with Settle Window)
 
@@ -602,4 +603,64 @@ if (!sessionKeepAlive):
 - **Перестройки виджетов**: сигнал-чипы не триггерят перестройку PTT-области и формы
 - **Вибро-имитация**: 0ms overhead спавна изолята (было 100-300ms)
 
-*Last updated: 2026-06-21*
+*Last updated: 2026-06-22*
+
+## Flutter Client: Main Thread Optimization Plan
+
+**Проблема**: `Choreographer: Skipped 298 frames!` при запуске на Android. Главный поток блокировался полными перестройками виджетов при каждом `state.copyWith()` и PCM-синтезом UI-звуков.
+
+### Оптимизация 1: Селективные виджеты — ✅ DONE (2026-06-22)
+
+Монолитный `ref.watch(homeScreenControllerProvider)` без `.select()` в `home_screen.dart:176` заменён на 6 селективных `ConsumerWidget`-подписчиков:
+
+| Виджет | Что подписывает | Что перестраивает |
+|---|---|---|
+| `HomeScreen.build()` | `connectionDetailsExpanded` | Только layout switch |
+| `_StatusChips` | `connectionDisplayChip`, `signalChip` | Только чипы статуса |
+| `_ErrorStatusArea` | `statusInfo`, `lastError` | Только ошибки (shrink если null) |
+| `_ServerProfileArea` | 9 полей (profiles, selectedIndex, expanded, scanActive, isConnected, isConnecting, sessionSupported, canNavigate, hasPrevious, hasNext) | Dropdown + кнопки навигации |
+| `_ExpandedFormActions` | 6 полей (profiles, canMoveUp/Down, isConnected, isConnecting, sessionSupported) | Expanded form кнопки |
+| `_FooterVersion` | `coreVersion`, `protocolVersion` | Только версия |
+
+**Результат**: Choreographer предупреждения исчезли, интерфейс стал заметно отзывчивее. a11y-семантика полностью сохранена (8/8 assertions проходят).
+
+**Изменённые файлы**:
+- `flutter-client/lib/features/home/home_screen.dart` — рефакторинг виджетов, удаление неиспользуемых imports, deprecated `DropdownButtonFormField.value` → `initialValue`
+
+### Оптимизация 2: Асинхронный синтез UI-звуков — PENDING
+
+**Проблема**: `ui_sound_library.dart:213-242` — `_synthesize()` делает per-sample `math.sin()` + envelope на главном потоке. Для тона 200мс при 44100Hz = ~8800 итераций. `_playMixed()` тоже считает на главном потоке.
+
+**Решение**:
+- Предсинтез статических тонов (connected, error, connectStart, disconnect) при старте в `_loadAll()` — ~5-10мс один раз
+- Динамические звуки (connect/disconnect action = mixing wav+tones, signal pattern preview) через `compute()` — background isolate
+
+**a11y-влияние**: Нет (звуки не в семантическом дереве).
+
+### Оптимизация 3: Кэширование разрешений микрофона — PENDING
+
+**Проблема**: `home_screen_controller.dart:1405` — `NativePlatform.ensureMicrophonePermission()` вызывается на каждый PTT press через platform channel.
+
+**Решение**: Кэш `bool? _micPermissionCache` в контроллере. Сброс при `AppLifecycleState.resumed`.
+
+**a11y-влияние**: Нет (platform channel, не UI).
+
+### Оптимизация 4: Async audio profile — PENDING
+
+**Проблема**: `_applyVoiceAudioRoute()` вызывает цепочку синхронных FFI + platform channel на главном потоке: `listCaptureDevices()`, `listPlaybackDevices()`, `applySelection()`, 4× `setAaudio*()`.
+
+**Решение**: Перенести FFI вызовы в `Isolate.run()` для desktop path (Android/iOS path уже async через platform channel).
+
+**a11y-влияние**: Нет (FFI, не UI).
+
+### Оптимизация 5: WAV decode via compute — PENDING
+
+**Проблема**: `ui_sound_library.dart:40-51` — `_loadResampled()` делает decode + linear resample на главном потоке при `ensureLoaded()`.
+
+**Решение**: `compute(_decodeAndResample, bytes)` для каждой WAV-загрузки. 4 файла загружаются параллельно через `Future.wait()`.
+
+**a11y-влияние**: Нет (asset loading, не UI).
+
+### Оптимизация 6: TX countdown — DONE (автоматически после Оптимизации 1)
+
+`_PttAreaConsumer` уже использует `.select()` на `txCountdownSec`. Timer-тик перестраивает только PTT-область, а не всё дерево.

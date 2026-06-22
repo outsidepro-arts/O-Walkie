@@ -270,6 +270,23 @@ class AppLocalizationsRu extends AppLocalizations {
       'Приостанавливать приём при активном звонке';
 
   @override
+  String get settingsPhoneCallDetectionMethod => 'Метод определения';
+
+  @override
+  String get phoneCallModeTelephony => 'Статус телефонного звонка';
+
+  @override
+  String get phoneCallModeTelephonyDescription =>
+      'Перестает принимать сигнал, только когда совершается телефонный звонок. Требуются разрешения доступа к телефону';
+
+  @override
+  String get phoneCallModeAudioFocus => 'Аудио-фокус';
+
+  @override
+  String get phoneCallModeAudioFocusDescription =>
+      'Перестает принимать сигнал, когда какое-либо приложение запрашивает фокус аудио';
+
+  @override
   String get settingsUseBluetoothHeadset => 'Использовать Bluetooth-гарнитуру';
 
   @override
