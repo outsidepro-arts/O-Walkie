@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/orientation_store.dart';
+import '../platform/native_platform.dart';
 import '../features/home/home_screen_controller.dart';
 import '../l10n/a11y_strings.dart';
 import '../l10n/app_strings.dart';
@@ -20,13 +22,28 @@ class _OwalkieAppState extends ConsumerState<OwalkieApp> with WidgetsBindingObse
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    HardwareKeyboard.instance.addHandler(_handleEscapeKey);
     _applyOrientation();
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleEscapeKey);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  bool _handleEscapeKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.escape) return false;
+    if (!NativePlatform.isDesktop) return false;
+
+    final navigator = rootNavigatorKey.currentState;
+    if (navigator == null) return false;
+    if (!navigator.canPop()) return false;
+
+    navigator.maybePop();
+    return true;
   }
 
   @override

@@ -7,7 +7,10 @@ import '../features/settings/settings_screen.dart';
 import '../features/settings/vibration_imitation_settings_screen.dart';
 import '../features/signals/pattern_editor_screen.dart';
 
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
 final appRouter = GoRouter(
+  navigatorKey: rootNavigatorKey,
   routes: [
     GoRoute(
       path: '/',
